@@ -99,6 +99,16 @@ export interface DriveFile {
   file_request_id?: string | null
   sender_ephemeral_pubkey?: string | null
   wrapped_content_key?: string | null
+  /** Task 2237b: a guest- or member-added row in a shared folder. The owner's
+   *  own copy of the file key, wrapped to the master key; null until an owner
+   *  client adopts the file. */
+  owner_wrapped_file_key?: string | null
+  /** The folder link the guest used, for "added via {label}" attribution. */
+  acted_via_share_id?: string | null
+  /** The guest's chosen display name, sealed under the folder key. */
+  actor_name_encrypted?: string | null
+  /** The signed-in member who added the file, when it was not a guest. */
+  uploaded_by?: string | null
   created_at: string
   updated_at: string
 }
@@ -121,6 +131,9 @@ export interface UploadAbandonResponse {
 export interface SyncNode {
   id: string
   name_encrypted: string
+  file_request_id?: string | null
+  sender_ephemeral_pubkey?: string | null
+  wrapped_content_key?: string | null
   parent_id: string | null
   is_folder: boolean
   size_bytes: number
@@ -376,6 +389,8 @@ export interface ShareInvite {
   is_folder_share?: boolean
   encrypted_folder_key?: string
   encrypted_owner_folder_key?: string
+  /** The grant the server enforces (read | add | write | admin). */
+  permission?: string
 }
 
 export interface InviteActivity {
@@ -616,6 +631,14 @@ export interface Subscription {
    * for legacy no-card trials, which still use `POST /billing/trial/convert`.
    */
   trial_auto_converts?: boolean
+  /**
+   * Task 2106 (server 2092b). RFC 3339 end of the 3-day hold when the bank asked the
+   * customer to confirm a trial's first payment (3-D Secure); null/absent otherwise.
+   * `trial_auto_converts` stays true during the hold, so THIS field alone says the
+   * trial does not charge by itself: it ends at this instant unless the customer
+   * confirms (pay-now).
+   */
+  confirm_payment_by?: string | null
   /**
    * Why a paid trial mandate did NOT start a trial (task 1037, one trial per
    * payment method): `"payment_method_already_used"` when the card / bank
@@ -1666,9 +1689,10 @@ export interface DataExportStatus {
 export interface AvailableRegion {
   continent: string
   display_name: string
-  /** Representative city, e.g. "Falkenstein". Server (storage.rs `RegionInfo`)
-   *  emits this as `example_city` — NOT `city`. */
-  example_city: string
+  /** Representative COUNTRY, e.g. "Germany" (task 2050). Absent on a server
+   *  older than 2050. The server still emits a deprecated `example_city` for
+   *  one release; it is deliberately not typed here, so nothing can render it. */
+  example_country?: string
   /** No `provider` field — the brand rule (docs/canon/data-residency.md) is
    *  name the city, never the hosting provider, in user-facing copy. The
    *  server's `RegionInfo.provider` is `#[serde(skip_serializing)]` (task
@@ -1679,6 +1703,8 @@ export interface AvailableRegion {
 
 export interface UserRegionResponse {
   preferred_region: string | null
+  /** "Only store in <country>" (task 1952). Absent on a server older than 1952. */
+  region_strict?: boolean
   /** Server (regions.rs `get_preferred_region`) returns the array under
    *  `available_regions`, not `regions`. */
   available_regions: AvailableRegion[]

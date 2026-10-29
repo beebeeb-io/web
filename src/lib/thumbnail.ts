@@ -1,4 +1,6 @@
+import { provenanceHeaders } from '@beebeeb/shared'
 import { getToken, getApiUrl, uploadThumbnail, uploadThumbnailLarge } from './api'
+import { getOfflineCacheScope, isCurrentOfflineCacheScope } from './offline-cache'
 
 const THUMB_SIZE = 768
 const MAX_THUMB_BYTES = 50 * 1024
@@ -22,7 +24,9 @@ const LARGE_THUMB_VARIANTS = [
 ] as const
 
 const THUMB_FORMAT = 'image/webp'
-const CACHE_NAME = 'beebeeb-thumbnails-v2'
+const CACHE_NAME = 'beebeeb-thumbnails-encrypted-v3'
+const LEGACY_CACHE_NAME = 'beebeeb-thumbnails-v2'
+let thumbnailEpoch = 0
 const MAX_CACHE_ENTRIES = 10000
 const MAX_MEMORY_THUMBS = 200
 
@@ -30,7 +34,7 @@ const MAX_MEMORY_THUMBS = 200
  * Minimal LRU keyed by fileId → object-URL string. Capped at MAX_MEMORY_THUMBS;
  * on eviction the underlying blob's object URL is revoked so it can be garbage
  * collected. The Cache API persistence layer remains the source of truth for
- * re-hydration on the next session.
+ * re-hydration on the next unlocked session (ciphertext only).
  *
  * Implementation: Map preserves insertion order, so we re-insert on read to
  * move the entry to "most recently used", and pop the oldest key when over cap.
@@ -46,6 +50,13 @@ class ThumbnailLRU {
     this.map.delete(key)
     this.map.set(key, value)
     return value
+  }
+
+  clear(): void {
+    for (const url of this.map.values()) {
+      try { URL.revokeObjectURL(url) } catch { /* noop */ }
+    }
+    this.map.clear()
   }
 
   has(key: string): boolean {
@@ -73,6 +84,7 @@ class ThumbnailLRU {
 }
 
 const thumbnailCache = new ThumbnailLRU(MAX_MEMORY_THUMBS)
+const largeThumbnailUrls = new ThumbnailLRU(MAX_MEMORY_THUMBS)
 
 const IMAGE_TYPES = new Set([
   'image/jpeg',
@@ -231,9 +243,12 @@ export async function fetchAndDecryptLargeThumbnail(
   fileId: string,
   fileKey: Uint8Array,
 ): Promise<string | null> {
+  const epoch = thumbnailEpoch
+  const scope = getOfflineCacheScope()
+  if (!isCurrentOfflineCacheScope(scope)) return null
   try {
     const token = getToken()
-    const headers: Record<string, string> = {}
+    const headers: Record<string, string> = { ...provenanceHeaders() }
     if (token) headers['Authorization'] = `Bearer ${token}`
 
     const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/thumbnail/large`, {
@@ -247,29 +262,32 @@ export async function fetchAndDecryptLargeThumbnail(
 
     const plainBytes = await decryptThumbnailBlob(encrypted, fileKey)
 
+    if (epoch !== thumbnailEpoch || !isCurrentOfflineCacheScope(scope)) {
+      new Uint8Array(plainBytes).fill(0)
+      return null
+    }
     const blob = new Blob([plainBytes], { type: THUMB_FORMAT })
+    new Uint8Array(plainBytes).fill(0)
     const url = URL.createObjectURL(blob)
+    largeThumbnailUrls.set(url, url)
     return url
   } catch {
     return null
   }
 }
 
-async function getCachedBlob(fileId: string): Promise<string | null> {
+async function getCachedCiphertext(fileId: string): Promise<Uint8Array | null> {
   try {
     const cache = await caches.open(CACHE_NAME)
     const resp = await cache.match(`/thumb/${fileId}`)
     if (!resp) return null
-    const blob = await resp.blob()
-    const url = URL.createObjectURL(blob)
-    thumbnailCache.set(fileId, url)
-    return url
+    return new Uint8Array(await resp.arrayBuffer())
   } catch {
     return null
   }
 }
 
-async function putCachedBlob(fileId: string, data: ArrayBuffer): Promise<void> {
+async function putCachedCiphertext(fileId: string, data: Uint8Array): Promise<void> {
   try {
     const cache = await caches.open(CACHE_NAME)
     const keys = await cache.keys()
@@ -279,7 +297,7 @@ async function putCachedBlob(fileId: string, data: ArrayBuffer): Promise<void> {
     }
     await cache.put(
       `/thumb/${fileId}`,
-      new Response(data, { headers: { 'Content-Type': THUMB_FORMAT } }),
+      new Response(data.buffer as ArrayBuffer, { headers: { 'Content-Type': 'application/octet-stream' } }),
     )
   } catch {
     // Cache write is best-effort
@@ -290,34 +308,47 @@ export async function fetchAndDecryptThumbnail(
   fileId: string,
   fileKey: Uint8Array,
 ): Promise<string | null> {
-  if (thumbnailCache.has(fileId)) return thumbnailCache.get(fileId)!
-
-  const cached = await getCachedBlob(fileId)
-  if (cached) return cached
+  const epoch = thumbnailEpoch
+  const scope = getOfflineCacheScope()
+  if (!isCurrentOfflineCacheScope(scope)) return null
+  const memoryKey = `${scope.stamp.userId}:${fileId}`
+  if (thumbnailCache.has(memoryKey)) return thumbnailCache.get(memoryKey)!
 
   try {
-    const token = getToken()
-    const headers: Record<string, string> = {}
-    if (token) headers['Authorization'] = `Bearer ${token}`
-
-    const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/thumbnail`, {
-      headers,
-      credentials: 'include',
-    })
-    if (!res.ok) return null
-
-    const encrypted = new Uint8Array(await res.arrayBuffer())
+    // Migration is best-effort, but never READ from the old plaintext cache.
+    try { await caches.delete(LEGACY_CACHE_NAME) } catch { /* Storage unavailable. */ }
+    let encrypted = await getCachedCiphertext(fileId)
+    if (!encrypted) {
+      const token = getToken()
+      const headers: Record<string, string> = { ...provenanceHeaders() }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+      const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/thumbnail`, {
+        headers, credentials: 'include',
+      })
+      if (!res.ok) return null
+      encrypted = new Uint8Array(await res.arrayBuffer())
+    }
     if (encrypted.length < 13) return null
-
     const plainBytes = await decryptThumbnailBlob(encrypted, fileKey)
-
-    await putCachedBlob(fileId, plainBytes)
-
+    // Only ciphertext crosses the persistent-storage boundary.
+    await putCachedCiphertext(fileId, encrypted)
+    if (epoch !== thumbnailEpoch || !isCurrentOfflineCacheScope(scope)) {
+      new Uint8Array(plainBytes).fill(0)
+      return null
+    }
     const blob = new Blob([plainBytes], { type: THUMB_FORMAT })
+    new Uint8Array(plainBytes).fill(0)
     const url = URL.createObjectURL(blob)
-    thumbnailCache.set(fileId, url)
+    thumbnailCache.set(memoryKey, url)
     return url
   } catch {
     return null
   }
+}
+
+export async function clearThumbnailCache(): Promise<void> {
+  thumbnailEpoch++
+  thumbnailCache.clear()
+  largeThumbnailUrls.clear()
+  try { await caches.delete(LEGACY_CACHE_NAME) } catch { /* Storage unavailable. */ }
 }

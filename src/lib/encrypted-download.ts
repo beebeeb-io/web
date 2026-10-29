@@ -9,14 +9,58 @@
 // Browsers that do not support a controllable service worker or transferable
 // ReadableStreams (e.g. Safari < 15.4, in-app browsers, ad-blocker-disabled
 // SWs) fall back to the original Blob path.
+//
+// Every content read here goes through core's pin-aware reader (task 1908 /
+// 1943): the file's authenticated metadata is read FIRST with core's FILE
+// reader (`readFileMetadata`), which yields the name, the MIME type and the
+// file's chunk-format pin; the content is then opened frame by frame by a
+// `StreamingDecryptor` bound to that file id and pin, and `finish()` checks the
+// file was not cut short. Any failure discards the plaintext already produced.
+// The generic no-AAD chunk open (no position, v1 only) is never used for content.
 
 import {
   CHUNK_SIZE,
-  decryptChunk,
-  decryptFileMetadata,
+  readFileMetadata,
+  startDecryptStream,
+  UnverifiedFileMetadataError,
+  type ContentPin,
 } from './crypto'
 import { getToken, getApiUrl, ApiError } from './api'
 import { dispatchDecrypted } from './decrypt-events'
+
+export { UnverifiedFileMetadataError }
+
+/** Which file's content is being read, and how (core 1908). */
+export interface FileContentRef {
+  /** The id the file was uploaded under: every v2 frame binds it. */
+  fileId: string
+  /** The chunk-format pin from `readFileMetadata` of this file, never a server field. */
+  pin: ContentPin
+}
+
+/** Shown when a file's metadata (and so its pin) cannot be verified. */
+export const UNVERIFIED_FILE_COPY = "We couldn't verify this file's encrypted details, so we didn't open it."
+
+/**
+ * Read a file's authenticated metadata before touching its content: the name
+ * and MIME type to save it under, and the pin every content reader of the file
+ * needs (core `decrypt_file_metadata`). If it cannot be read (a plaintext or
+ * foreign name, an unknown format), the content is not opened at all: falling
+ * back to "unrecorded" would let a server that replaced the name re-enable
+ * format detection.
+ */
+export async function openFileMetadata(
+  fileId: string,
+  fileKey: Uint8Array,
+  nameEncryptedJson: string,
+): Promise<{ name: string; mimeType: string | null; content: FileContentRef }> {
+  try {
+    const meta = await readFileMetadata(fileKey, nameEncryptedJson)
+    return { name: meta.name, mimeType: meta.mimeType, content: { fileId, pin: meta.pin } }
+  } catch (err) {
+    throw new UnverifiedFileMetadataError(UNVERIFIED_FILE_COPY, { cause: err })
+  }
+}
 
 // AES-256-GCM: 12-byte nonce, 16-byte auth tag
 const NONCE_LENGTH = 12
@@ -42,6 +86,7 @@ export function inferChunkCountFromEncryptedSize(
 
 export async function decryptEncryptedBytes(
   fileKey: Uint8Array,
+  content: FileContentRef,
   encryptedBytes: Uint8Array,
   chunkCount: number,
   sizeBytes: number,
@@ -61,40 +106,45 @@ export async function decryptEncryptedBytes(
   const decryptedParts: Uint8Array[] = []
   let offset = 0
 
-  for (let i = 0; i < chunkCount; i++) {
-    // Calculate the plaintext size for this chunk
-    const isLastChunk = i === chunkCount - 1
-    let plaintextSize: number
-    if (chunkCount === 1) {
-      plaintextSize = effectivePlaintextSize
-    } else if (isLastChunk) {
-      plaintextSize = effectivePlaintextSize - i * chunkSize
-    } else {
-      plaintextSize = chunkSize
+  const decryptor = await startDecryptStream(fileKey, content.fileId, content.pin)
+  try {
+    for (let i = 0; i < chunkCount; i++) {
+      // Calculate the plaintext size for this chunk
+      const isLastChunk = i === chunkCount - 1
+      let plaintextSize: number
+      if (chunkCount === 1) {
+        plaintextSize = effectivePlaintextSize
+      } else if (isLastChunk) {
+        plaintextSize = effectivePlaintextSize - i * chunkSize
+      } else {
+        plaintextSize = chunkSize
+      }
+
+      // The encrypted chunk size: nonce + plaintext + GCM tag
+      const encryptedChunkSize = NONCE_LENGTH + plaintextSize + GCM_TAG_LENGTH
+
+      // Guard: make sure we have enough bytes
+      if (offset + encryptedChunkSize > encryptedBytes.length) {
+        throw new Error(
+          `Chunk ${i}: expected ${encryptedChunkSize} bytes at offset ${offset}, ` +
+          `but only ${encryptedBytes.length - offset} remain`,
+        )
+      }
+
+      // The whole wire frame (nonce || ciphertext || tag), as a copy that owns
+      // its buffer: the decryptor transfers it to the crypto worker.
+      const frame = encryptedBytes.slice(offset, offset + encryptedChunkSize)
+      decryptedParts.push(await decryptor.pushFrame(frame))
+
+      offset += encryptedChunkSize
     }
-
-    // The encrypted chunk size: nonce + plaintext + GCM tag
-    const encryptedChunkSize = NONCE_LENGTH + plaintextSize + GCM_TAG_LENGTH
-
-    // Guard: make sure we have enough bytes
-    if (offset + encryptedChunkSize > encryptedBytes.length) {
-      throw new Error(
-        `Chunk ${i}: expected ${encryptedChunkSize} bytes at offset ${offset}, ` +
-        `but only ${encryptedBytes.length - offset} remain`,
-      )
-    }
-
-    // Extract nonce and ciphertext
-    const nonce = encryptedBytes.slice(offset, offset + NONCE_LENGTH)
-    const ciphertext = encryptedBytes.slice(
-      offset + NONCE_LENGTH,
-      offset + encryptedChunkSize,
-    )
-
-    const plaintext = await decryptChunk(fileKey, nonce, ciphertext)
-    decryptedParts.push(plaintext)
-
-    offset += encryptedChunkSize
+    // v2: fails when the file ended before its last chunk (truncation).
+    await decryptor.finish()
+  } catch (err) {
+    await decryptor.dispose()
+    // A failed read never hands out a prefix: wipe what was already opened.
+    for (const part of decryptedParts) part.fill(0)
+    throw err
   }
 
   const totalSize = decryptedParts.reduce((sum, p) => sum + p.length, 0)
@@ -103,6 +153,7 @@ export async function decryptEncryptedBytes(
   for (const part of decryptedParts) {
     decrypted.set(part, writeOffset)
     writeOffset += part.length
+    part.fill(0)
   }
 
   return decrypted
@@ -266,10 +317,15 @@ async function startStreamingDownload(
  * Reads bytes from the network ReadableStream and re-frames them into
  * fixed-size encrypted chunks: each chunk is `NONCE_LENGTH +
  * plaintextSize + GCM_TAG_LENGTH` bytes. The last chunk may be smaller.
+ *
+ * Resolves only after core's end-of-stream check (`finish()`): a v2 file cut
+ * short rejects AFTER its earlier chunks were handed to `onChunk`, so the
+ * caller must abort its sink (the streaming download) on any rejection.
  */
-async function pipeDecryptedChunks(
+export async function pipeDecryptedChunks(
   body: ReadableStream<Uint8Array>,
   fileKey: Uint8Array,
+  content: FileContentRef,
   chunkCount: number,
   plaintextSize: number,
   chunkSize: number,
@@ -307,7 +363,9 @@ async function pipeDecryptedChunks(
     signal.addEventListener('abort', onAbort, { once: true })
   }
 
+  let decryptor: Awaited<ReturnType<typeof startDecryptStream>> | null = null
   try {
+    decryptor = await startDecryptStream(fileKey, content.fileId, content.pin)
     while (chunkIndex < chunkCount) {
       // Determine size of the next encrypted chunk on the wire.
       const isLast = chunkIndex === chunkCount - 1
@@ -332,22 +390,28 @@ async function pipeDecryptedChunks(
         )
       }
 
-      const nonce = buffer.subarray(0, NONCE_LENGTH)
-      const ciphertext = buffer.subarray(NONCE_LENGTH, encryptedChunkSize)
-      // Copy nonce/ciphertext so we can drop the buffer reference safely.
-      const nonceCopy = new Uint8Array(nonce)
-      const ctCopy = new Uint8Array(ciphertext)
+      // The whole wire frame (nonce || ciphertext || tag), copied so it owns
+      // its buffer (the decryptor transfers it to the crypto worker).
+      const frame = buffer.slice(0, encryptedChunkSize)
       // Advance the buffer.
       buffer = buffer.length === encryptedChunkSize
         ? new Uint8Array(0)
         : buffer.slice(encryptedChunkSize)
 
-      const plaintext = await decryptChunk(fileKey, nonceCopy, ctCopy)
+      const plaintext = await decryptor.pushFrame(frame)
       await onChunk(plaintext)
       bytesWritten += plaintext.length
       onProgress?.(bytesWritten)
       chunkIndex++
     }
+    // v2: fails when the file ended before its last chunk (truncation).
+    // finish() consumes the decryptor whatever it returns: nothing to dispose.
+    const finishing = decryptor
+    decryptor = null
+    await finishing.finish()
+  } catch (err) {
+    if (decryptor) await decryptor.dispose()
+    throw err
   } finally {
     if (signal) signal.removeEventListener('abort', onAbort)
     try { reader.releaseLock() } catch {}
@@ -383,18 +447,12 @@ export async function encryptedDownload(
   sizeBytes: number,
   opts?: EncryptedDownloadOptions,
 ): Promise<void> {
-  // 1. Decrypt the filename (and MIME type if available in encrypted metadata)
-  let filename = 'download'
-  let inferredMime: string | null = null
-  try {
-    const meta = await decryptFileMetadata(fileKey, nameEncryptedJson)
-    filename = meta.name
-    inferredMime = meta.mimeType
-  } catch {
-    filename = `file-${fileId}`
-  }
+  // 1. The file's authenticated metadata: name, MIME type and content pin.
+  //    Refused (nothing is downloaded) when it cannot be verified.
+  const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
+  const filename = meta.name
   // Prefer explicit mimeType arg (legacy files) over encrypted metadata
-  const effectiveMime = mimeType || inferredMime || 'application/octet-stream'
+  const effectiveMime = mimeType || meta.mimeType || 'application/octet-stream'
 
   // 2. Download the encrypted blob from the API
   const token = getToken()
@@ -443,6 +501,7 @@ export async function encryptedDownload(
         await pipeDecryptedChunks(
           res.body,
           fileKey,
+          meta.content,
           effectiveChunkCount,
           effectivePlaintextSize,
           effectiveChunkSize,
@@ -484,6 +543,7 @@ export async function encryptedDownload(
 
   const decrypted = await decryptEncryptedBytes(
     fileKey,
+    meta.content,
     encryptedBytes,
     effectiveChunkCount,
     sizeBytes,
@@ -518,16 +578,9 @@ export async function decryptToBlob(
   chunkCount: number,
   sizeBytes: number,
 ): Promise<{ plaintext: Blob; filename: string }> {
-  let filename = 'download'
-  let inferredMime2: string | null = null
-  try {
-    const meta = await decryptFileMetadata(fileKey, nameEncryptedJson)
-    filename = meta.name
-    inferredMime2 = meta.mimeType
-  } catch {
-    filename = `file-${fileId}`
-  }
-  const blobMime = mimeType || inferredMime2 || 'application/octet-stream'
+  const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
+  const filename = meta.name
+  const blobMime = mimeType || meta.mimeType || 'application/octet-stream'
 
   const token = getToken()
   const headers: Record<string, string> = {}
@@ -542,6 +595,7 @@ export async function decryptToBlob(
 
   const decrypted = await decryptEncryptedBytes(
     fileKey,
+    meta.content,
     encryptedBytes,
     effectiveChunkCount,
     sizeBytes,
@@ -558,15 +612,22 @@ export async function decryptToBlob(
  * decryptToBlob but hits the per-version endpoint. The version inherits
  * the parent file's mime_type — only the chunked content changes per
  * version, not the file key or filename.
+ *
+ * `nameEncryptedJson` is the FILE's current `name_encrypted`: every version of
+ * a file id is read with the file's one recorded pin (core 1908 — the server
+ * keeps one metadata blob per file, and a recorded v2 pin covers every upload
+ * of that id).
  */
 export async function decryptVersionToBlob(
   fileId: string,
   versionId: string,
   fileKey: Uint8Array,
+  nameEncryptedJson: string,
   mimeType: string | null | undefined,
   chunkCount: number,
   sizeBytes: number,
 ): Promise<Blob> {
+  const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
   const token = getToken()
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
@@ -583,13 +644,14 @@ export async function decryptVersionToBlob(
 
   const decrypted = await decryptEncryptedBytes(
     fileKey,
+    meta.content,
     encryptedBytes,
     effectiveChunkCount,
     sizeBytes,
     effectiveChunkSize,
   )
 
-  const plaintext = new Blob([decrypted as BlobPart], { type: mimeType || 'application/octet-stream' })
+  const plaintext = new Blob([decrypted as BlobPart], { type: mimeType || meta.mimeType || 'application/octet-stream' })
   dispatchDecrypted(fileId)
   return plaintext
 }

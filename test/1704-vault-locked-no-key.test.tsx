@@ -119,7 +119,7 @@ afterEach(() => {
 
 /** Counting API spies — prove the surface renders WITHOUT firing any
  *  destructive call (every exit is behind an explicit confirmation gate). */
-function makeApiSpies() {
+function makeApiSpies(statusGate?: Promise<void>) {
   return {
     cancelSubscription: mock(async () => ({ message: 'nope' })),
     deleteAccountPermanently: mock(async () => ({ message: 'nope', shred_after: 'nope' })),
@@ -127,10 +127,18 @@ function makeApiSpies() {
     bulkTrashFiles: mock(async (_ids: string[]) => ({})),
     bulkPermanentDelete: mock(async (_ids: string[], _t: string) => {}),
     confirmAction: mock(async () => ({ confirmation_token: 'nope', expires_at: 'nope' })),
+    // Task 1918: the erase exit only ever talks to these (a read on mount, nothing destructive).
+    getEraseRequest: mock(async () => {
+      // Task 1918 r2: a test can hold the status read open past the unmount.
+      if (statusGate) await statusGate
+      return { request: null, live_items: 3, cooldown_hours: 72, trash_retention_days: 30, last_executed: null }
+    }),
+    createEraseRequest: mock(async (_c: number, _t: string) => ({})),
+    cancelEraseRequest: mock(async () => ({})),
   }
 }
 
-async function renderProtectedRoute(opts: { marker?: boolean; impersonating?: boolean; email?: string } = {}): Promise<{ text: string; spies: ReturnType<typeof makeApiSpies> }> {
+async function renderProtectedRoute(opts: { marker?: boolean; impersonating?: boolean; email?: string; statusGate?: Promise<void> } = {}): Promise<{ text: string; spies: ReturnType<typeof makeApiSpies> }> {
   const { doc, win, container, created } = makeDom()
   const storage = new PersistentSessionStorage()
   if (opts.marker) {
@@ -146,7 +154,7 @@ async function renderProtectedRoute(opts: { marker?: boolean; impersonating?: bo
   g.window = win
   g.document = doc
 
-  const spies = makeApiSpies()
+  const spies = makeApiSpies(opts.statusGate)
   await mockModuleScoped('../src/components/toast.tsx', import.meta.dir, (real: Record<string, unknown>) => ({
     ...real,
     useToast: (): unknown => ({ showToast: () => {} }),
@@ -228,6 +236,36 @@ async function renderProtectedRoute(opts: { marker?: boolean; impersonating?: bo
   return { text, spies }
 }
 
+describe('task 1918 round 2: async results never land on a screen that is gone', () => {
+  // Found by the web order guard in round 2: the locked screen's status read (added in round 1)
+  // could settle after its test had unmounted it and removed the DOM stub; the late setState then
+  // threw in React ("window is not defined") or, when the read hit another file's fetch stub,
+  // broke that file's timing tests (seeds 38666749, 125203929, 1013277509). The screen now drops
+  // results that arrive after unmount.
+  test('a status read that fails after unmount applies nothing (no update, no unhandled error)', async () => {
+    let fail: (e: unknown) => void = () => {}
+    const gate = new Promise<void>((_, reject) => {
+      fail = reject
+    })
+    gate.catch(() => {})
+    const seen: unknown[] = []
+    const onUnhandled = (e: unknown) => {
+      seen.push(e)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const { spies } = await renderProtectedRoute({ marker: true, statusGate: gate })
+      expect(spies.getEraseRequest).toHaveBeenCalledTimes(1)
+      // The screen is unmounted and the DOM stub removed; now the read fails.
+      fail(new TypeError('Could not reach the server'))
+      await new Promise((r) => setTimeout(r, 100))
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+    expect(seen.map(String)).toEqual([])
+  })
+})
+
 describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key case to the honest locked-state surface', () => {
   test('post-reset marker + locked vault → VaultLockedNoKey with re-entry + exits, NOT the password form', async () => {
     const { text, spies } = await renderProtectedRoute({ marker: true })
@@ -240,7 +278,7 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
     expect(text).toContain('Unlock with recovery phrase')
     // All three self-service exits are present:
     expect(text).toContain('Cancel subscription')
-    expect(text).toContain('Delete all data')
+    expect(text).toContain('Erase all files')
     expect(text).toContain('Delete account')
     // Honest omission of per-file blind deletion:
     expect(text).toContain("can't show")
@@ -257,6 +295,11 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
     expect(spies.bulkTrashFiles).not.toHaveBeenCalled()
     expect(spies.bulkPermanentDelete).not.toHaveBeenCalled()
     expect(spies.confirmAction).not.toHaveBeenCalled()
+    // Task 1918: the erase exit only READS its status on mount; it never trashes,
+    // never erases, and files no request until the typed count + step-up.
+    expect(spies.getEraseRequest).toHaveBeenCalledTimes(1)
+    expect(spies.createEraseRequest).not.toHaveBeenCalled()
+    expect(spies.cancelEraseRequest).not.toHaveBeenCalled()
   })
 
   test('task 1810: the re-entry CTA never leads to the password-reset page (/recover-with-phrase)', async () => {
@@ -277,7 +320,7 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
     expect(text).toContain('Unlock vault')
     expect(text).not.toContain('Unlock with recovery phrase')
     expect(text).not.toContain('Cancel subscription')
-    expect(text).not.toContain('Delete all data')
+    expect(text).not.toContain('Erase all files')
     expect(text).not.toContain('CONTENT-SHOULD-NOT-RENDER')
     expect(spies.cancelSubscription).not.toHaveBeenCalled()
   })
@@ -317,6 +360,10 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
         user_id: TARGET, email: 'target@example.com', email_verified: true,
         created_at: '2026-01-01T00:00:00Z', totp_enabled: false,
       }),
+      // The locked screen reads its erase status on mount (task 1918). Left
+      // real, that read went to the default API base, which is production
+      // (found by the no-prod-network preload, web #199 final review P3-2).
+      getEraseRequest: async () => ({ request: null, live_items: 3, cooldown_hours: 72, trash_retention_days: 30, last_executed: null }),
     }))
     await mockModuleScoped('../src/lib/auth-context.tsx', import.meta.dir, (real: Record<string, unknown>) => ({
       ...real,
@@ -441,10 +488,12 @@ describe('task 1704 SLICE 2: VaultLockedNoKey copy + explicit confirmation gates
     expect(html).toContain('Cancel subscription')
     expect(html).toContain('I understand billing stops for this account.')
     expect(html).toContain('Cancel billing')
-    // Exit 2 — delete all data (checkbox gate + action button):
-    expect(html).toContain('Delete all data')
-    expect(html).toContain('I understand every file is erased permanently')
+    // Exit 2 — erase all files (task 1918): a server-side request with a typed count;
+    // no checkbox-and-erase path is left (SSR shows the card while the status loads):
     expect(html).toContain('Erase all files')
+    expect(html).toContain('Checking what this account holds')
+    expect(html).not.toContain('I understand every file is erased permanently')
+    expect(html).not.toContain('Delete all data')
     // Exit 3 — delete account (type-DELETE gate + checkbox + action button):
     expect(html).toContain('Delete account')
     expect(html).toContain('Type DELETE to confirm')

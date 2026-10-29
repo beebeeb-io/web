@@ -1,9 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { adminImpersonate, clearToken, getMe, getToken, setToken } from './api'
+import { clearToken, getMe } from './api'
 
-const ADMIN_TOKEN_KEY = 'bb_admin_token'
 const IMPERSONATING_EMAIL_KEY = 'bb_impersonating_email'
 const IMPERSONATING_ADMIN_ID_KEY = 'bb_impersonating_admin_id'
 
@@ -70,21 +68,17 @@ export function shouldReconcileLock(input: {
 interface ImpersonationState {
   /** The email of the user currently being impersonated, or null. */
   impersonatingEmail: string | null
-  /** Start impersonating a user. Saves the admin token and swaps in the new one. */
-  startImpersonation: (userId: string) => Promise<void>
-  /** Stop impersonating. Restores the admin token, or signs out if there is no admin token (token-based flow). */
+  /** Stop impersonating: signs the impersonated session out and closes the tab. */
   stopImpersonation: () => void
 }
 
 const ImpersonationContext = createContext<ImpersonationState | null>(null)
 
 export function ImpersonationProvider({ children }: { children: ReactNode }) {
-  const navigate = useNavigate()
-
-  // Restore from sessionStorage. The legacy flow stored an admin token to
-  // swap back to; the token-based flow (task 0161) opens this app in a
-  // brand-new tab so there is no admin token here — only the email marker
-  // dropped by /auth/impersonate. Either marker is enough to show the banner.
+  // Restore from sessionStorage. The token-based flow (task 0161) opens this
+  // app in a brand-new tab from admin.beebeeb.io; the email marker dropped by
+  // /auth/impersonate is what shows the banner. (The in-tab admin-token swap
+  // was retired with the admin session path, task 1785.)
   const [impersonatingEmail, setImpersonatingEmail] = useState<string | null>(() => {
     return sessionStorage.getItem(IMPERSONATING_EMAIL_KEY)
   })
@@ -116,48 +110,14 @@ export function ImpersonationProvider({ children }: { children: ReactNode }) {
     }
   }, [impersonatingEmail])
 
-  const startImpersonation = useCallback(async (userId: string) => {
-    const currentToken = getToken()
-    if (!currentToken) return
-
-    const data = await adminImpersonate(userId)
-
-    // Save the admin token so we can restore it later
-    sessionStorage.setItem(ADMIN_TOKEN_KEY, currentToken)
-    sessionStorage.setItem(IMPERSONATING_EMAIL_KEY, data.email)
-
-    // Swap to the impersonated user's token
-    setToken(data.session_token)
-    setImpersonatingEmail(data.email)
-
-    // Navigate to drive
-    navigate('/', { replace: true })
-
-    // Force a full page reload so all contexts (auth, keys, etc.) re-initialize
-    // with the new token. This is the safest approach since many contexts
-    // cache user data on mount.
-    window.location.href = '/'
-  }, [navigate])
-
   const stopImpersonation = useCallback(() => {
-    const adminToken = sessionStorage.getItem(ADMIN_TOKEN_KEY)
-
     // Always clear impersonation markers regardless of which flow we used.
     sessionStorage.removeItem(IMPERSONATING_EMAIL_KEY)
     sessionStorage.removeItem(IMPERSONATING_ADMIN_ID_KEY)
     setImpersonatingEmail(null)
 
-    if (adminToken) {
-      // Legacy in-tab swap: restore the admin token and bounce back to the
-      // admin portal's user list.
-      sessionStorage.removeItem(ADMIN_TOKEN_KEY)
-      setToken(adminToken)
-      window.location.href = '/admin/users'
-      return
-    }
-
-    // Token-based flow (task 0161): there is no admin token in this tab —
-    // the admin opened us in a new tab from admin.beebeeb.io. Sign out the
+    // Token-based flow (task 0161): the admin opened us in a new tab from
+    // admin.beebeeb.io. Sign out the
     // impersonated session and close the tab so the admin returns to their
     // already-open admin tab. If the browser refuses window.close() (only
     // tabs the script opened may close themselves), fall back to a redirect
@@ -177,8 +137,8 @@ export function ImpersonationProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<ImpersonationState>(
-    () => ({ impersonatingEmail, startImpersonation, stopImpersonation }),
-    [impersonatingEmail, startImpersonation, stopImpersonation],
+    () => ({ impersonatingEmail, stopImpersonation }),
+    [impersonatingEmail, stopImpersonation],
   )
 
   return (

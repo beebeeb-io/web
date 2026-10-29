@@ -25,17 +25,20 @@
  * Apps should `setApiUrl(...)` once at startup before calling `request()`.
  */
 
-import { ApiError, parseErrorBody } from './errors'
+import { ApiError, readErrorResponse } from './errors'
 import { getApiUrl, provenanceHeaders, expectedUserHeaders } from './config'
 import { clearToken, getToken } from './token'
 import {
   fireAccountDeleted,
   fireAccountMismatch,
+  fireAccountSuspended,
   fireConnectionStatus,
   fireErrorNotifier,
   fireSessionExpired,
   wasSessionConfirmed,
   clearSessionConfirmed,
+  getAuthStamp,
+  isCurrentAuthStamp,
 } from './notifiers'
 
 const CONNECTION_FAILURE_THRESHOLD = 2
@@ -99,6 +102,9 @@ export async function request<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const token = getToken()
+  // Task 1948 (web#169 review): which login this request is issued under. A
+  // 403 account_suspended only applies to THAT login (see the handler below).
+  const authStamp = getAuthStamp()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> | undefined),
@@ -190,8 +196,7 @@ export async function request<T>(
     }
 
     if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
-      const { code, message } = parseErrorBody(body, res.statusText)
+      const { body, code, message } = await readErrorResponse(res)
 
       // Soft-deleted account (task 1403/1404) — the session/credentials were
       // fine, the ACCOUNT itself is gone. Always a 403, never a 401 (the
@@ -207,6 +212,27 @@ export async function request<T>(
       if (code === 'account_deleted') {
         if (token) clearToken()
         fireAccountDeleted(body)
+      }
+
+      // Task 1948 (1c): the session belongs to an account that is suspended or
+      // disabled. Every later request would carry the same dead login, so it is
+      // signed out on this device from WHICHEVER call surfaced it, like
+      // account_deleted above: drop the legacy bearer, forget that a session was
+      // confirmed this page load (so a later anonymous 401 is not "expired"),
+      // and let the app do the rest (local key/vault cleanup and the notice).
+      // The httpOnly `bb_session` cookie cannot be removed from here; the
+      // server has to expire it.
+      //
+      // Only for the login this request was issued under (web#169 review, Codex
+      // P1): when a newer login became current while it waited for its answer,
+      // the token and the confirmed session are that newer login's and stay. The
+      // handler gets the stamp and makes the same check before it signs out.
+      if (code === 'account_suspended') {
+        if (isCurrentAuthStamp(authStamp)) {
+          if (token) clearToken()
+          clearSessionConfirmed()
+        }
+        fireAccountSuspended(authStamp)
       }
 
       // Task 1531 (web #85 round 2) / server task 1554: the server refused a

@@ -98,7 +98,7 @@ describe('every refusal of starting a trial has its own words', () => {
   const api = (status: number, code: string, message = 'x') => new ApiError(message, status, code)
   const cases: Array<[string, unknown, RegExp]> = [
     ['trial_temporarily_unavailable', api(409, 'trial_temporarily_unavailable'), /not starting new trials right now\. Your 2 GB stays\./],
-    ['trial_already_used', api(409, 'trial_already_used'), /already had your trial/],
+    ['trial_already_used', api(409, 'trial_already_used'), /^This email inbox has already had a free trial, so this account starts without one\. You can pick a plan now\.$/],
     ['trial_previously_subscribed', api(409, 'trial_previously_subscribed'), /never subscribed\. Choose a plan/],
     ['trial_has_active_subscription', api(409, 'trial_has_active_subscription'), /already have a plan/],
     ['email_unverified', api(403, 'email_unverified'), /Confirm your email address/],

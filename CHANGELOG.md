@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-24
+
+Collect the current web client into a named minor release. The package version
+identifies the app and upload writer; deployment SHA remains separately recorded
+in `/version.json`. Authored scope and validation limits are in
+[RELEASE_NOTES.md](RELEASE_NOTES.md). Existing entries below are retained.
+
 ### Added
 - `/receive` (Constellation transfer): real X25519 + HKDF transfer-key derivation and AES-256-GCM decrypt of the received blob + filename, SAS words derived from the shared secret (authenticates the key exchange). End-to-end once the mobile sender produces real transfer-key blobs. (task 0855b)
 

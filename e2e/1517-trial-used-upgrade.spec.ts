@@ -264,7 +264,7 @@ test.describe('1517 — trial-already-used accounts can upgrade', () => {
     await page.getByRole('button', { name: /Start 14-day free trial/i }).click()
 
     // The clean, mapped message must appear, on normal paid checkout...
-    await expect(page.getByText(/already used your free trial/i)).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/This email inbox has already had a free trial/i)).toBeVisible({ timeout: 15_000 })
     await page.waitForURL(/\/settings\/billing\?view=change/, { timeout: 15_000 })
     // ...and the raw JSON blob must NEVER appear anywhere on the page.
     const bodyText = await page.locator('body').innerText()

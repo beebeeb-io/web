@@ -103,6 +103,15 @@ export function trialTermsCopy(days: number): string {
   return `${days}-day free trial. Card or iDEAL needed to start. No charge until day ${days + 1}; cancel any time before.`
 }
 
+/**
+ * Task 2164: the trial line follows the offer. With the no-card trial on offer nothing is
+ * asked up front, so the mandate wording ("Card or iDEAL needed") would be false. Otherwise
+ * the mandate line stands.
+ */
+export function trialTermsLine(days: number, opts: { noCardOffered: boolean }): string {
+  return opts.noCardOffered ? `${days}-day free trial. No card or iDEAL needed to start.` : trialTermsCopy(days)
+}
+
 export function startTrialLabel(days: number): string {
   return `Start ${days}-day free trial`
 }

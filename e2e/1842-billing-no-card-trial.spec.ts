@@ -108,7 +108,6 @@ function installMocks(page: Page, sub: unknown, doc: unknown = null, usedBytes =
       return json(route, { extra_storage_tb: 0, base_storage_tb: 1, max_storage_tb: 5, effective_storage_bytes: 1_000_000_000_000 })
     }
     if (url.includes('/billing/payment-method')) return json(route, {}, 404)
-    if (url.includes('/billing/winback-eligible')) return json(route, { eligible: false })
     if (url.includes('/files')) return json(route, { files: [] })
     if (url.includes('/preferences/')) return json(route, {}, 404)
     if (url.includes('/incoming') || url.includes('/shares')) return json(route, { shares: [] })

@@ -165,8 +165,9 @@ export async function subscription(page: Page) {
 }
 
 /**
- * Run the hourly billing lifecycle sweep NOW (admin worker trigger, signed in as the
- * harness's dev superadmin). The trigger spawns the cycle; `until` is polled so the
+ * Run the hourly billing lifecycle sweep NOW (admin worker trigger, authenticated as the
+ * harness's dev superadmin with the ADMIN JWT that the debug-only /dev/auto-login returns
+ * as `admin_token`; the API's admin routes refuse an ordinary session token, task 1785). The trigger spawns the cycle; `until` is polled so the
  * caller continues only once the sweep's effect is visible.
  */
 export async function runLifecycleSweep(until: () => boolean | Promise<boolean>, timeoutMs = 60_000): Promise<void> {
@@ -176,12 +177,13 @@ export async function runLifecycleSweep(until: () => boolean | Promise<boolean>,
     body: JSON.stringify({ email: 'dev@beebeeb.dev' }),
   })
   expect(login.ok, `dev auto-login: ${login.status}`).toBe(true)
-  const { session_token } = (await login.json()) as { session_token: string }
+  const { admin_token } = (await login.json()) as { admin_token: string }
+  expect(admin_token, 'dev auto-login must return an admin_token (API built from server >= task 1785)').toBeTruthy()
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const res = await fetch(`${API_URL}/api/v1/admin/workers/billing_lifecycle/trigger`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${session_token}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${admin_token}`, 'Content-Type': 'application/json' },
     })
     expect(res.ok, `POST /admin/workers/billing_lifecycle/trigger: ${res.status}`).toBe(true)
     // Give the spawned cycle a moment, then check its effect.

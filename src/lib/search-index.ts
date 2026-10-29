@@ -16,6 +16,7 @@
 // DO NOT add new callers. New code uses `search-index-core.ts`.
 
 import { getToken, getApiUrl } from './api'
+import { withServerBusyRetry } from './server-busy-retry'
 
 export interface SearchIndexEntry {
   name: string
@@ -110,12 +111,16 @@ async function putIndex(encrypted: Uint8Array, token: string | null, etag?: stri
   if (token) headers['Authorization'] = `Bearer ${token}`
   if (etag) headers['If-Match'] = etag
 
-  return fetch(`${getApiUrl()}/api/v1/index`, {
-    method: 'PUT',
-    headers,
-    body: encrypted.buffer as ArrayBuffer,
-    credentials: 'include',
-  })
+  // Task 1870: PUT /index buffers its whole body, so a full server-side upload
+  // budget answers 429 server_busy — wait Retry-After and re-send (<= 3 times).
+  return withServerBusyRetry(() =>
+    fetch(`${getApiUrl()}/api/v1/index`, {
+      method: 'PUT',
+      headers,
+      body: encrypted.buffer as ArrayBuffer,
+      credentials: 'include',
+    }),
+  )
 }
 
 /** Read the current ETag of the index resource without decrypting the body. */

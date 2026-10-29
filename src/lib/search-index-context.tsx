@@ -327,9 +327,8 @@ function useProvideSearchIndex(): SearchIndexContextValue {
       const idx = await ensureIndex()
       if (!idx) return
       const dirty = await idx.upsert(fileId, entry.name)
-      await idx.pushBuckets(masterKey, dirty).catch(() => {
-        /* best-effort cache: rebuilds on next load/reconcile */
-      })
+      try { await idx.pushBuckets(masterKey, dirty) }
+      catch { bump(); return }
       indexedIdsRef.current.add(fileId)
       nameCacheRef.current.set(fileId, { cipher: '', name: entry.name })
       bump()
@@ -354,7 +353,8 @@ function useProvideSearchIndex(): SearchIndexContextValue {
       if (!idx) return
       // upsert is insert-or-update; a rename of an indexed id updates in place.
       const dirty = await idx.upsert(fileId, fields.name)
-      await idx.pushBuckets(masterKey, dirty).catch(() => {})
+      try { await idx.pushBuckets(masterKey, dirty) }
+      catch { bump(); return }
       indexedIdsRef.current.add(fileId)
       nameCacheRef.current.set(fileId, { cipher: '', name: fields.name })
       bump()

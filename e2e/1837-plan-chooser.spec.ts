@@ -260,7 +260,7 @@ test.describe('1837 — plan chooser: card trial first, continue without card se
     await installMocks(page, { noCard: 'already_used', card: false })
     await boot(page)
     await expect(page.getByTestId('trial-unavailable')).toBeVisible({ timeout: 30_000 })
-    await expect(page.getByTestId('trial-unavailable')).toContainText('You have already had your trial.')
+    await expect(page.getByTestId('trial-unavailable')).toContainText('This email inbox has already had a free trial')
     await expect(page.getByTestId('choose-plan-subscribe-now')).toBeVisible()
     await expect(page.getByTestId('start-trial')).toHaveCount(0)
     await expect(page.getByTestId('choose-plan-continue')).toHaveCount(0)

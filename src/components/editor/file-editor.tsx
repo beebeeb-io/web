@@ -229,7 +229,12 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
       undefined,
       signal,
       getFileKey,
-      { conflictCreated },
+      {
+        conflictCreated,
+        // Same file id = a new version of THIS file: its recorded pin decides
+        // the format (task 1943). Keep Both is a new file and has none.
+        replaceOf: uploadFileId === file.id ? { nameEncrypted: file.name_encrypted } : undefined,
+      },
     )
   }
 

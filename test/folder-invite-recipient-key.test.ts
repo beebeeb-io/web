@@ -25,10 +25,14 @@ const WRONG = 13
 const b64 = (bytes: number[]) => Buffer.from(bytes).toString('base64')
 const sealed = (keyByte: number) => b64([0xaa, ...new Array(32).fill(keyByte)])
 
-function ports(): RecipientFolderKeyPorts & { zeroized: Uint8Array[] } {
+type Opened = { format: string; rootId: string; itemId: string; isFolder: boolean }
+
+function ports(): RecipientFolderKeyPorts & { zeroized: Uint8Array[]; opened: Opened[] } {
   const zeroized: Uint8Array[] = []
+  const opened: Opened[] = []
   return {
     zeroized,
+    opened,
     fromBase64: (s: string) => new Uint8Array(Buffer.from(s, 'base64')),
     zeroize: (b: Uint8Array) => {
       zeroized.push(b)
@@ -39,11 +43,16 @@ function ports(): RecipientFolderKeyPorts & { zeroized: Uint8Array[] } {
       if (blob[0] !== 0xaa) throw new Error('aead: authentication failed')
       return blob.slice(1)
     }) as RecipientFolderKeyPorts['decryptFolderKey'],
-    decryptChildFileKey: mock(async (fk: Uint8Array, wrapped: string) => {
-      const want = Number(wrapped.split(':')[1])
-      if (fk[0] !== want) throw new Error('aead: authentication failed')
+    // A wrap "opens" only under the key whose first byte it names; an
+    // `l7:<byte>:<kind>` wrap also only as that kind (folder or file).
+    openFolderChild: mock(async (format: string, fk: Uint8Array, ref: { rootId: string; itemId: string; isFolder: boolean }, wrapped: string) => {
+      opened.push({ format, ...ref })
+      const [shape, byte, kind] = wrapped.split(':')
+      if (fk[0] !== Number(byte)) throw new Error('aead: authentication failed')
+      if (shape === 'l7' && (format !== 'l7' || (kind === 'folder') !== ref.isFolder)) throw new Error('decryption failed')
+      if (shape !== 'l7' && format === 'l7') throw new Error('decryption failed')
       return new Uint8Array(32).fill(1)
-    }) as RecipientFolderKeyPorts['decryptChildFileKey'],
+    }) as RecipientFolderKeyPorts['openFolderChild'],
   }
 }
 
@@ -65,6 +74,7 @@ describe('resolveRecipientFolderKey', () => {
       invite({ encrypted_folder_key: sealed(REAL), encrypted_file_key: undefined }),
       masterKey,
       childKeys,
+      'legacy_invite',
       ports(),
     )
     expect(r.status).toBe('ok')
@@ -78,6 +88,7 @@ describe('resolveRecipientFolderKey', () => {
       invite({ encrypted_folder_key: '', encrypted_file_key: sealed(REAL) }),
       masterKey,
       childKeys,
+      'legacy_invite',
       ports(),
     )
     expect(r.status).toBe('ok')
@@ -92,6 +103,7 @@ describe('resolveRecipientFolderKey', () => {
       invite({ encrypted_folder_key: '', encrypted_file_key: sealed(WRONG) }),
       masterKey,
       childKeys,
+      'legacy_invite',
       p,
     )
     expect(r.status).toBe('missing')
@@ -103,6 +115,7 @@ describe('resolveRecipientFolderKey', () => {
       invite({ is_folder_share: false, encrypted_folder_key: undefined, encrypted_file_key: sealed(REAL) }),
       masterKey,
       childKeys,
+      'legacy_invite',
       ports(),
     )
     expect(r.status).toBe('missing')
@@ -113,6 +126,7 @@ describe('resolveRecipientFolderKey', () => {
       invite({ encrypted_folder_key: sealed(WRONG), encrypted_file_key: sealed(REAL) }),
       masterKey,
       childKeys,
+      'legacy_invite',
       ports(),
     )
     expect(r.status).toBe('ok')
@@ -122,10 +136,10 @@ describe('resolveRecipientFolderKey', () => {
 
   test('no sender public key, or no blobs at all → missing', async () => {
     expect(
-      (await resolveRecipientFolderKey(invite({ sender_public_key: undefined, encrypted_folder_key: sealed(REAL) }), masterKey, childKeys, ports())).status,
+      (await resolveRecipientFolderKey(invite({ sender_public_key: undefined, encrypted_folder_key: sealed(REAL) }), masterKey, childKeys, 'legacy_invite', ports())).status,
     ).toBe('missing')
     expect(
-      (await resolveRecipientFolderKey(invite({ encrypted_folder_key: '', encrypted_file_key: '' }), masterKey, childKeys, ports())).status,
+      (await resolveRecipientFolderKey(invite({ encrypted_folder_key: '', encrypted_file_key: '' }), masterKey, childKeys, 'legacy_invite', ports())).status,
     ).toBe('missing')
   })
 
@@ -134,8 +148,37 @@ describe('resolveRecipientFolderKey', () => {
       invite({ encrypted_folder_key: '', encrypted_file_key: sealed(REAL) }),
       masterKey,
       [],
+      'legacy_invite',
       ports(),
     )
     expect(r.status).toBe('ok')
+  })
+})
+
+describe('resolveRecipientFolderKey — L7b, a folder with a custody record', () => {
+  const l7Keys = [
+    { file_id: 'child-a', encrypted_file_key: `l7:${REAL}:file` },
+    { file_id: folderId, encrypted_file_key: `l7:${REAL}:folder` },
+  ]
+
+  test('the root entry verifies as a folder wrap bound to (root, root)', async () => {
+    const p = ports()
+    const r = await resolveRecipientFolderKey(invite({ encrypted_folder_key: sealed(REAL) }), masterKey, l7Keys, 'l7', p)
+    expect(r.status).toBe('ok')
+    expect(p.opened).toEqual([{ format: 'l7', rootId: folderId, itemId: folderId, isFolder: true }])
+  })
+
+  test('without a root entry, a child is tried as both kinds, each bound to its own row', async () => {
+    const p = ports()
+    const r = await resolveRecipientFolderKey(invite({ encrypted_folder_key: sealed(REAL) }), masterKey, [l7Keys[0]], 'l7', p)
+    expect(r.status).toBe('ok')
+    expect(p.opened.map((o) => [o.itemId, o.isFolder])).toEqual([['child-a', false]])
+  })
+
+  test('a legacy wrap on a custody folder never verifies a key (no fallback)', async () => {
+    const p = ports()
+    const r = await resolveRecipientFolderKey(invite({ encrypted_folder_key: sealed(REAL) }), masterKey, childKeys, 'l7', p)
+    expect(r.status).toBe('missing')
+    expect(p.opened.every((o) => o.format === 'l7')).toBe(true)
   })
 })

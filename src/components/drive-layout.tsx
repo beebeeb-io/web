@@ -6,18 +6,21 @@ import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBLogo } from '@beebeeb/shared'
 import { Icon, type IconName } from './icons'
 import { useAuth } from '../lib/auth-context'
+import { useRegionChoices } from '../lib/use-region-choices'
+import { sidebarRegionLabel } from '../lib/storage-regions'
 import { useKeys } from '../lib/key-context'
 import {
   getIncomingInvites,
   getFolderKeys,
-  getPreference,
   setPreference,
   requestAdminHandoff,
   type ShareInvite,
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
 import { SidebarStorageFooter } from './sidebar-storage-footer'
-import { decryptChildFileKey } from '../lib/folder-share-crypto'
+import { openFolderChild } from '../lib/folder-share-crypto'
+import { folderWrapFormat } from '../lib/owner-adoption'
+import { markCustodySeen } from '../lib/custody-memory'
 import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
 import { decryptFileMetadata } from '../lib/crypto'
 import { useSync } from '../lib/sync-context'
@@ -25,6 +28,7 @@ import { useSearchIndex, type NodeNameResolver } from '../hooks/use-search-index
 import { QuotaWarning } from './quota-warning'
 import { QuickAccess } from './quick-access'
 import { EmailVerifyBanner } from './email-verify-banner'
+import { EraseRequestBanner } from './erase-request-banner'
 import { TrialBanner } from './trial-banner'
 import { TrialEndedAllowanceNotice } from './trial-ended-notice'
 import { AnnouncementBanner } from './announcement-banner'
@@ -302,7 +306,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const adminUrl = import.meta.env.VITE_ADMIN_URL ?? 'https://admin.beebeeb.io'
   const { usage, planDetails: contextPlanDetails, pinnedFolderIds, isOffline, accountStateLabel } = useDriveData()
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
-  const [storageRegion, setStorageRegion] = useState<string>('auto')
+  const regions = useRegionChoices(user?.user_id)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const sidebarTrapRef = useFocusTrap<HTMLElement>(sidebarOpen)
   const [quickAccessDragOver, setQuickAccessDragOver] = useState(false)
@@ -347,24 +351,6 @@ export function DriveLayout({ children }: { children: ReactNode }) {
     return () => { if (backfillTimerRef.current) clearTimeout(backfillTimerRef.current) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isUnlocked, cryptoReady, sync.ready, sync.treeVersion, reconcileFromTree])
-
-  useEffect(() => {
-    getPreference<{ pool_name: string }>('storage_region')
-      .then(pref => { if (pref?.pool_name) setStorageRegion(pref.pool_name) })
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    function onRegionChanged() {
-      getPreference<{ pool_name: string }>('storage_region')
-        .then(pref => { if (pref?.pool_name) setStorageRegion(pref.pool_name) })
-        .catch(() => {})
-    }
-    window.addEventListener('beebeeb:region-changed', onRegionChanged)
-    return () => {
-      window.removeEventListener('beebeeb:region-changed', onRegionChanged)
-    }
-  }, [])
 
   function handleQuickAccessDragOver(e: DragEvent<HTMLDivElement>) {
     if (e.dataTransfer.types.includes('application/beebeeb-folder')) {
@@ -413,14 +399,22 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             return { ...invite, decryptedName: 'Shared folder' }
           }
           const keys = await getFolderKeys(invite.id)
-          const resolved = await resolveRecipientFolderKey(invite, getMasterKey(), keys)
+          // L7b: the folder's format comes from its custody record, never a guess.
+          const format = await folderWrapFormat(invite.file_id)
+          const resolved = await resolveRecipientFolderKey(invite, getMasterKey(), keys, format)
           if (resolved.status !== 'ok') {
             return { ...invite, decryptedName: 'Shared folder' }
           }
           const folderKey = resolved.folderKey
+          if (format === 'l7') markCustodySeen(invite.file_id)
           const folderEntry = keys.find(k => k.file_id === invite.file_id)
           if (folderEntry) {
-            const fileKey = await decryptChildFileKey(folderKey, folderEntry.encrypted_file_key)
+            const fileKey = await openFolderChild(
+              format,
+              folderKey,
+              { rootId: invite.file_id, itemId: invite.file_id, isFolder: true },
+              folderEntry.encrypted_file_key,
+            )
             const { name } = await decryptFileMetadata(fileKey, invite.file_name_encrypted)
             return { ...invite, decryptedName: name }
           }
@@ -577,7 +571,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           usedBytes={resolvedUsedBytes}
           quotaBytes={resolvedQuotaBytes}
           planLabel={planLabel}
-          storageRegion={storageRegion}
+          regionLabel={sidebarRegionLabel(regions.preferred, regions.choices)}
         />
 
         {isAdmin && (
@@ -665,6 +659,8 @@ export function DriveLayout({ children }: { children: ReactNode }) {
         <IosAppBanner />
         <AnnouncementBanner />
         <EmailVerifyBanner />
+        {/* Task 1918 round 4: a pending "erase all files" request, with Cancel. */}
+        <EraseRequestBanner />
         <TrialBanner />
         <TrialEndedAllowanceNotice />
         {isFrozen && (

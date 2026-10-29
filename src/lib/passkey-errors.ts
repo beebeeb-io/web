@@ -42,3 +42,24 @@ export function passkeyErrorMessage(err: unknown): string {
   if (LIBRARY_RE.test(msg)) return GENERIC_VERIFY
   return msg
 }
+
+/**
+ * Task 1865 — the SIGN-IN ceremony. Since server 1784 `/auth/passkey/login-start`
+ * answers 200 with a decoy challenge for an unknown email, a locked account, or
+ * an account without a passkey (enumeration-safe). The browser then shows its
+ * own "no passkey for this site" sheet and a cancel rejects `credentials.get`
+ * with NotAllowedError. The sentence below must stay account-neutral: it may
+ * not say the account is missing or has no passkey, or it undoes that.
+ */
+export const PASSKEY_LOGIN_NEUTRAL =
+  'No passkey was used. If you have not set one up on this device, sign in with your password.'
+
+const LOGIN_FALLBACK = 'Passkey sign-in failed. Please try again.'
+
+export function passkeyLoginErrorMessage(err: unknown): string {
+  if (!(err instanceof Error)) return LOGIN_FALLBACK
+  if (err.name === 'NotAllowedError' || err.name === 'AbortError' || err.name === 'TimeoutError') {
+    return PASSKEY_LOGIN_NEUTRAL
+  }
+  return err.message.trim() || LOGIN_FALLBACK
+}

@@ -24,6 +24,7 @@ import {
   expectedUserHeaders,
   registerOnTokenCleared,
   registerSessionExpiredHandler,
+  readErrorResponse,
   request,
   resolveSessionToken,
   setApiUrl,
@@ -31,13 +32,18 @@ import {
   setToken,
 } from '@beebeeb/shared'
 import type {
-  AbuseReport,
-  AbuseReportStatus,
+  CreateFolderLinkRequest,
+  FolderAccessLevel,
+  FolderLink,
+  FolderLinkCreated,
+  SharedFolderActivityResponse,
+  UpdateFolderLinkRequest,
+} from './folder-link-types'
+import type {
   AcceptInviteResponse,
   AccountActivity,
   AccountSession,
   ActivityResponse,
-  AdminStats,
   AuditEvent,
   AuthUser,
   BillingUsage,
@@ -50,7 +56,6 @@ import type {
   DriveFile,
   FileVersion,
   HealthResponse,
-  ImpersonateResponse,
   InviteActivity,
   InviteInfo,
   InvitePreview,
@@ -100,6 +105,8 @@ import type {
 } from '@beebeeb/shared'
 import { parsePitch } from './coupon'
 import type { CouponPitch, CouponRedeemed } from './coupon'
+import { withServerBusyRetry } from './server-busy-retry'
+import { postEraseRequestOnce } from './erase-request-transport'
 
 export const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 const STATUS_URL = import.meta.env.VITE_STATUS_URL || 'https://status.beebeeb.io'
@@ -706,11 +713,9 @@ export async function confirmAction(
   }
 
   if (!startRes.ok) {
-    const body = (await startRes
-      .json()
-      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(startRes)
     throw new ApiError(
-      (body.message ?? body.error ?? startRes.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       startRes.status,
     )
   }
@@ -758,11 +763,9 @@ export async function confirmAction(
     throw new IncorrectPasswordError()
   }
   if (!finishRes.ok) {
-    const body = (await finishRes
-      .json()
-      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(finishRes)
     throw new ApiError(
-      (body.message ?? body.error ?? finishRes.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       finishRes.status,
     )
   }
@@ -811,9 +814,9 @@ async function confirmActionPlaintext(
     throw new IncorrectPasswordError()
   }
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
@@ -853,11 +856,9 @@ export async function confirmPasskey(
   })
 
   if (!startRes.ok) {
-    const body = (await startRes
-      .json()
-      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(startRes)
     throw new ApiError(
-      (body.message ?? body.error ?? startRes.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       startRes.status,
     )
   }
@@ -893,11 +894,9 @@ export async function confirmPasskey(
     throw new ApiError('Passkey confirmation failed', 401)
   }
   if (!finishRes.ok) {
-    const body = (await finishRes
-      .json()
-      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(finishRes)
     throw new ApiError(
-      (body.message ?? body.error ?? finishRes.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       finishRes.status,
     )
   }
@@ -1083,6 +1082,8 @@ export async function createFolder(
 interface UploadInitV1Response {
   file_id: string
   chunk_count: number
+  /** Task 2062 — the pool chosen at init. */
+  storage_location?: { country?: string | null } | null
 }
 
 interface UploadInitV2Response {
@@ -1095,6 +1096,8 @@ interface UploadInitV2Response {
   storage_format_version: number
   storage_pool_id: string
   region: string
+  /** Task 2062 — `{ region, country, country_code }` for the pool chosen at init; no city. */
+  storage_location?: { country?: string | null } | null
 }
 
 export type UploadInitResponse =
@@ -1192,7 +1195,7 @@ async function uploadChunkRequest(
   }
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     // Carry the machine-readable `error` code (e.g. `object_budget_exceeded`,
     // `quota_exceeded`) through as ApiError.code so the upload error boundary
     // can branch on it. Chunk uploads use raw fetch(), so unlike the shared
@@ -1203,7 +1206,7 @@ async function uploadChunkRequest(
     // carries `is_trial_cap`/`limit_bytes`/`used_bytes` the same way a
     // request()-routed one does.
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
       code,
       body,
@@ -1303,8 +1306,20 @@ export async function bulkTrashFiles(
   )
 }
 
-export async function restoreFile(id: string): Promise<void> {
-  await request<void>(`/api/v1/files/${id}/restore`, { method: 'POST' })
+/** What a restore did. `complete: false` (202, task 1918 round 4): the folder's trash group is
+ *  larger than one request may touch; the server restores the rest in the background. */
+export interface RestoreFileResult {
+  complete: boolean
+  remaining: number | null
+}
+
+export async function restoreFile(id: string): Promise<RestoreFileResult> {
+  const body = await request<unknown>(`/api/v1/files/${id}/restore`, { method: 'POST' })
+  const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+  return {
+    complete: b.complete !== false,
+    remaining: typeof b.remaining === 'number' ? b.remaining : null,
+  }
 }
 
 export async function permanentDeleteFile(
@@ -1396,6 +1411,36 @@ export async function getSyncOps(since: number): Promise<SyncOp[]> {
     `/api/v1/sync/ops?since=${encodeURIComponent(String(since))}`,
   )
   return data.ops ?? []
+}
+
+/**
+ * Task 1973 (server#233): a sync op as a server that numbers each user's ops
+ * sends it. `user_seq` is the op's place in its user's own gap-free sequence;
+ * `null` for an op recorded before that deploy, absent on an older server.
+ */
+export type UserSeqSyncOp = SyncOp & { user_seq?: number | null }
+
+/** Task 1973: a snapshot from a server that numbers ops carries a numeric `user_seq`. */
+export type UserSeqSyncSnapshot = SyncSnapshot & { user_seq?: number | null }
+
+/** Task 1973: one `GET /sync/ops?since_user_seq=` page plus the server's heads. */
+export interface UserSeqSyncOpsPage {
+  ops: UserSeqSyncOp[]
+  head_seq?: number
+  /** The user's newest `user_seq`, read in the same statement as the page. */
+  head_user_seq?: number
+}
+
+/**
+ * Task 1973: this user's ops with `user_seq > sinceUserSeq`, ascending by
+ * `user_seq`. An older server ignores the parameter (and has no
+ * `head_user_seq`); the caller treats that as a failed catch-up.
+ */
+export async function getSyncOpsSinceUserSeq(sinceUserSeq: number): Promise<UserSeqSyncOpsPage> {
+  const data = await request<UserSeqSyncOpsPage>(
+    `/api/v1/sync/ops?since_user_seq=${encodeURIComponent(String(sinceUserSeq))}`,
+  )
+  return { ops: data.ops ?? [], head_seq: data.head_seq, head_user_seq: data.head_user_seq }
 }
 
 export async function submitSyncOps(ops: SubmittedSyncOp[]): Promise<SyncOpsResult> {
@@ -1568,6 +1613,36 @@ export async function deleteAccountPermanently(
   return data
 }
 
+// Task 1918: "Erase all files" from the locked screen is a server-side request with a
+// cooldown that only ever moves files to the trash (pure logic: `./erase-request.ts`).
+
+/** `GET /api/v1/account/erase-request`: the pending request (or null) and the live item count. */
+export async function getEraseRequest(): Promise<unknown> {
+  return request<unknown>('/api/v1/account/erase-request')
+}
+
+/**
+ * `POST /api/v1/account/erase-request`: `confirmCount` must equal the server's live item count.
+ * Sent exactly once (task 1918 round 4): the step-up token is single-use, so a retry could only
+ * ever be refused, and would hide the real outcome. See `erase-request-transport.ts`.
+ */
+export async function createEraseRequest(confirmCount: number, confirmToken: string): Promise<unknown> {
+  return postEraseRequestOnce(confirmCount, confirmToken)
+}
+
+/** `POST /api/v1/account/erase-request/cancel`: any signed-in session of the account. */
+export async function cancelEraseRequest(): Promise<unknown> {
+  return request<unknown>('/api/v1/account/erase-request/cancel', { method: 'POST' })
+}
+
+/**
+ * `POST /api/v1/account/erase-request/{id}/restore` (task 1918 round 4): restore everything that
+ * erase moved to the trash. 200 = all back; 202 = the server continues in the background.
+ */
+export async function restoreEraseRequest(requestId: string): Promise<unknown> {
+  return request<unknown>(`/api/v1/account/erase-request/${encodeURIComponent(requestId)}/restore`, { method: 'POST' })
+}
+
 export async function changeEmail(
   newEmail: string,
   password: string,
@@ -1652,9 +1727,9 @@ export async function getShare(
   const res = await fetch(`${API_URL}/api/v1/shares/${token}${qs ? `?${qs}` : ''}`)
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
@@ -1714,9 +1789,9 @@ export async function verifySharePassphrase(
   })
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
@@ -1830,6 +1905,10 @@ export async function createInvite(
     encrypted_folder_key: string
     encrypted_owner_folder_key: string
     folder_keys: { file_id: string; encrypted_file_key: string }[]
+    /** base64 of core's folder_key_id for the key used (task 2133). */
+    folder_key_id: string
+    /** Contract 2237 §1: `l7` exactly when `folder_keys` are L7 wraps. */
+    format?: 'l7'
   },
 ): Promise<{ invite_id: string; status: string; recipient_public_key?: string | null }> {
   return request('/api/v1/shares/invites', {
@@ -2352,6 +2431,63 @@ export async function getBillingInvoices(): Promise<BillingInvoice[]> {
   }))
 }
 
+/** A row from GET /api/v1/billing/credit-notes (task 1899). Amounts are NEGATIVE
+ *  cents: the server surfaces the credit-note sign, the table stores them positive. */
+export interface BillingCreditNote {
+  id: string
+  credit_note_number: string
+  credit_note_date: string
+  original_invoice_number: string
+  reason: string
+  currency: string
+  amount_gross_cents: number
+  amount_net_cents: number
+  vat_amount_cents: number
+  vat_rate_bps: number
+  vat_treatment: VatTreatment
+  status: string
+}
+
+/** Raw credit-note row as the server sends it (`number`, plus a `pdf_url` we do
+ *  not use: the download goes through `downloadCreditNotePdf(id)`). */
+export interface RawBillingCreditNote extends Omit<BillingCreditNote, 'credit_note_number'> {
+  number: string
+  pdf_url?: string
+}
+
+/** Normalise the server's credit-note rows (`number` -> `credit_note_number`). */
+export function mapBillingCreditNotes(
+  raw: { credit_notes?: RawBillingCreditNote[] } | null | undefined,
+): BillingCreditNote[] {
+  return (raw?.credit_notes ?? []).map(({ number, pdf_url: _pdfUrl, ...rest }) => ({
+    ...rest,
+    credit_note_number: number,
+  }))
+}
+
+/** GET /api/v1/billing/credit-notes: the caller's credit notes, newest first. */
+export async function getBillingCreditNotes(): Promise<BillingCreditNote[]> {
+  return mapBillingCreditNotes(
+    await request<{ credit_notes: RawBillingCreditNote[] }>('/api/v1/billing/credit-notes'),
+  )
+}
+
+/** Download a credit-note PDF. Same authenticated blob pattern as the invoice PDF:
+ *  bearer header + cookie, never a token in the URL. */
+export async function downloadCreditNotePdf(creditNoteId: string): Promise<Blob> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(
+    `${API_URL}/api/v1/billing/credit-notes/${creditNoteId}/pdf`,
+    { headers, credentials: 'include' },
+  )
+  if (!res.ok) {
+    throw new ApiError(res.statusText, res.status)
+  }
+  return res.blob()
+}
+
 /**
  * Download an invoice PDF (GET /api/v1/billing/invoices/{id}/pdf). The endpoint
  * is authenticated, so we fetch with the bearer token + cookie and hand back a
@@ -2651,6 +2787,9 @@ export interface TrialPayNowResult {
   status?: string
   amount_cents?: number
   pending?: boolean
+  /** Task 2092: a hosted checkout, set exactly when `status` is `open`. */
+  checkout_url?: string | null
+  reused?: boolean
 }
 
 export async function payTrialNow(): Promise<TrialPayNowResult> {
@@ -2710,21 +2849,6 @@ export async function pauseSubscription(
 /** POST /api/v1/billing/resume — clear pause_collection and restart billing now. */
 export async function resumeSubscription(): Promise<{ message: string }> {
   return request('/api/v1/billing/resume', { method: 'POST' })
-}
-
-/** GET /api/v1/billing/winback-eligible — is the user eligible for the one-time win-back offer? */
-export async function getWinbackEligible(): Promise<{ eligible: boolean }> {
-  return request<{ eligible: boolean }>('/api/v1/billing/winback-eligible')
-}
-
-export interface WinbackClaimResponse {
-  discount_pct: number
-  months: number
-}
-
-/** POST /api/v1/billing/winback-claim — apply the 50%-off-3-months coupon. 409 if already claimed. */
-export async function claimWinback(): Promise<WinbackClaimResponse> {
-  return request<WinbackClaimResponse>('/api/v1/billing/winback-claim', { method: 'POST' })
 }
 
 export async function switchBillingCycle(
@@ -3047,10 +3171,13 @@ export async function getFolderKeys(
 export async function addFolderKeys(
   inviteId: string,
   keys: { file_id: string; encrypted_file_key: string }[],
+  folderKeyId: string,
+  /** Contract 2237 §1: `l7` exactly when `keys` are L7 wraps; absent for legacy. */
+  format?: 'l7',
 ): Promise<void> {
   await request(`/api/v1/shares/invites/${inviteId}/folder-keys`, {
     method: 'POST',
-    body: JSON.stringify({ keys }),
+    body: JSON.stringify(format ? { keys, folder_key_id: folderKeyId, format } : { keys, folder_key_id: folderKeyId }),
   })
 }
 
@@ -3437,9 +3564,9 @@ export async function getInvitePreview(
   // Public endpoint — no auth header needed
   const res = await fetch(`${API_URL}/api/v1/workspaces/invite-preview/${token}`)
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
@@ -3548,13 +3675,6 @@ export async function revokeSession(id: string): Promise<void> {
   await request(`/api/v1/auth/sessions/${id}`, { method: 'DELETE' })
 }
 
-export async function adminImpersonate(userId: string): Promise<ImpersonateResponse> {
-  const data = await request<ImpersonateResponse>(`/api/v1/admin/impersonate/${userId}`, {
-    method: 'POST',
-  })
-  return data
-}
-
 /**
  * Token-based impersonation redemption (task 0161). Public endpoint — the
  * single-use 15-minute token in the body is itself the credential. On success
@@ -3582,15 +3702,6 @@ export async function redeemImpersonationToken(
     setToken(data.session_token)
   }
   return data
-}
-
-/**
- * Used by drive-layout to gate the sidebar Admin link. The actual
- * admin portal lives at admin.beebeeb.io — this just answers the
- * question "is the current user allowed to see the link at all".
- */
-export async function getAdminStats(): Promise<AdminStats> {
-  return request<AdminStats>('/api/v1/admin/stats')
 }
 
 /**
@@ -3693,38 +3804,14 @@ export async function reportShareLink(
   })
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
 
   return res.json() as Promise<{ id: string }>
-}
-
-export async function listAbuseReports(params?: {
-  status?: AbuseReportStatus
-  limit?: number
-}): Promise<AbuseReport[]> {
-  const qs = new URLSearchParams()
-  if (params?.status) qs.set('status', params.status)
-  if (params?.limit != null) qs.set('limit', String(params.limit))
-  const q = qs.toString()
-  const data = await request<{ reports: AbuseReport[]; count: number }>(
-    `/api/v1/admin/reports${q ? `?${q}` : ''}`,
-  )
-  return data.reports
-}
-
-export async function updateAbuseReport(
-  id: string,
-  updates: { status: AbuseReportStatus; admin_notes?: string },
-): Promise<{ id: string; status: AbuseReportStatus; resolved_at: string | null; message: string }> {
-  return request(`/api/v1/admin/reports/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify(updates),
-  })
 }
 
 /**
@@ -3983,18 +4070,35 @@ export async function unfreezeAccount(): Promise<{ frozen: boolean }> {
   return request<{ frozen: boolean }>('/api/v1/me/unfreeze', { method: 'POST' })
 }
 
-/** GET /api/v1/me/region — current user's preferred region + available list */
-export async function getUserRegion(): Promise<UserRegionResponse> {
-  return request<UserRegionResponse>('/api/v1/me/region')
+/**
+ * GET /api/v1/me/region — the stored preference plus the server's list of
+ * choices (task 1919). `choices` is the same array as the public
+ * `GET /api/v1/storage-regions`; it is absent on a server older than 1919, so
+ * it is typed `unknown` and validated by `parseChoices()`.
+ */
+export type UserRegionData = UserRegionResponse & { choices?: unknown }
+
+export async function getUserRegion(): Promise<UserRegionData> {
+  return request<UserRegionData>('/api/v1/me/region')
 }
 
-/** PUT /api/v1/me/region — set preferred region.
- * Server (regions.rs `SetRegionBody`) deserializes ONLY `preferred_region`;
- * sending `{continent}` silently dropped the value and cleared the preference. */
-export async function setUserRegion(continent: string): Promise<{ preferred_region: string | null }> {
-  return request<{ preferred_region: string | null }>('/api/v1/me/region', {
+/** PUT /api/v1/me/region — set where new uploads go.
+ * Send the `id` of a choice from the list verbatim (the default row's id, or a
+ * live country's id), or `null` to clear the preference. The server answers
+ * 400 `region_unavailable` for anything it does not offer as live (coming soon,
+ * unknown), and the stored value stays unchanged. PUT replaces the whole
+ * choice: an omitted `region_strict` means false, and strict needs a country
+ * (400 `region_strict_requires_datacenter` otherwise; the code predates 2050).
+ * Server (regions.rs `SetRegionBody`) deserializes ONLY `preferred_region` and
+ * `region_strict`; sending `{continent}` silently dropped the value and cleared
+ * the preference. */
+export async function setUserRegion(
+  id: string | null,
+  strict = false,
+): Promise<{ preferred_region: string | null; region_strict?: boolean }> {
+  return request<{ preferred_region: string | null; region_strict?: boolean }>('/api/v1/me/region', {
     method: 'PUT',
-    body: JSON.stringify({ preferred_region: continent }),
+    body: JSON.stringify({ preferred_region: id, region_strict: strict }),
   })
 }
 
@@ -4195,10 +4299,15 @@ export async function uploadToFileRequest(
   token: string,
   formData: FormData,
 ): Promise<{ file_id: string; files_received: number; total_bytes_received: number; message: string }> {
-  const res = await fetch(`${getApiUrl()}/api/v1/r/${encodeURIComponent(token)}/upload`, {
-    method: 'POST',
-    body: formData,
-  })
+  // Task 1870: a `429 server_busy` is retried after Retry-After; the per-link
+  // `upload_rate_limited` 429 is not (see server-busy-retry.ts). The FormData
+  // is a reusable body, so the same instance is re-sent.
+  const res = await withServerBusyRetry(() =>
+    fetch(`${getApiUrl()}/api/v1/r/${encodeURIComponent(token)}/upload`, {
+      method: 'POST',
+      body: formData,
+    }),
+  )
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: 'Upload failed' })) as Record<string, unknown>
     throw new ApiError(
@@ -4330,4 +4439,163 @@ export async function replyToSupportTicket(
     method: 'POST',
     body: JSON.stringify({ body }),
   })
+}
+
+// ─── Shared-folder links (task 2237b) ───────────────────────────────────────
+// Thin wrappers only: every decision (key custody, passphrase, copy) lives in
+// the link modules, not here.
+
+/** Owner: every live link on a folder they own. */
+export async function listFolderLinks(folderId: string): Promise<FolderLink[]> {
+  const body = await request<{ links: FolderLink[] }>(
+    `/api/v1/shares/folder-links?folder_id=${encodeURIComponent(folderId)}`,
+  )
+  return body.links
+}
+
+export async function createFolderLink(req: CreateFolderLinkRequest): Promise<FolderLinkCreated> {
+  return request<FolderLinkCreated>('/api/v1/shares/folder-links', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+export async function updateFolderLink(
+  id: string,
+  patch: UpdateFolderLinkRequest,
+): Promise<FolderLink> {
+  return request<FolderLink>(`/api/v1/shares/folder-links/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+}
+
+export async function revokeFolderLink(id: string): Promise<void> {
+  await request<unknown>(`/api/v1/shares/folder-links/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+export interface SharedFolderInfo {
+  folder_id: string
+  role: 'owner' | 'member'
+  access_level: FolderAccessLevel
+  key_version: number
+  owner_wrapped_folder_key: string | null
+  wrapped_folder_key: string | null
+}
+
+/** Owner or member: custody of the shared folder's key. */
+export async function getSharedFolder(folderId: string): Promise<SharedFolderInfo> {
+  return request<SharedFolderInfo>(`/api/v1/shared-folders/${encodeURIComponent(folderId)}`)
+}
+
+/** Owner: publish the folder key wrapped to the master key. */
+export async function registerSharedFolderKey(
+  folderId: string,
+  body: { owner_wrapped_folder_key: string; key_version: number },
+): Promise<{ created: boolean; key_version: number }> {
+  return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/key`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+/** One legacy (unbound) child row of a folder that has no custody record yet. */
+export interface LegacyFolderKeyRow {
+  file_id: string
+  /** base64 of the legacy child wrap (empty AAD). */
+  encrypted_file_key: string
+  /** The row's L7 kind once it is re-sealed. */
+  is_folder: boolean
+}
+
+/**
+ * Owner, only while the folder has no custody record (task 2237b L7b (a)):
+ * every legacy child row of the folder, trashed and moved-out children
+ * included. 409 `custody_exists` once custody exists; 413 over the one-call cap.
+ */
+export async function listLegacyFolderKeys(folderId: string): Promise<LegacyFolderKeyRow[]> {
+  const body = await request<{ keys: LegacyFolderKeyRow[] }>(
+    `/api/v1/shared-folders/${encodeURIComponent(folderId)}/legacy-keys`,
+  )
+  return body.keys
+}
+
+/**
+ * Owner: the custody upgrade of a folder whose legacy rows predate custody
+ * (L7b (a), contract 2237 §2): the custody record AND every legacy row,
+ * re-sealed as L7, in one atomic call. It always says `format: "l7"` (§1) and
+ * always carries `rewrap`, even empty: an upgrade is never a plain registration.
+ *
+ * THE ONE PLACE to change if server #353 settles a different route or body.
+ * Coded against #353 (feat/2237b-a-custody-upgrade) and the contract as of
+ * 2026-10-28: `PUT .../key` with `rewrap: { keys }`; 409 `rewrap_incomplete`
+ * (the rows changed), 409 `custody_exists` (upgraded elsewhere), 413 (too many).
+ */
+export async function upgradeSharedFolderCustody(
+  folderId: string,
+  upgrade: { ownerWrappedFolderKey: string; keys: { file_id: string; encrypted_file_key: string }[] },
+): Promise<{ created: boolean; key_version: number; rewrapped?: number }> {
+  return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/key`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      owner_wrapped_folder_key: upgrade.ownerWrappedFolderKey,
+      key_version: 1,
+      format: 'l7',
+      rewrap: { keys: upgrade.keys },
+    }),
+  })
+}
+
+/** Owner or member: the wrapped key of every file in the shared subtree. */
+export async function listSharedFolderKeys(
+  folderId: string,
+  opts: { limit?: number; cursor?: string | null } = {},
+): Promise<{ keys: { file_id: string; encrypted_file_key: string }[]; next_cursor: string | null }> {
+  const params = new URLSearchParams()
+  if (opts.limit !== undefined) params.set('limit', String(opts.limit))
+  if (opts.cursor) params.set('cursor', opts.cursor)
+  const query = params.toString()
+  return request(
+    `/api/v1/shared-folders/${encodeURIComponent(folderId)}/keys${query ? `?${query}` : ''}`,
+  )
+}
+
+/**
+ * Owner-only insert of per-file wraps; existing rows remain unchanged. The
+ * route serves custody folders only, so its wraps are always L7 and say so
+ * (contract 2237 §1).
+ */
+export async function publishSharedFolderKeys(
+  folderId: string,
+  keys: { file_id: string; encrypted_file_key: string }[],
+): Promise<{ written: number; skipped: number }> {
+  return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/keys`, {
+    method: 'POST', body: JSON.stringify({ keys, format: 'l7' }),
+  })
+}
+
+/** Owner: adopt a file a guest added, by wrapping its key to the master key. */
+export async function adoptOwnerFileKey(
+  fileId: string,
+  ownerWrappedFileKey: string,
+): Promise<{ adopted: boolean }> {
+  return request(`/api/v1/files/${encodeURIComponent(fileId)}/owner-key`, {
+    method: 'POST',
+    body: JSON.stringify({ owner_wrapped_file_key: ownerWrappedFileKey }),
+  })
+}
+
+export async function getSharedFolderActivity(
+  folderId: string,
+  limit?: number,
+): Promise<SharedFolderActivityResponse> {
+  const query = limit === undefined ? '' : `?limit=${limit}`
+  return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/activity${query}`)
+}
+
+/** Runtime feature flags for this session (cached by useFeatureFlag). */
+export async function getEvaluateFlags(): Promise<{ flags: Record<string, boolean> }> {
+  return request('/api/v1/feature-flags/evaluate')
 }

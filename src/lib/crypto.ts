@@ -13,6 +13,7 @@
 
 import * as Comlink from 'comlink'
 import type { CryptoWorker, CeremonyOps, CeremonyResult } from '../workers/crypto.worker'
+import type { ContentPin, DecryptSummary, PinnedMetadata } from './content-crypto'
 
 /** Soft cap on WASM linear-memory bytes before we recycle the worker. */
 const MEMORY_THRESHOLD_BYTES = 256 * 1024 * 1024
@@ -120,27 +121,39 @@ async function withProxy<T>(
 }
 
 /**
+ * True while the worker owns a stateful instance that a recycle would orphan:
+ * each is a pointer into THIS worker's WASM memory, addressed from the main
+ * thread by handle. A streaming encryptor (an upload; terminating mid-upload
+ * would break finish()'s integrity guard), a content decryptor (a download,
+ * task 1943), the search index (B4; long-lived, tiny) or a signup ceremony
+ * (password, phrase and master key, task 1745). Direct proxy calls: they do
+ * not count as in-flight ops.
+ */
+async function hasLiveWorkerInstances(proxy: Comlink.Remote<CryptoWorker>): Promise<boolean> {
+  return (
+    (await proxy.liveEncryptorCount()) > 0 ||
+    (await proxy.liveDecryptorCount()) > 0 ||
+    (await proxy.liveSearchIndexCount()) > 0 ||
+    (await proxy.liveCeremonyCount()) > 0
+  )
+}
+
+/**
  * Check WASM memory usage; if above the threshold, terminate the worker
  * and spawn a fresh one. Safe to call concurrently — `restartPromise`
  * serializes the actual swap.
  */
 async function maybeRestart(): Promise<void> {
   if (restartPromise || !workerProxy) return
-  // LIVE-ENCRYPTOR GUARD: never recycle the worker while a streaming upload
-  // owns an encryptor. A `WasmChunkEncryptor` is a pointer into THIS worker's
-  // linear memory; terminating the worker mid-upload would orphan it and break
-  // finish()'s integrity guard. Check before taking the restart lock.
-  // The same guard applies to a live `WasmSearchIndex` (B4): it is a long-lived
-  // worker-owned struct the search hook keeps for the whole unlocked session, so
-  // recycling the worker would orphan its handle. The index is name-only (tiny),
-  // so blocking the recycle while one is live costs nothing — the memory cap is
-  // only ever hit by a large streaming upload, which the encryptor guard covers.
+  // LIVE-INSTANCE GUARD (hasLiveWorkerInstances): never recycle the worker
+  // while it owns an encryptor, a content decryptor, the search index or a
+  // signup ceremony. Checked here, before taking the restart lock, and again
+  // under the lock once in-flight ops have drained. The index is name-only
+  // (tiny), so blocking the recycle while one is live costs nothing: the
+  // memory cap is only ever hit by a large upload or download, which the
+  // encryptor and decryptor guards cover.
   try {
-    if ((await workerProxy.liveEncryptorCount()) > 0) return
-    if ((await workerProxy.liveSearchIndexCount()) > 0) return
-    // A live signup ceremony holds the password / phrase / master key in this
-    // worker's WASM memory (task 1745); recycling would silently lose them.
-    if ((await workerProxy.liveCeremonyCount()) > 0) return
+    if (await hasLiveWorkerInstances(workerProxy)) return
   } catch (err) {
     // Worker went away (terminate raced us) — bail; the next op lazily re-inits.
     console.warn('[crypto] live-instance count failed', err)
@@ -169,6 +182,13 @@ async function maybeRestart(): Promise<void> {
   restartPromise = (async () => {
     try {
       await waitForIdle()
+      // Re-check under the lock (Codex P2 on web#170): an op admitted between
+      // the check above and taking the lock (a download creating its
+      // decryptor, an upload its encryptor) has now finished and may own a
+      // live instance in this worker. Recycling now would orphan its handle.
+      // New ops stay blocked until this promise settles.
+      const current = workerProxy
+      if (!current || (await hasLiveWorkerInstances(current))) return
       const oldWorker = currentWorker
       currentWorker = null
       workerProxy = null
@@ -206,6 +226,17 @@ export const __cryptoRestartInternals = {
   getInFlight: () => inFlight,
   getMemoryThresholdBytes: () => MEMORY_THRESHOLD_BYTES,
   isRestarting: () => restartPromise !== null,
+  /** Test-only: the memory check every 16th completed op triggers, run now. */
+  checkMemoryNow: () => maybeRestart(),
+  /** Test-only: forget a test's fake worker (terminates nothing). */
+  forgetWorkerForTests: () => {
+    currentWorker = null
+    workerProxy = null
+    initPromise = null
+    restartPromise = null
+    inFlight = 0
+    opsSinceMemCheck = 0
+  },
 }
 
 // ─── Key derivation ─────────────────────────────────
@@ -246,13 +277,167 @@ export async function encryptChunk(
   }
 }
 
-/** Decrypt a chunk that was encrypted with encryptChunk. */
+/**
+ * Open a blob sealed with `encryptChunk`: generic AES-256-GCM, NO associated
+ * data. For KEY UNWRAPPING only (folder keys, user-to-user share keys).
+ *
+ * Never for file content (task 1908 / 1943): it has no position, opens only
+ * v1 frames and cannot be told the file's pin. File content goes through
+ * `startDecryptStream` with the pin from `readFileMetadata`. Never for names
+ * or notes either (core's readers: `readFileMetadata`, `readNameMetadata`,
+ * `decryptNote`). test/1943-no-generic-content-decrypt.test.ts holds the list
+ * of files allowed to call this.
+ */
 export async function decryptChunk(
   fileKey: Uint8Array,
   nonce: Uint8Array,
   ciphertext: Uint8Array,
 ): Promise<Uint8Array> {
   return withProxy((p) => p.decryptChunk(fileKey, nonce, ciphertext))
+}
+
+/**
+ * Task 2237b — `combine_folder_link_key(K_c, stretch)` from core.
+ *
+ * The one place a link's unwrap key is produced. `stretch` is the Argon2id
+ * output for a passphrase link and null for a plain one; the two never mix.
+ */
+export async function combineFolderLinkKey(
+  linkKey: Uint8Array,
+  passphraseStretch: Uint8Array | null = null,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.combineFolderLinkKey(linkKey, passphraseStretch))
+}
+
+/** Task 2237b — the per-bucket key of a shared folder's search index. */
+export async function deriveSharedFolderIndexKey(
+  folderKey: Uint8Array,
+  bucket: number,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.deriveSharedFolderIndexKey(folderKey, bucket))
+}
+
+// ─── File content, metadata pins and notes (core 1908, task 1943) ───────────
+//
+// Core chunk format v2 binds every content frame to its file, its upload and
+// its position. Which format a file's content is in is recorded INSIDE its
+// encrypted metadata ("the pin"); every content reader, note writer and
+// replace upload reads it with core's FILE reader, never from a server field.
+// The crypto runs in the worker (`createContentOps`, src/lib/content-crypto.ts).
+
+export {
+  PIN_UNRECORDED,
+  PIN_V2,
+  toContentPin,
+  UnverifiedFileMetadataError,
+  type ContentPin,
+  type DecryptSummary,
+  type PinnedMetadata,
+} from './content-crypto'
+
+/**
+ * Core's metadata reader for FILES: name, MIME type and the content pin.
+ * Throws when the name is plaintext, does not open under `fileKey`, or records
+ * a format this core does not know. Use its `pin` for every content read, note
+ * write and replace of that file.
+ */
+export async function readFileMetadata(fileKey: Uint8Array, nameEncrypted: string): Promise<PinnedMetadata> {
+  return withProxy((p) => p.readFileMetadata(fileKey, nameEncrypted))
+}
+
+/**
+ * Core's display / folder reader: like `readFileMetadata`, but a plaintext
+ * legacy name reads as itself (pin 0). For showing names and for folders;
+ * never the source of a FILE's content pin.
+ */
+export async function readNameMetadata(fileKey: Uint8Array, nameEncrypted: string): Promise<PinnedMetadata> {
+  return withProxy((p) => p.readNameMetadata(fileKey, nameEncrypted))
+}
+
+/** Seal a note of an EXISTING file or folder under the rule of its recorded pin (see src/lib/file-note.ts). */
+export async function encryptNoteFor(fileKey: Uint8Array, text: string, pin: ContentPin): Promise<string> {
+  return withProxy((p) => p.encryptNoteFor(fileKey, text, pin))
+}
+
+/** Open a note: the note subkey first, then the legacy raw key. Throws on plaintext or a wrong key. */
+export async function decryptNote(fileKey: Uint8Array, noteEncrypted: string): Promise<string> {
+  return withProxy((p) => p.decryptNote(fileKey, noteEncrypted))
+}
+
+/** The worker calls a content decryptor needs. Production: the crypto worker over Comlink. */
+export interface DecryptorPort {
+  decryptorPushFrame(handle: number, frame: Uint8Array): Promise<Uint8Array>
+  decryptorFinish(handle: number): Promise<DecryptSummary>
+  decryptorDispose(handle: number): Promise<void>
+}
+
+const workerDecryptorPort: DecryptorPort = {
+  decryptorPushFrame: (handle, frame) =>
+    withProxy((p) => p.decryptorPushFrame(handle, Comlink.transfer(frame, [frame.buffer]))),
+  decryptorFinish: (handle) => withProxy((p) => p.decryptorFinish(handle)),
+  decryptorDispose: (handle) => withProxy((p) => p.decryptorDispose(handle)),
+}
+
+/**
+ * Main-thread proxy over a worker-owned `WasmChunkDecryptor`: one file's
+ * content, single consumer, frames pushed in order from chunk 0.
+ *
+ * Contract (core 1908 checklist item 3): call `finish()` after the last frame;
+ * when `pushFrame` or `finish` throws, the file is truncated, reordered,
+ * spliced or downgraded, and the caller must DISCARD every plaintext byte it
+ * already got. `dispose()` frees a decryptor that will not be finished; it is
+ * a no-op after `finish()`.
+ */
+export class StreamingDecryptor {
+  #handle: number
+  #port: DecryptorPort
+  #consumed = false
+
+  constructor(handle: number, port: DecryptorPort = workerDecryptorPort) {
+    this.#handle = handle
+    this.#port = port
+  }
+
+  /**
+   * Open the next wire frame (`nonce || ciphertext || tag`). The frame's
+   * buffer is transferred to the worker: pass a frame that owns its buffer and
+   * do not reuse it.
+   */
+  async pushFrame(frame: Uint8Array): Promise<Uint8Array> {
+    if (this.#consumed) throw new Error('decryptor already finished or disposed')
+    return this.#port.decryptorPushFrame(this.#handle, frame)
+  }
+
+  /** End-of-stream check; consumes the handle whatever it returns. */
+  async finish(): Promise<DecryptSummary> {
+    if (this.#consumed) throw new Error('decryptor already finished or disposed')
+    this.#consumed = true
+    return this.#port.decryptorFinish(this.#handle)
+  }
+
+  /** Best-effort release for failed or aborted reads. Never throws. */
+  async dispose(): Promise<void> {
+    if (this.#consumed) return
+    this.#consumed = true
+    try {
+      await this.#port.decryptorDispose(this.#handle)
+    } catch (err) {
+      console.warn('[crypto] decryptor dispose failed', err)
+    }
+  }
+}
+
+/**
+ * Start reading one file's content. `fileId` is the id the file was uploaded
+ * under (v2 frames bind it); `pin` comes from `readFileMetadata` of that file.
+ */
+export async function startDecryptStream(
+  fileKey: Uint8Array,
+  fileId: string,
+  pin: ContentPin,
+): Promise<StreamingDecryptor> {
+  const handle = await withProxy((p) => p.createDecryptor(fileKey, fileId, pin))
+  return new StreamingDecryptor(handle)
 }
 
 // ─── Metadata (filename) encryption ─────────────────
@@ -288,69 +473,51 @@ export async function encryptFileMetadata(
   return encryptFilename(fileKey, metadataJson)
 }
 
-/** Decrypt a filename / metadata string. */
-export async function decryptFilename(
-  fileKey: Uint8Array,
-  nonce: Uint8Array,
-  ciphertext: Uint8Array,
-): Promise<string> {
-  return withProxy((p) => p.decryptFilename(fileKey, nonce, ciphertext))
-}
-
 /**
- * Batched decryption of many `(fileKey, nonce, ciphertext)` triples in one
- * Comlink round-trip. Errors are reported per item — one failure does not
- * abort the batch. See `decryptManyNames` in the worker for plaintext parsing
- * details (JSON `{name, mime_type}` vs legacy bare string).
+ * Batched name decryption of many `(fileKey, name_encrypted)` pairs in one
+ * Comlink round-trip, through core's display reader (name subkey first, then
+ * the legacy raw key; see `decryptManyNames` in the worker). Errors are
+ * reported per item; one failure does not abort the batch.
  */
 export async function decryptManyNames(
-  items: Array<{ id: string; fileKey: Uint8Array; nonce: Uint8Array; ciphertext: Uint8Array }>,
+  items: Array<{ id: string; fileKey: Uint8Array; nameEncrypted: string }>,
 ): Promise<Array<{ id: string; name?: string; mimeType?: string; error?: string }>> {
   if (items.length === 0) return []
   return withProxy((p) => p.decryptManyNames(items))
 }
 
 /**
- * Decrypt and parse the `name_encrypted` field from a DriveFile.
+ * Decrypt a DriveFile's `name_encrypted` FOR DISPLAY: `{ name, mimeType }`.
  *
- * Supports two formats:
- *   New (ZK-safe): the decrypted plaintext is `{"name":"report.pdf","mime_type":"application/pdf"}`
- *   Legacy:        the decrypted plaintext is just `"report.pdf"` (a bare filename string)
+ * Core's display reader does the work (task 1943): the name subkey first (names
+ * sealed since core 1908), then the legacy raw key, both envelope shapes, a
+ * JSON `{"name","mime_type"}` plaintext or a bare legacy filename, and a
+ * plaintext (never encrypted) legacy name as itself. Never throws: an
+ * unreadable name shows as "Encrypted file".
  *
- * Always returns `{ name, mimeType }` regardless of format, so callers
- * are insulated from the migration.
+ * Not the source of a file's content pin: content reads, note writes and
+ * replace uploads use `readFileMetadata`, which refuses what this tolerates.
  */
 export async function decryptFileMetadata(
   fileKey: Uint8Array,
   nameEncrypted: string,
 ): Promise<{ name: string; mimeType: string | null }> {
-  let name = 'Encrypted file'
-  let mimeType: string | null = null
-
-  // Legacy: some folders were stored with plaintext names before encryption
-  // was implemented. If the value doesn't look like JSON, return it as-is.
+  // A plaintext legacy name (folders created before name encryption) is shown
+  // as-is: exactly what core's reader does, without a worker round trip.
   if (!nameEncrypted.startsWith('{')) {
     return { name: nameEncrypted, mimeType: null }
   }
-
   try {
-    const { nonce, ciphertext } = parseEncryptedBlob(nameEncrypted)
-    const plain = await decryptFilename(fileKey, nonce, ciphertext)
-    try {
-      const meta = JSON.parse(plain) as { name?: string; mime_type?: string }
-      name = meta.name ?? plain
-      mimeType = meta.mime_type ?? null
-    } catch {
-      name = plain
-    }
+    const meta = await readNameMetadata(fileKey, nameEncrypted)
+    return { name: meta.name, mimeType: meta.mimeType }
   } catch (err) {
     console.warn('[crypto] decryptFileMetadata failed', {
       nameEncryptedPrefix: nameEncrypted.slice(0, 60),
       keyLength: fileKey.length,
       error: err instanceof Error ? err.message : String(err),
     })
+    return { name: 'Encrypted file', mimeType: null }
   }
-  return { name, mimeType }
 }
 
 // ─── Recovery phrase ────────────────────────────────
@@ -428,6 +595,118 @@ export async function deriveShareKey(
   fileId: Uint8Array,
 ): Promise<Uint8Array> {
   return withProxy((p) => p.deriveShareKey(sharedSecret, fileId))
+}
+
+/**
+ * A shared folder's key id (task 2133): HKDF-SHA256 of the 32-byte folder key,
+ * derived in core. Returns 32 bytes. Not secret, never a key. A key that is
+ * not 32 bytes is an error.
+ */
+export async function folderKeyId(folderKey: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.folderKeyId(folderKey))
+}
+
+// ─── Task 2237b, decisions L6 and L7: owned-folder wraps (core) ──────────────
+// The only way the web seals or opens a folder child, a custody record or a
+// link's owner copies. No client-side sealing, and no unbound fallback: the
+// legacy invite format has its own named functions in folder-share-crypto.ts.
+
+/** `kind` of an L7 child wrap: 1 for a file, 2 for a folder. */
+export const FOLDER_CHILD_FILE = 1
+export const FOLDER_CHILD_FOLDER = 2
+export type FolderChildKind = typeof FOLDER_CHILD_FILE | typeof FOLDER_CHILD_FOLDER
+
+/** L7: `nonce || ct` (60 bytes) of `childKey` under `folderKey`, bound to the shared ROOT id, the item id and its kind. */
+export async function wrapFolderChild(
+  folderKey: Uint8Array,
+  rootId: string,
+  itemId: string,
+  kind: FolderChildKind,
+  childKey: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapFolderChild(folderKey, rootId, itemId, kind, childKey))
+}
+
+/** L7: open a child wrap. A wrap made for another root, item or kind is refused. */
+export async function unwrapFolderChild(
+  folderKey: Uint8Array,
+  rootId: string,
+  itemId: string,
+  kind: FolderChildKind,
+  wrapped: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapFolderChild(folderKey, rootId, itemId, kind, wrapped))
+}
+
+/** L6: the folder key's custody record (`shared_folders.owner_wrapped_folder_key`). */
+export async function wrapFolderCustody(
+  masterKey: Uint8Array,
+  folderId: string,
+  folderKey: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapFolderCustody(masterKey, folderId, folderKey))
+}
+
+/** L6: open a custody record. A legacy (unbound) owner copy is refused. */
+export async function unwrapFolderCustody(
+  masterKey: Uint8Array,
+  folderId: string,
+  wrapped: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapFolderCustody(masterKey, folderId, wrapped))
+}
+
+/** L6: a link's `owner_wrapped_key` (K_c), bound to the share id. */
+export async function wrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, linkKey: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapLinkOwnerKey(masterKey, shareId, linkKey))
+}
+
+export async function unwrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapLinkOwnerKey(masterKey, shareId, wrapped))
+}
+
+/** L6: a link's `owner_wrapped_token`, bound to the share id. */
+export async function wrapLinkOwnerToken(masterKey: Uint8Array, shareId: string, token: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapLinkOwnerToken(masterKey, shareId, token))
+}
+
+export async function unwrapLinkOwnerToken(masterKey: Uint8Array, shareId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapLinkOwnerToken(masterKey, shareId, wrapped))
+}
+
+/** L8: the owner's own copy of a guest or member file key (`owner_wrapped_file_key`), bound to the item id. */
+export async function wrapOwnerFileKey(masterKey: Uint8Array, itemId: string, fileKey: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapOwnerFileKey(masterKey, itemId, fileKey))
+}
+
+/** L8: open an owner file-key record. A folder name blob or a content frame is refused. */
+export async function unwrapOwnerFileKey(masterKey: Uint8Array, itemId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapOwnerFileKey(masterKey, itemId, wrapped))
+}
+
+/** The link passphrase stretch, in core (NFC, empty refused, token-bound salt). */
+export async function deriveFolderLinkPassphraseStretch(passphrase: string, token: string): Promise<Uint8Array> {
+  return withProxy((p) => p.deriveFolderLinkPassphraseStretch(passphrase, token))
+}
+
+/** Task 2255: purpose-bound folder-invite owner copies, implemented in core. */
+export async function wrapInviteOwnerCopy(masterKey: Uint8Array, folderId: string, folderKey: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapInviteOwnerCopy(masterKey, folderId, folderKey))
+}
+
+export async function unwrapInviteOwnerCopy(masterKey: Uint8Array, folderId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapInviteOwnerCopy(masterKey, folderId, wrapped))
+}
+
+/**
+ * Task 2255 (L9, corrected): open a LEGACY owner copy only when core proves it
+ * over the folder's rows (the server's folder-keys rows, verbatim), in one
+ * worker call. Null when it does not open, holds text, or is not proven.
+ */
+export async function openLegacyInviteOwnerCopy(
+  masterKey: Uint8Array, folderId: string, legacyCopy: Uint8Array, rows: { file_id: string; encrypted_file_key: string }[],
+): Promise<Uint8Array | null> {
+  return (await withProxy((p) => p.openLegacyInviteOwnerCopy(masterKey, folderId, legacyCopy, rows))) ?? null
 }
 
 /**
@@ -549,6 +828,34 @@ export class StreamingEncryptor {
 
   constructor(handle: number) {
     this.#handle = handle
+  }
+
+  /**
+   * Replace / new version of an EXISTING file only (core 1908 checklist item
+   * 4): write in the format the file's recorded pin requires. `pin` MUST come
+   * from `readFileMetadata` of the file being replaced; a brand-new file never
+   * calls this (it would create a v2 file before the gated switch). Call before
+   * the first `pushChunk`. Returns the format now written (1 = v1, 2 = v2).
+   */
+  async applyRecordedPin(pin: ContentPin): Promise<number> {
+    return withProxy((p) => p.encryptorApplyRecordedPin(this.#handle, pin))
+  }
+
+  /** The chunk format this encryptor writes: 1 = v1, 2 = v2. Record it with the session. */
+  async format(): Promise<number> {
+    return withProxy((p) => p.encryptorFormat(this.#handle))
+  }
+
+  /**
+   * Core's resume rule (1908 checklist item 7): may this NEW encryptor
+   * continue an interrupted session whose frames are in `storedFormat`
+   * (undefined when the resume record does not say)? `'continue'` only for a
+   * v1 session resumed by a v1 writer; otherwise `'restart'`: abandon the old
+   * session, init a fresh one and upload from chunk 0, never PUT to the old
+   * session again (a v2 writer's version id differs from the stored frames').
+   */
+  async resumePolicy(storedFormat: number | undefined): Promise<'continue' | 'restart'> {
+    return withProxy((p) => p.encryptorResumePolicy(this.#handle, storedFormat))
   }
 
   /**
@@ -674,6 +981,19 @@ export class SearchIndexProxy {
     return withProxy((p) => p.searchIndexEncryptBuckets(this.#handle, masterKey, buckets))
   }
 
+  /** Encrypt every non-empty shard page under a shared folder key (2237b). */
+  async encryptShardsWithFolderKey(folderKey: Uint8Array): Promise<CoreEncryptedShard[]> {
+    return withProxy((p) => p.searchIndexEncryptShardsWithFolderKey(this.#handle, folderKey))
+  }
+
+  /** Encrypt only the dirty buckets under a shared folder key (2237b). */
+  async encryptBucketsWithFolderKey(
+    folderKey: Uint8Array,
+    buckets: number[],
+  ): Promise<CoreEncryptedShard[]> {
+    return withProxy((p) => p.searchIndexEncryptBucketsWithFolderKey(this.#handle, folderKey, buckets))
+  }
+
   /** Bucket count of this index. */
   async numShards(): Promise<number> {
     return withProxy((p) => p.searchIndexNumShards(this.#handle))
@@ -721,6 +1041,33 @@ export async function searchIndexFromShards(
   numShards: number,
 ): Promise<SearchIndexProxy> {
   const handle = await withProxy((p) => p.searchIndexFromShards(masterKey, shards, numShards))
+  return new SearchIndexProxy(handle)
+}
+
+/**
+ * A fresh shared-folder index built from `[{fileId, name}]` pairs (2237b).
+ * The names come from decrypted listings, so no key is needed to build; the
+ * shards are encrypted under the folder key on push.
+ */
+export async function createSharedSearchIndex(
+  files: Array<{ fileId: string; name: string }>,
+  numShards: number,
+): Promise<SearchIndexProxy> {
+  return buildSearchIndex(files, numShards)
+}
+
+/**
+ * Reconstruct a shared-folder index from shards encrypted under its folder key
+ * (2237b). Mirrors `searchIndexFromShards`, which is master-key only.
+ */
+export async function sharedSearchIndexFromShards(
+  folderKey: Uint8Array,
+  shards: CoreEncryptedShard[],
+  numShards: number,
+): Promise<SearchIndexProxy> {
+  const handle = await withProxy((p) =>
+    p.searchIndexFromShardsWithFolderKey(folderKey, shards, numShards),
+  )
   return new SearchIndexProxy(handle)
 }
 
@@ -1077,6 +1424,16 @@ export interface BundleSelection {
   fileId: string
   /** 0-based ordered position in the bundle. */
   position: number
+  /**
+   * The item's FileKey, when the caller already resolved it (task 2238 review).
+   * REQUIRED for a file received through a file request: such a row is sealed
+   * under a random content key, NOT under `deriveFileKey(master, id)`, so the
+   * derivation below would wrap the wrong key and the recipient would get an
+   * undecryptable item. Callers pass `getFileKeyForFile(file)` — the key
+   * context resolves both shapes. The caller owns (and zeroizes) this buffer;
+   * this helper never zeroizes a supplied key.
+   */
+  fileKey?: Uint8Array
 }
 
 /**
@@ -1112,9 +1469,12 @@ export async function prepareBundleShareItems(
 
   const items: Array<{ file_id: string; position: number; wrapped_file_key: string }> = []
   for (const sel of selections) {
-    const fileKey = await deriveFileKey(masterKey, sel.fileId)
+    // A supplied key (request-upload envelope) is used as-is and stays the
+    // caller's to zeroize; otherwise the classic derivation applies.
+    const supplied = sel.fileKey
+    const fileKey = supplied ?? (await deriveFileKey(masterKey, sel.fileId))
     const wrapped = await wrapKeyForShare(clientKey, fileKey)
-    zeroize(fileKey)
+    if (!supplied) zeroize(fileKey)
     items.push({
       file_id: sel.fileId,
       position: sel.position,

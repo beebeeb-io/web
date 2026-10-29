@@ -252,7 +252,6 @@ describe('task 1693 Part B: ProtectedRoute locked-vault branch under an imperson
       ...real,
       useImpersonation: (): unknown => ({
         impersonatingEmail: 'target@example.com',
-        startImpersonation: async () => {},
         stopImpersonation: () => {},
       }),
     }))

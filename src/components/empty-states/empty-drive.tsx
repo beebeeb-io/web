@@ -18,9 +18,11 @@ interface EmptyDriveProps {
   /** Drive's "+ New" menu (task 1582). When given, it replaces the plain
    *  "Create folder" button (the menu's first item is Folder). */
   newMenu?: ReactNode
+  /** Shown above the heading (task 1918 round 4: "Restore everything from the erase"). */
+  notice?: ReactNode
 }
 
-export function EmptyDrive({ userName, onUpload, onCreateFolder, isRoot = true, newMenu }: EmptyDriveProps) {
+export function EmptyDrive({ userName, onUpload, onCreateFolder, isRoot = true, newMenu, notice }: EmptyDriveProps) {
   const heading = isRoot
     ? (userName ? `Welcome, ${userName}.` : 'Your encrypted vault is empty')
     : 'This folder is empty'
@@ -35,6 +37,7 @@ export function EmptyDrive({ userName, onUpload, onCreateFolder, isRoot = true, 
       />
 
       <div className="relative max-w-[520px] text-center">
+        {notice}
         {/* Lock icon */}
         <div
           className="w-[58px] h-[58px] mx-auto mb-[18px] rounded-2xl flex items-center justify-center -rotate-[4deg]"

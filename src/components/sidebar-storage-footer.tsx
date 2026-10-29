@@ -12,29 +12,24 @@
 import { Icon } from './icons'
 import { StorageUsageBar } from './storage-usage-bar'
 
-const REGION_META: Record<string, { label: string; flag: string }> = {
-  auto: { label: 'Europe', flag: '' },
-  falkenstein: { label: 'Falkenstein, Germany', flag: '' },
-  // Coming-soon roadmap regions (DR-1 canon): labelled so a file stored there
-  // shows a real city instead of the raw region string once those pools go live.
-  helsinki: { label: 'Helsinki, Finland', flag: '' },
-  ede: { label: 'Ede, Netherlands', flag: '' },
-}
-
 interface SidebarStorageFooterProps {
   usedBytes: number
   quotaBytes: number
   /** e.g. "pro plan" / "No plan" — shown next to the Storage heading. */
   planLabel: string
-  /** Storage region key (REGION_META lookup falls back to the raw string). */
-  storageRegion: string
+  /**
+   * Where new uploads go, as the person chose it: "Europe" (the default) or a
+   * country's name. Built from the server's list (`sidebarRegionLabel`), never
+   * from a table in this file (task 1919, by country since task 2050).
+   */
+  regionLabel: string
 }
 
 export function SidebarStorageFooter({
   usedBytes,
   quotaBytes,
   planLabel,
-  storageRegion,
+  regionLabel,
 }: SidebarStorageFooterProps) {
   return (
     <div className="mt-auto px-4 py-4 border-t border-line">
@@ -50,12 +45,8 @@ export function SidebarStorageFooter({
         compact
       />
       <div className="mt-3 flex items-center gap-1.5 text-[10px] text-ink-3">
-        {REGION_META[storageRegion]?.flag ? (
-          <span className="text-[12px]">{REGION_META[storageRegion].flag}</span>
-        ) : (
-          <Icon name="shield" size={11} className="text-amber-deep" />
-        )}
-        <span className="font-mono">{REGION_META[storageRegion]?.label ?? storageRegion}</span>
+        <Icon name="shield" size={11} className="text-amber-deep" />
+        <span className="font-mono" data-testid="sidebar-region">{regionLabel}</span>
       </div>
     </div>
   )

@@ -54,6 +54,15 @@ function formatChunkSize(bytes?: number): string | null {
   return `${mib.toFixed(1)} MiB`
 }
 
+/**
+ * Task 2062 — where the card says the bytes are going: the COUNTRY the server
+ * named at init, else the region ("Europe") until it does (an older server).
+ * Never a city.
+ */
+export function uploadPlaceLabel(upload: Pick<UploadItem, 'storageCountry' | 'storageRegion'>): string | null {
+  return upload.storageCountry ?? regionLabel(upload.storageRegion)
+}
+
 function regionLabel(region?: string | null): string | null {
   if (!region) return null
   return region
@@ -63,6 +72,11 @@ function regionLabel(region?: string | null): string | null {
     .join(' ')
 }
 
+/**
+ * The card never names a city: the upload init only says "europe" (the pool's
+ * public region), not which data center took the bytes. The file's own
+ * `storage_location` names the country once it is stored (task 1919, 2050).
+ */
 function phaseLabel(item: UploadItem): string {
   if (item.stage === 'Done') return 'done'
   if (item.stage === 'Error') return 'failed'
@@ -72,7 +86,7 @@ function phaseLabel(item: UploadItem): string {
     if (item.totalChunks) {
       return `Uploading ${item.uploadedChunks ?? 0} / ${item.totalChunks} chunks`
     }
-    return `uploading to ${item.storageCity ?? 'Falkenstein'}`
+    return 'uploading'
   }
   return 'encrypting on this device'
 }
@@ -101,7 +115,7 @@ export function UploadCard({ upload, onCancel, onRetry }: UploadCardProps) {
   const isEncrypting = stage === 'Queued' || stage === 'Preparing' || stage === 'Encrypting'
   const isError = stage === 'Error'
   const chunkSize = formatChunkSize(upload.chunkSizeBytes)
-  const region = regionLabel(upload.storageRegion)
+  const region = uploadPlaceLabel(upload)
   const speed = computeSpeed(upload)
   const eta = computeEta(upload, speed)
 

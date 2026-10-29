@@ -13,15 +13,15 @@
 //   - TTL: 7 days. Entries older than that are treated as missing by the
 //     consumer (we still return them for inspection but mark `stale: true`).
 //
-// Security note: only the encrypted payload is durably stored. Decrypted
-// names are stored separately and only when the caller passes them in —
-// this preserves the existing model (no plaintext on disk unless the user
-// explicitly enabled offline reading by viewing the folder while online).
+// Security: names and preview data are plaintext at rest within this browser
+// profile. Records are account-bound and cleared on vault lock/logout. This is
+// a best-effort logical purge, not secure erasure of browser storage.
 //
 // ─── Preview cache (separate DB) ─────────────────────────────────────────────
 // The decrypted-thumbnail / preview blob cache remains in its own DB so the
 // 50k row file-list cap doesn't compete with previews for eviction.
 
+import { getAuthStamp, isCurrentAuthStamp, type AuthStamp } from '@beebeeb/shared/api'
 import type { DriveFile } from './api'
 
 // ─── File list cache (IndexedDB) ─────────────────────────────────────────────
@@ -33,8 +33,25 @@ const FILE_LIST_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 const FILE_LIST_TOTAL_ROW_CAP = 50_000
 
 const ROOT_KEY = '__root__'
+let cacheEpoch = 0
+let canAccessPrivateCache: () => boolean = () => false
+
+/** KeyProvider supplies a live ref check, so stale UI callbacks cannot reopen
+ * the plaintext cache between synchronous key destruction and React's render. */
+export function setOfflineCacheAccessCheck(check: () => boolean): void {
+  canAccessPrivateCache = check
+}
+
+export function getOfflineCacheScope() {
+  return { stamp: getAuthStamp(), epoch: cacheEpoch }
+}
+
+export function isCurrentOfflineCacheScope(scope: { stamp: AuthStamp; epoch: number }): boolean {
+  return canAccessPrivateCache() && scope.stamp.userId !== null && scope.epoch === cacheEpoch && isCurrentAuthStamp(scope.stamp)
+}
 
 interface FileListRecord {
+  ownerId: string
   parentId: string // ROOT_KEY when the parent is the drive root
   files: DriveFile[]
   decryptedNames: Record<string, string>
@@ -133,14 +150,17 @@ export async function cacheFileList(
   // false-EmptyDrive incident. Callers that genuinely empty a folder can
   // invalidate explicitly via invalidateFileListCache.
   if (files.length === 0) return
+  const scope = getOfflineCacheScope()
+  if (!isCurrentOfflineCacheScope(scope)) return
   const key = parentKey(parentId)
   try {
     const db = await openFileListDB()
     try {
       const now = Date.now()
       const existing = await fileListGet(db, key)
+      if (!isCurrentOfflineCacheScope(scope)) return
       const mergedNames: Record<string, string> = {
-        ...(existing?.decryptedNames ?? {}),
+        ...(existing?.ownerId === scope.stamp.userId ? existing.decryptedNames : {}),
         ...(decryptedNames ?? {}),
       }
       // Drop names for files that are no longer in the folder.
@@ -149,6 +169,7 @@ export async function cacheFileList(
         if (!nextFileIds.has(id)) delete mergedNames[id]
       }
       const record: FileListRecord = {
+        ownerId: scope.stamp.userId!,
         parentId: key,
         files,
         decryptedNames: mergedNames,
@@ -156,7 +177,7 @@ export async function cacheFileList(
         accessedAt: now,
       }
       await fileListPut(db, record)
-      await enforceRowCap(db, key)
+      if (isCurrentOfflineCacheScope(scope)) await enforceRowCap(db, key)
     } finally {
       db.close()
     }
@@ -174,15 +195,18 @@ export async function cacheFileList(
  * Touches accessedAt so the entry survives LRU eviction.
  */
 export async function getCachedFileList(parentId: string | null): Promise<CachedFileList | null> {
+  const scope = getOfflineCacheScope()
+  if (!isCurrentOfflineCacheScope(scope)) return null
   const key = parentKey(parentId)
   try {
     const db = await openFileListDB()
     try {
       const record = await fileListGet(db, key)
-      if (!record) return null
+      if (!record || record.ownerId !== scope.stamp.userId || !isCurrentOfflineCacheScope(scope)) return null
       const stale = Date.now() - record.cachedAt > FILE_LIST_TTL_MS
       // LRU touch on read.
       await fileListPut(db, { ...record, accessedAt: Date.now() })
+      if (!isCurrentOfflineCacheScope(scope)) return null
       return {
         files: record.files,
         decryptedNames: record.decryptedNames ?? {},
@@ -199,10 +223,12 @@ export async function getCachedFileList(parentId: string | null): Promise<Cached
 
 /** Remove the cached list for a specific folder (call after mutations). */
 export async function invalidateFileListCache(parentId: string | null): Promise<void> {
+  const scope = getOfflineCacheScope()
+  if (!isCurrentOfflineCacheScope(scope)) return
   try {
     const db = await openFileListDB()
     try {
-      await fileListDelete(db, parentKey(parentId))
+      if (isCurrentOfflineCacheScope(scope)) await fileListDelete(db, parentKey(parentId))
     } finally {
       db.close()
     }
@@ -219,6 +245,7 @@ const PREVIEW_STORE = 'previews'
 const PREVIEW_MAX = 50
 
 interface PreviewEntry {
+  ownerId: string
   fileId: string
   dataUrl: string
   accessedAt: number
@@ -288,11 +315,14 @@ async function evictOldestPreviews(db: IDBDatabase): Promise<void> {
  * Evicts LRU entries if the store exceeds 50 files.
  */
 export async function cacheFilePreview(fileId: string, dataUrl: string): Promise<void> {
+  const scope = getOfflineCacheScope()
+  if (!isCurrentOfflineCacheScope(scope)) return
   try {
     const db = await openPreviewDB()
     try {
-      await idbPut(db, { fileId, dataUrl, accessedAt: Date.now() })
-      await evictOldestPreviews(db)
+      if (!isCurrentOfflineCacheScope(scope)) return
+      await idbPut(db, { ownerId: scope.stamp.userId!, fileId, dataUrl, accessedAt: Date.now() })
+      if (isCurrentOfflineCacheScope(scope)) await evictOldestPreviews(db)
     } finally {
       db.close()
     }
@@ -307,18 +337,36 @@ export async function cacheFilePreview(fileId: string, dataUrl: string): Promise
  * Returns null on miss or error.
  */
 export async function getCachedFilePreview(fileId: string): Promise<string | null> {
+  const scope = getOfflineCacheScope()
+  if (!isCurrentOfflineCacheScope(scope)) return null
   try {
     const db = await openPreviewDB()
     try {
       const entry = await idbGet(db, fileId)
-      if (!entry) return null
+      if (!entry || entry.ownerId !== scope.stamp.userId || !isCurrentOfflineCacheScope(scope)) return null
       // Touch accessedAt for LRU
       await idbPut(db, { ...entry, accessedAt: Date.now() })
-      return entry.dataUrl
+      return isCurrentOfflineCacheScope(scope) ? entry.dataUrl : null
     } finally {
       db.close()
     }
   } catch {
     return null
   }
+}
+
+export async function clearOfflineCaches(): Promise<void> {
+  // Invalidate pending reads/writes synchronously, before opening either DB.
+  cacheEpoch++
+  const stores: Array<[() => Promise<IDBDatabase>, string]> = [
+    [openFileListDB, FILE_LIST_STORE], [openPreviewDB, PREVIEW_STORE],
+  ]
+  await Promise.all(stores.map(async ([open, store]) => {
+    try {
+      const db = await open()
+      try {
+        await idbReq(db.transaction(store, 'readwrite').objectStore(store).clear())
+      } finally { db.close() }
+    } catch { /* Storage may be unavailable; never block key destruction. */ }
+  }))
 }

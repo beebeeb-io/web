@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
+import { setAuthIdentity } from '@beebeeb/shared/api'
 import type { DriveFile } from '../src/lib/api'
 
 /**
@@ -75,10 +76,12 @@ const realIndexedDB = (globalThis as { indexedDB?: unknown }).indexedDB
 ;(globalThis as { indexedDB?: unknown }).indexedDB = fakeIDB
 
 afterAll(() => {
+  setOfflineCacheAccessCheck(() => false)
+  setAuthIdentity(null)
   ;(globalThis as { indexedDB?: unknown }).indexedDB = realIndexedDB
 })
 
-const { cacheFileList, invalidateFileListCache } = await import('../src/lib/offline-cache')
+const { cacheFileList, invalidateFileListCache, setOfflineCacheAccessCheck } = await import('../src/lib/offline-cache')
 
 function row(id: string): DriveFile {
   return {
@@ -100,6 +103,8 @@ function row(id: string): DriveFile {
 }
 
 function reset() {
+  setAuthIdentity('test-account')
+  setOfflineCacheAccessCheck(() => true)
   DB_RECORDS.clear()
   fakeIDB.puts.length = 0
 }

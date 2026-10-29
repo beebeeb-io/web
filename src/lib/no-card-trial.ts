@@ -73,11 +73,20 @@ function sentences(...parts: string[]): string {
   return parts.filter((p) => p.length > 0).join(' ')
 }
 
+/**
+ * Exact copy for a refused trial (`trial_already_used`, or the document's
+ * `unavailable_reason: "already_used"`), task 1948 (2): one trial per email inbox (task 1756). */
+export const TRIAL_ALREADY_USED_COPY =
+  'This email inbox has already had a free trial, so this account starts without one. You can pick a plan now.'
+
 /** Why no trial can start, in the voice of the product. `reason` is the document's `unavailable_reason`. */
 export function trialUnavailableCopy(reason: string | null | undefined, allowanceBytes?: number | null): string {
   switch (reason) {
     case 'already_used':
-      return 'You have already had your trial. A plan is how you get more storage.'
+      // Task 1948 (2): with the entry allowance on, a second account of the same inbox
+      // is refused here already (the allowance is one per inbox too), so the document's
+      // "already used" means "this inbox", not necessarily "this account".
+      return TRIAL_ALREADY_USED_COPY
     case 'email_unverified':
       return 'Confirm your email address first. A trial can start once it is confirmed.'
     case 'temporarily_unavailable':
@@ -187,7 +196,10 @@ export function startTrialErrorCopy(err: unknown, allowanceBytes?: number | null
     case 'trial_requires_payment_method':
       return sentences('We are not starting new trials right now.', staysLine(allowanceBytes) || 'You can still subscribe to a plan.')
     case 'trial_already_used':
-      return 'You have already had your trial on this account.'
+      // Task 1948 (2), Guus's ruling: one trial per email inbox (task 1756), and the
+      // server's answer is byte-identical whether the earlier trial was this
+      // account's or another account's on the same inbox, so the copy is too.
+      return TRIAL_ALREADY_USED_COPY
     case 'trial_previously_subscribed':
       return 'A trial is for accounts that have never subscribed. Choose a plan to continue.'
     case 'trial_has_active_subscription':
@@ -483,4 +495,17 @@ export function trialCapShortfallNotice(
     )} cap. Subscribe to unlock your plan's storage.`,
     href: PAID_CHECKOUT_PATH,
   }
+}
+
+/**
+ * What cancelling a card trial does (task 2085). The server (signup_plan.rs,
+ * `ensure_trial_not_cancelled_read_only`) stops uploads and new shares the moment a
+ * never-paid trial is cancelled; view and download keep working until the deletion deadline (the
+ * read routes carry no billing gate). On the trial's end
+ * date the account lapses and, having never paid, its files are deleted
+ * {@link NEVER_PAID_RETENTION_DAYS} days later (Terms 7.10), not the 60 days an
+ * account that has paid before keeps.
+ */
+export function cardTrialCancelCopy(trialEndDay: string): string {
+  return `Cancelling stops the automatic charge. Uploads and new shares pause straight away; you can still view and download everything until your files are deleted. After ${trialEndDay} your vault is read-only, and your files are permanently deleted ${NEVER_PAID_RETENTION_DAYS} days later unless you subscribe. We can't recover them once they're deleted.`
 }

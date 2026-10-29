@@ -31,6 +31,8 @@ import { DevAuthGate } from './components/dev-auth-gate'
 import { registerAccountDeletedHandler, registerErrorNotifier, registerSessionExpiredHandler } from './lib/api'
 import { formatAccountDeletedMessage } from './lib/user-friendly-error'
 import { stashAccountDeletedNotice } from './lib/account-deleted-notice'
+import { signedOutDestination, useSignedOutInactive } from './lib/account-inactive'
+import { AccountInactiveScreen } from './components/account-inactive'
 import { CommandPalette } from './components/command-palette'
 import { ShortcutsCheatsheet } from './components/shortcuts-cheatsheet'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
@@ -41,6 +43,7 @@ import { Login } from './pages/login'
 import { Onboarding } from './pages/onboarding'
 import { Coupon } from './pages/coupon'
 import { heldCouponRedirect, readHeldCoupon } from './lib/coupon'
+import { isVaultFreePath } from './lib/vault-free-paths'
 
 // ── Lazy: split into separate chunks, loaded on demand ───────────────────────
 // Named-export helper: React.lazy requires a default export
@@ -60,7 +63,11 @@ const Pricing        = lazyNamed(() => import('./pages/pricing'),        'Pricin
 const Billing        = lazyNamed(() => import('./pages/billing'),        'Billing')
 const ChoosePlan     = lazyNamed(() => import('./pages/choose-plan'),    'ChoosePlan')
 const ReturnToApp    = lazyNamed(() => import('./pages/return-to-app'),  'ReturnToApp')
+const SurveyPage     = lazyNamed(() => import('./pages/survey'),         'SurveyPage')
+const EraseRequestCancelPage = lazyNamed(() => import('./pages/erase-request-cancel'), 'EraseRequestCancelPage')
+const EraseRequestVerifyPage = lazyNamed(() => import('./pages/erase-request-verify'), 'EraseRequestVerifyPage')
 const ShareViewPage  = lazyNamed(() => import('./pages/share-view'),     'ShareViewPage')
+const FolderLinkPage = lazyNamed(() => import('./pages/folder-link'),    'FolderLinkPage')
 const ForgotPassword = lazyNamed(() => import('./pages/forgot-password'),'ForgotPassword')
 const ResetPassword  = lazyNamed(() => import('./pages/reset-password'), 'ResetPassword')
 const SetPassword    = lazyNamed(() => import('./pages/set-password'),   'SetPassword')
@@ -152,6 +159,7 @@ import { SearchIndexProvider } from './lib/search-index-context'
  */
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
+  const signedOutInactive = useSignedOutInactive()
   const { isUnlocked, vaultExists, vaultChecked } = useKeys()
   const location = useLocation()
   // Task 1704 SLICE 2 — the escape hatch out of the no-key surface: once the
@@ -178,7 +186,13 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   // path simply falls back to "/" — safe to set for every protected route.
   const loginTo = `/login?next=${encodeURIComponent(location.pathname + location.search)}`
 
-  if (!user) return <Navigate to={loginTo} replace />
+  if (!user) {
+    // Task 1948 (1c): this page load signed out a login whose account is no longer
+    // active. Say so here, with Sign out and the support address, instead of a
+    // silent bounce to the sign-in page.
+    if (signedOutDestination(signedOutInactive) === 'account_inactive') return <AccountInactiveScreen />
+    return <Navigate to={loginTo} replace />
+  }
   if (!isUnlocked) {
     if (!vaultExists) return <Navigate to={loginTo} replace />
     // Task 1693 (Part B, ruling D-2026-10-02 — option A, "net zoals in iOS
@@ -403,6 +417,9 @@ const PUBLIC_ROUTE_PATTERNS: RegExp[] = [
   /^\/auth\/impersonate(\/|$)/,
   /^\/cookies(\/|$)/,
   /^\/return-to-app(\/|$)/, // checkout return page for native apps (task 1743)
+  /^\/surveys\//, // exit survey: the emailed link is the credential (task 1920)
+  /^\/erase-request\/cancel(\/|$)/, // erase-request cancel link (task 1918)
+  /^\/erase-request\/verify(\/|$)/, // erase-request confirmation link (task 1918 round 3)
 ]
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_ROUTE_PATTERNS.some((re) => re.test(pathname))
@@ -459,8 +476,19 @@ function ApiErrorWiring() {
       // Do NOT call ev.preventDefault() — keep the browser's native
       // "Uncaught (in promise)" warning visible in DevTools.
     }
+    // Uncaught synchronous errors (event handlers, timers) — neither the React
+    // boundary nor the rejection handler sees these. Cross-origin "Script
+    // error." events carry no Error object and nothing diagnosable: skipped.
+    function handleWindowError(ev: ErrorEvent) {
+      if (!ev.error) return
+      reportError(ev.error, { boundary: 'window.onerror' })
+    }
     window.addEventListener('unhandledrejection', handleUnhandledRejection)
-    return () => window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+    window.addEventListener('error', handleWindowError)
+    return () => {
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+      window.removeEventListener('error', handleWindowError)
+    }
   }, [])
 
   return null
@@ -498,11 +526,38 @@ function GlobalShortcuts() {
   )
 }
 
+/**
+ * Task 1920: pages a person reaches from an email link with no account in sight. They render
+ * OUTSIDE the auth/key/sync providers, so KeyProvider never starts the crypto worker, WASM or the
+ * local vault for them (see `lib/vault-free-paths.ts`). The invitation id + token in the link are the
+ * credential. Any other path mounts the full app exactly as before.
+ */
+function VaultFreePages({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation()
+  if (!isVaultFreePath(pathname)) return <>{children}</>
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-amber" />
+        </div>
+      }
+    >
+      <Routes>
+        <Route path="/surveys/:id" element={<SurveyPage />} />
+        <Route path="/erase-request/cancel" element={<EraseRequestCancelPage />} />
+        <Route path="/erase-request/verify" element={<EraseRequestVerifyPage />} />
+      </Routes>
+    </Suspense>
+  )
+}
+
 export function App() {
   return (
     <ErrorBoundary>
     <ThemeProvider>
     <BrowserRouter>
+      <VaultFreePages>
       <ImpersonationProvider>
       <DevAuthGate>
       <AuthProvider>
@@ -806,6 +861,9 @@ export function App() {
               query string is the credential. See task 0161. */}
           <Route path="/auth/impersonate" element={<ImpersonateRedeem />} />
           <Route path="/s/:token" element={<ShareViewPage />} />
+          {/* Task 2237b: a shared folder link. Public; the fragment carries the
+              link key and never reaches a server. */}
+          <Route path="/f/:token" element={<FolderLinkPage />} />
           {/* Public user profile — no auth required */}
           <Route path="/p/:username" element={<PublicProfilePage />} />
           <Route path="/join/:code" element={<JoinPage />} />
@@ -857,6 +915,7 @@ export function App() {
       </AuthProvider>
       </DevAuthGate>
       </ImpersonationProvider>
+      </VaultFreePages>
     </BrowserRouter>
     </ThemeProvider>
     </ErrorBoundary>

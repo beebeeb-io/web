@@ -115,7 +115,7 @@ function RecentSignInsSection() {
           <div className="flex items-start gap-2.5 p-3 rounded-md bg-paper-2 border border-line">
             <Icon name="eye-off" size={13} className="text-ink-3 shrink-0 mt-0.5" />
             <p className="text-[12.5px] text-ink-2 leading-relaxed">
-              Enable activity tracking in <Link to="/settings/profile" className="text-amber-deep hover:underline">Settings &gt; Profile</Link> to see sign-in history.
+              Enable activity tracking in <Link to="/settings/privacy" className="text-amber-deep hover:underline">Privacy &amp; data</Link> to see sign-in history.
             </p>
           </div>
         ) : signIns.length === 0 ? (

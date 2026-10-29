@@ -109,7 +109,6 @@ function installMocks(page: Page, sub: unknown) {
         effective_storage_bytes: 100_000_000_000,
       })
     }
-    if (url.includes('/billing/winback-eligible')) return json(route, { eligible: false })
     if (url.includes('/billing/checkout')) {
       return json(route, { url: 'https://www.mollie.com/checkout/mock-session' })
     }

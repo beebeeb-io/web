@@ -161,7 +161,6 @@ function installMocks(page: Page, opts: MockOptions) {
     if (url.includes('/billing/storage-addons')) {
       return json(route, { extra_storage_tb: 0, base_storage_tb: 0, max_storage_tb: 0, effective_storage_bytes: 200_000_000_000 })
     }
-    if (url.includes('/billing/winback-eligible')) return json(route, { eligible: false })
     if (url.includes('/billing/checkout')) return json(route, { url: 'https://www.mollie.com/checkout/mock-session' })
 
     if (url.includes('/uploads/init') && method === 'POST') {

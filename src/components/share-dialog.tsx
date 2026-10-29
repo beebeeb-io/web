@@ -13,6 +13,7 @@ import {
   resolveSharingContact,
   approveInvite,
   revokeShare,
+  listAllFiles,
   type ShareInfo,
   type ShareOptions,
   type CreateBundleShareRequest,
@@ -21,6 +22,7 @@ import {
   toBase64,
   fromBase64,
   zeroize,
+  decryptManyNames,
   encryptFileKeyForSharing,
   wrapKeyForShare,
   toBase64url,
@@ -28,16 +30,28 @@ import {
   prepareBundleShareItems,
   wrapBundleToken,
 } from '../lib/crypto'
+// Task 2238 — a folder "Share link" is a snapshot bundle of the folder's
+// subtree (no folder row, no folder download). Items show their plain file
+// names: bundles are flat, so
+// what chat apps keep intact.
 import {
-  generateFolderKey,
+  FOLDER_BUNDLE_MAX_ITEMS,
+  collectFolderBundle,
+  type FolderBundleScan,
+} from '../lib/folder-bundle'
+import {
+  buildFolderInvite,
   encryptFolderKeyForRecipient,
-  encryptOwnerFolderKey,
-  encryptAllChildrenKeys,
 } from '../lib/folder-share-crypto'
+import { ensureOwnerFolderKey } from '../lib/folder-link-create'
 import { useKeys } from '../lib/key-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { isTypedRefusal } from '../lib/no-card-trial'
 import { buildFullShareLink } from '../lib/share-full-link'
+import { SHARED_FOLDERS_FLAG } from '../lib/flags'
+import { sharedFoldersEnabledForWrite, useFeatureFlag } from '../lib/use-feature-flag'
+import { FOLDER_NEEDS_UPGRADE } from '../lib/folder-upgrade'
+import { FolderSharePanel } from './folder-share/folder-share-panel'
 
 interface ShareDialogProps {
   open: boolean
@@ -260,47 +274,50 @@ function InviteForm({
       }
 
       if (isFolder) {
-        // Folder sharing flow — generate folder_key, encrypt children, create invite
+        // Folder sharing flow. Key rule (task 2133): reuse the folder's key
+        // (newest openable key among status-active invites); mint only when the
+        // folder has no active invite. The invite also carries the key's id so
+        // the server can refuse a different key for an already-keyed folder.
         const masterKey = getMasterKey()
-        const folderKey = await generateFolderKey()
-
-        setProgress('Encrypting folder contents...')
-        const folderKeys = await encryptAllChildrenKeys(
-          masterKey, folderKey, fileId,
-          (done, total) => setProgress(`Encrypting keys: ${done}/${total}`),
-        )
-
-        // Encrypt folder key for owner (self-storage)
-        const encOwnerFK = await encryptOwnerFolderKey(masterKey, fileId, folderKey)
-
-        setProgress('Creating invite...')
-        // The recipient-encrypted folder key is set later by the approve endpoint
-        // (which writes to the encrypted_file_key column for both file and folder shares).
-        // We can only encrypt for the recipient once their public key is known — either
-        // immediately on auto-claim below, or when the sender approves after the
-        // recipient signs up and claims.
-        const result = await createInvite(fileId, recipientEmail, {
-          is_folder_share: true,
-          encrypted_folder_key: '',
-          encrypted_owner_folder_key: toBase64(encOwnerFK),
-          folder_keys: folderKeys,
-        })
-
-        // Auto-approve when the recipient already has an account and the server
-        // auto-claimed: encrypt the folder key for their pubkey and call approve.
-        if (result.recipient_public_key && result.status === 'claimed') {
-          try {
-            const recipientPubKey = fromBase64(result.recipient_public_key)
-            const encFolderKey = await encryptFolderKeyForRecipient(
-              masterKey, recipientPubKey, fileId, folderKey,
-            )
-            await approveInvite(result.invite_id, toBase64(encFolderKey))
-          } catch {
-            // Approval failed — invite stays claimed, sender can retry approval later.
-          }
+        setProgress('Checking folder key...')
+        // L7b: with shared folders on, a folder invite registers the folder's
+        // custody record first, so the invite and every later share are L7.
+        // The flag is read here, at send time (rv-web198c P3: never a legacy
+        // invite from a click made while it loads), and that read is bounded
+        // (rv-web198d P3), so the invite never waits on it for good. A failed
+        // read aborts the invite; it is never taken as "off" (rv-web198e P3).
+        if (await sharedFoldersEnabledForWrite()) {
+          const registered = await ensureOwnerFolderKey(fileId, masterKey)
+          registered.fill(0)
         }
+        const { folderKey, payload } = await buildFolderInvite(masterKey, fileId, (_s, done, total) =>
+          setProgress(`Encrypting keys: ${done}/${total}`),
+        )
+        try {
+          setProgress('Creating invite...')
+          // The recipient-encrypted folder key is set later by the approve endpoint
+          // (which writes to the encrypted_file_key column for both file and folder shares).
+          // We can only encrypt for the recipient once their public key is known — either
+          // immediately on auto-claim below, or when the sender approves after the
+          // recipient signs up and claims.
+          const result = await createInvite(fileId, recipientEmail, payload)
 
-        zeroize(folderKey)
+          // Auto-approve when the recipient already has an account and the server
+          // auto-claimed: encrypt the folder key for their pubkey and call approve.
+          if (result.recipient_public_key && result.status === 'claimed') {
+            try {
+              const recipientPubKey = fromBase64(result.recipient_public_key)
+              const encFolderKey = await encryptFolderKeyForRecipient(
+                masterKey, recipientPubKey, fileId, folderKey,
+              )
+              await approveInvite(result.invite_id, toBase64(encFolderKey))
+            } catch {
+              // Approval failed — invite stays claimed, sender can retry approval later.
+            }
+          }
+        } finally {
+          zeroize(folderKey)
+        }
       } else {
         // Single file sharing flow
         const result = await createInvite(fileId, recipientEmail)
@@ -408,7 +425,15 @@ function InviteForm({
       )}
 
       {error && (
-        <div className="mb-4 px-3 py-2 bg-red/10 border border-red/20 rounded-md text-xs text-red">
+        // Contract 2237 §2: "needs the upgrade" is a fact about the folder, not
+        // a failed action, so it reads as a notice rather than an error.
+        <div
+          className={
+            error === FOLDER_NEEDS_UPGRADE
+              ? 'mb-4 px-3 py-2 bg-paper-2 border border-line rounded-md text-xs text-ink-2'
+              : 'mb-4 px-3 py-2 bg-red/10 border border-red/20 rounded-md text-xs text-red'
+          }
+        >
           {error}
         </div>
       )}
@@ -482,8 +507,10 @@ function InviteSuccess({
 
 // ─── Main dialog ─────────────────────────────────────
 
-export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolder, bundleFiles, onShareCreated }: ShareDialogProps) {
-  const { getFileKey, getMasterKey, isUnlocked } = useKeys()
+function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFolder, bundleFiles, onShareCreated }: ShareDialogProps) {
+  // getFileKeyForFile (task 2238 review): resolves a row's FileKey whether it is
+  // derived from the master key or sealed under a file-request content key.
+  const { getFileKey, getFileKeyForFile, getMasterKey, isUnlocked } = useKeys()
   // Bundle (task 0417): a single link over N>1 selected files. One file (or
   // none) falls through to the existing single-file/folder flow unchanged.
   const isBundle = (bundleFiles?.length ?? 0) > 1
@@ -497,6 +524,9 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [loading, setLoading] = useState(false)
   const [shareResult, setShareResult] = useState<ShareInfo | null>(null)
   const [decryptionKey, setDecryptionKey] = useState<string>('')
+  // Task 2238 — the folder subtree scan that becomes the bundle's item list.
+  const [folderScan, setFolderScan] = useState<FolderBundleScan | null>(null)
+  const [folderScanError, setFolderScanError] = useState<string | null>(null)
   const [copied, setCopied] = useState<'full-link' | null>(null)
   // Task 1690 (Guus, 2026-10-02): sharing always yields ONE full link — the
   // URL with the decryption key embedded as a #key= fragment. The old
@@ -539,9 +569,60 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setLoading(false)
       setInviteDone(null)
       setFeedbackOpen(false)
+      setFolderScan(null)
+      setFolderScanError(null)
       // Task 1690: the share is ONE full link — no split/full mode to reset.
     }
   }, [open])
+
+  // Task 2238 — a folder "Share link" is a SNAPSHOT BUNDLE of the folder's files
+  // as they are now, never a `file` share on the folder id (the public page can
+  // only download a file; the server refuses a folder with
+  // `400 cannot download a folder`). Walk the subtree as soon as the dialog
+  // opens so the copy can state the real count, and so the cap is known before
+  // anything is minted.
+  const folderMode = !!isFolder && !isBundle
+  const folderFiles = folderMode ? folderScan?.files ?? [] : []
+  /** Minting is refused while the folder is unread, empty or over the cap. */
+  const folderBlocked =
+    folderMode && (folderScan === null || folderFiles.length === 0 || folderScan.overCap)
+
+  useEffect(() => {
+    if (!open || !folderMode) return
+    let cancelled = false
+    setFolderScan(null)
+    setFolderScanError(null)
+    void (async () => {
+      try {
+        const scan = await collectFolderBundle(fileId, {
+          listChildren: (folderId) => listAllFiles(folderId, { trashed: false }),
+          decryptName: async (node) => {
+            // Legacy plaintext names (iOS before 930c61a) are used verbatim.
+            if (!node.name_encrypted.startsWith('{')) return node.name_encrypted
+            // getFileKeyForFile, not getFileKey: a row received through a file
+            // request is sealed under a random content key, so the id-derived
+            // key would fail (or decrypt nothing) for exactly those items.
+            const fileKey = await getFileKeyForFile(node)
+            try {
+              const [row] = await decryptManyNames([
+                { id: node.id, fileKey, nameEncrypted: node.name_encrypted },
+              ])
+              return typeof row?.name === 'string' ? row.name : null
+            } finally {
+              zeroize(fileKey)
+            }
+          },
+        })
+        if (!cancelled) setFolderScan(scan)
+      } catch (e) {
+        if (!cancelled) setFolderScanError(userFriendlyError(e))
+      }
+    })()
+    return () => { cancelled = true }
+    // The scan is keyed on the dialog opening for this folder; getFileKey is a
+    // stable key-context accessor whose identity is not worth re-scanning for.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, folderMode, fileId])
 
   const handleGenerate = useCallback(async () => {
     setLoading(true)
@@ -569,15 +650,46 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     try {
       const masterKey = getMasterKey()
 
-      // ── Bundle branch (task 0417) ────────────────────────────────────────
-      // N>1 files selected for "Share with Beebeeb" → ONE link over the ordered
-      // set. EXPLICIT branch: must NOT fall through the single-file path below
-      // (that would share only the first item's key). Reuses the same K_c /
-      // owner-recovery model — each item's FileKey is wrapped under one K_c.
-      if (isBundle && bundleFiles) {
-        const selections = bundleFiles.map((f, i) => ({ fileId: f.id, position: i }))
-        const { items, keyForUrl, ownerWrappedKey } =
-          await prepareBundleShareItems(masterKey, selections)
+      // ── Bundle branch (task 0417 / folder snapshot, task 2238) ───────────
+      // N>1 selected files ("Share with Beebeeb"), or a FOLDER whose whole
+      // subtree becomes the snapshot, → ONE link over the ordered set. EXPLICIT
+      // branch: must NOT fall through the single-file path below (that would
+      // share the first item's key, or the folder row itself).
+      if ((isBundle && bundleFiles) || folderMode) {
+        // A folder's items resolve their keys through the key context, which
+        // understands BOTH the classic `deriveFileKey(master, id)` shape and the
+        // request-upload envelope (random content key) — wrapping a derived key
+        // for a request upload would publish an undecryptable item.
+        const folderSelections = folderMode
+          ? await Promise.all(
+              folderFiles.map(async (f, i) => ({
+                fileId: f.fileId,
+                position: i,
+                fileKey: await getFileKeyForFile(f.file),
+              })),
+            )
+          : null
+        const selections =
+          folderSelections ?? bundleFiles!.map((f, i) => ({ fileId: f.id, position: i }))
+        if (selections.length === 0) {
+          setError('Nothing to share yet')
+          setLoading(false)
+          return
+        }
+        if (selections.length > FOLDER_BUNDLE_MAX_ITEMS) {
+          setError(`A link covers up to ${FOLDER_BUNDLE_MAX_ITEMS} files. Share fewer files.`)
+          setLoading(false)
+          return
+        }
+        let items: CreateBundleShareRequest['items']
+        let keyForUrl: string
+        let ownerWrappedKey: string
+        try {
+          ;({ items, keyForUrl, ownerWrappedKey } = await prepareBundleShareItems(masterKey, selections))
+        } finally {
+          // Supplied keys are ours to clear (the helper never zeroizes them).
+          for (const sel of folderSelections ?? []) sel.fileKey.fill(0)
+        }
 
         const buildRequest = async (): Promise<CreateBundleShareRequest> => {
           const token = await generateShareToken()
@@ -610,7 +722,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
 
         if (onShareCreated) {
           const url = buildFullShareLink(window.location.origin, bundleResult.token, keyForUrl)
-          onShareCreated({ fileId: bundleFiles[0].id, shareUrl: url })
+          onShareCreated({ fileId: selections[0].fileId, shareUrl: url })
         }
         setLoading(false)
         return
@@ -675,7 +787,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, isBundle, bundleFiles, getFileKey, getMasterKey, onShareCreated])
+  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, isBundle, bundleFiles, folderMode, folderFiles, getFileKey, getFileKeyForFile, getMasterKey, onShareCreated])
 
   const generatePassphrase = useCallback(() => {
     // 8 random alphanumeric characters — easy to type, hard to guess
@@ -760,7 +872,9 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
             <Icon name="share" size={14} className="text-ink" />
             <span className="text-sm font-semibold text-ink">Send securely</span>
             <BBChip className="max-w-[220px] truncate shrink">
-              {isBundle && bundleFiles
+              {folderMode
+                ? `${folderFiles.length} ${folderFiles.length === 1 ? 'file' : 'files'}`
+                : isBundle && bundleFiles
                 ? `${bundleFiles.length} files · ${formatBytes(bundleFiles.reduce((sum, f) => sum + f.size, 0))}`
                 : `${fileName} · ${formatBytes(fileSize)}`}
             </BBChip>
@@ -1003,12 +1117,34 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       </div>
                     )}
 
+                    {/* Task 2238 — a folder link is a snapshot of the files
+                        below it: flat, immutable, capped (bundle spec 0417). */}
+                    {folderMode && (
+                      <div
+                        className="border border-line-2 rounded-lg bg-paper-2 px-3.5 py-3 mb-3"
+                        role="status"
+                        data-testid="folder-snapshot-note"
+                      >
+                        <p className="text-[12px] text-ink-2 leading-relaxed">
+                          {folderScanError
+                            ? `Could not read this folder: ${folderScanError}`
+                            : folderScan === null
+                            ? 'Counting the files in this folder…'
+                            : folderScan.files.length === 0
+                            ? 'Nothing to share yet'
+                            : folderScan.overCap
+                            ? `This folder has more than ${FOLDER_BUNDLE_MAX_ITEMS} files. A link covers up to ${FOLDER_BUNDLE_MAX_ITEMS}; select the files you want and share them together.`
+                            : `Shares the ${folderScan.files.length} files in this folder and its subfolders as they are now. Files added later won't appear.`}
+                        </p>
+                      </div>
+                    )}
+
                     <BBButton
                       variant="amber"
                       size="lg"
                       className="w-full justify-center gap-2"
                       onClick={handleGenerate}
-                      disabled={loading}
+                      disabled={loading || folderBlocked}
                     >
                       <Icon name="lock" size={13} />
                       {loading ? 'Generating...' : 'Generate encrypted link'}
@@ -1036,4 +1172,28 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       />
     </>
   )
+}
+
+/**
+ * Task 2237b — a shared FOLDER gets its own panel (members + live links).
+ *
+ * The wrapper is deliberately thin: it only decides WHICH body to render. The
+ * 2238 snapshot-bundle body below is untouched byte for byte and is what a
+ * disabled (or still-loading) `shared_folders_v1` flag falls back to.
+ */
+export function ShareDialog(props: ShareDialogProps) {
+  const flag = useFeatureFlag(SHARED_FOLDERS_FLAG)
+  const folderMode = !!props.isFolder && (props.bundleFiles?.length ?? 0) <= 1
+  if (props.open && folderMode && flag.enabled) {
+    return (
+      <FolderSharePanel
+        open
+        folderId={props.fileId}
+        folderName={props.fileName}
+        onClose={props.onClose}
+        bundleFallback={() => <ShareDialogBundleBody {...props} />}
+      />
+    )
+  }
+  return <ShareDialogBundleBody {...props} />
 }

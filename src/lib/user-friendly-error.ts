@@ -10,7 +10,10 @@
 
 import { ApiError } from './api'
 import { consumeAccountDeletedNotice, type NoticeStorage } from './account-deleted-notice'
+import { ACCOUNT_INACTIVE_NOTICE } from './account-inactive'
 import { UploadRestartFailedError } from './upload-session-reinit'
+import { FOLDER_NEEDS_UPGRADE, FolderUpgradeRefusedError, needsFolderUpgrade } from './folder-upgrade'
+import { strictRefusalMessage } from './storage-regions'
 import { shareRefusalCopy, startTrialErrorCopy, trialBillingRefusalCopy } from './no-card-trial'
 
 /** Maximum length below which we trust the existing message as user-facing. */
@@ -120,6 +123,12 @@ export function userFriendlyError(err: unknown): string {
   // message is written for users and says what to do (upload again).
   if (err instanceof UploadRestartFailedError) return err.message
 
+  // Contract 2237 §2: a folder with legacy rows needs the upgrade before it can
+  // get a link or a new invite. Its own sentence, never a generic conflict.
+  if (needsFolderUpgrade(err)) return FOLDER_NEEDS_UPGRADE
+  // ...and a refused upgrade says why in its own sentence.
+  if (err instanceof FolderUpgradeRefusedError) return err.message
+
   // Network / offline takes priority — a 5xx during a flaky connection is
   // really "you have no connection", not "the server is down".
   if (isNetworkError(err)) {
@@ -145,6 +154,10 @@ export function userFriendlyError(err: unknown): string {
     // pattern-match the human message. Branch on these BEFORE the generic
     // status handling, otherwise the 403/413 fall-throughs swallow them with
     // "You don't have permission to do that." (server task 0670).
+    // Task 1952 / 2050 — strict placement: the chosen country cannot take the
+    // write, and the person said never to go anywhere else. Names the COUNTRY.
+    const strictRefusal = strictRefusalMessage(err)
+    if (strictRefusal) return strictRefusal
     if (err.code === 'object_budget_exceeded') {
       // Object-COUNT cap, distinct from the byte/storage quota below.
       return "File limit reached. This account has hit its maximum number of files — delete some files or contact support to raise the limit."
@@ -156,6 +169,10 @@ export function userFriendlyError(err: unknown): string {
     // Task 1037 — signup is web-only; mobile/CLI get this 403. The web IS the
     // signup surface so it should never see it, but never let it fall
     // through to the generic 403 "permission" line.
+    // Task 1948 (1c): the session belonged to an account that is no longer
+    // active. `request()` has already signed it out on this device; say that,
+    // never the generic 403 line, and never why.
+    if (err.code === 'account_suspended') return ACCOUNT_INACTIVE_NOTICE
     if (err.code === 'signup_web_only') {
       return 'Accounts can only be created at app.beebeeb.io/signup. Open that page in your browser to continue.'
     }

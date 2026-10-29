@@ -4,6 +4,12 @@ Per `CLAUDE.md`'s "Design before code" rule: where the code and an approved
 design artefact disagree, that gap is recorded here in the same commit as the
 code, never shipped silently.
 
+## Full-speed L2 — Settings structure (2026-10-26)
+
+Guus requested clearer settings categories and fewer duplicates. The workspace design and plan at `docs/superpowers/{specs,plans}/2026-10-26-settings-ia-{design,plan}.md` were written before implementation; program §5.6 item 5 permits building without waiting for approval. PR publication is blocked by this session's network/approval policy; the lead receives local branches and evidence.
+
+This supersedes the flat settings navigation and Profile's privacy controls in the old settings mockup: group live pages by purpose, use shared plain labels, move the existing tracking editor to Privacy & data, retain the canonical deletion flow there, and omit the inert Recovery contact input while preserving its stored field. Developer/Referrals URLs remain; their coming-soon navigation entries are removed. Authentication, billing and deletion handlers are retained. Focused test counts and runtime checks deferred by program §5.4 are recorded in the workspace plan.
+
 ## Task 1567 — office editor
 
 ### First-load state (CRITIQUE.md finding #5, fixed 2026-09-27)
@@ -138,3 +144,43 @@ follow.
   (drive rows are `name_encrypted` ciphertext — a list of unidentifiable
   deletions is not self-service). The surface says so in plain copy instead
   of hiding the gap; full detail in the task-file Notes entry.
+
+
+## Task 2237b — shared-folder guest page (Guus's rulings, 2026-10-28)
+
+There is no hi-fi artefact for the shared-folder guest page; these verbal
+rulings are the design, recorded verbatim and applied in the same commit:
+
+- "share a folder becomes different than a single file or bunch of files …
+  has an alike folder and file overview as files has right now"
+- "On the screenshots i think the grid items are too big, so make it smaller"
+  → "More towards 80px"
+
+What that means in code:
+
+- **Files primitives, not a look-alike.** The guest list is built from the
+  Files row surface and header (`src/components/file-browser-row.tsx`:
+  `FileBrowserRow`, `FILE_HEADER_BAR`, `FILE_HEADER_LABEL`, `FILE_STATUS_BAR`;
+  `file-list.tsx` and `drive.tsx` now use the same constants), the Files
+  `FileIcon`, extension badge and `timeAgo`, the same "All encrypted ·
+  AES-256-GCM" status line (`EncryptionStatus`, shared with the drive footer),
+  and the Files drop zone (`UploadZone`). Columns: name / size / modified; on a
+  phone size and age fold under the name, as in Files.
+- **Grid tiles are 80 px** (`GUEST_GRID_TILE_PX`): an 80 px square, the name on
+  one line with an ellipsis and the full name as the tile's `title`, size
+  below. This overrides any Files grid size. At 390 px wide four tiles fit per
+  row (6 px gaps, 8 px card padding); a laptop fits a dozen or more. Every tap
+  target is at least 44 px (tiles are 80 × ~112 px; buttons, inputs and the
+  sort/view controls are `min-h-11` on phones).
+- **Slim Beebeeb header, no sidebar, no owner identity** anywhere on the page.
+  The folder title has its own line under the bar and wraps instead of
+  truncating, so it is never clipped under the top edge.
+- **States:** passphrase prompt, opening, listed (grid or list), empty
+  (different copy for view and add links), no search results, unavailable link.
+- **Deviation, flagged:** an edit link reads "You can view, download and add
+  files", the same as an add link, because rename and delete are not offered
+  in the guest UI yet; the page says only what it does.
+- **"Download all"** streams each file into the zip chunk by chunk and the zip
+  to disk through the service worker (no size cap). A browser without that
+  streaming path builds the zip in memory, so there a folder over 128 MiB is
+  refused up front with a plain message (`GUEST_ZIP_MAX_BYTES`).

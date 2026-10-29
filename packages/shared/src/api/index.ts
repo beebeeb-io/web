@@ -29,11 +29,17 @@ export {
   registerErrorNotifier,
   registerSessionExpiredHandler,
   registerAccountDeletedHandler,
+  registerAccountSuspendedHandler,
   registerConnectionStatusHandler,
   registerAccountMismatchHandler,
   markSessionConfirmed,
   clearSessionConfirmed,
+  getAuthStamp,
+  bumpAuthGeneration,
+  setAuthIdentity,
+  isCurrentAuthStamp,
 } from './notifiers'
+export type { AuthStamp } from './notifiers'
 export { request, resolveSessionToken } from './request'
 export type { ResolveSessionTokenDeps } from './request'
 export {
@@ -41,5 +47,6 @@ export {
   IncorrectPasswordError,
   SessionTooOldForConfirmationError,
   parseErrorBody,
+  readErrorResponse,
 } from './errors'
 export * from '../types'
