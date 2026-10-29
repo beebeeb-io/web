@@ -412,7 +412,6 @@ export interface ShareStats {
 export interface Plan {
   id: string
   name: string
-  stripe_product_id?: string | null
   price_eur: number
   price_yearly_eur: number
   storage_bytes: number
@@ -429,7 +428,6 @@ export interface Plan {
   coming_soon?: boolean
   /** Pricing v2: length of the free trial in days (e.g. 14 for Starter/Basic/Pro). */
   trial_days?: number
-  stripe_updated_at?: string | null
   local_updated_at?: string | null
   last_pushed_at?: string | null
 }
@@ -456,12 +454,6 @@ export interface PlanUpdateInput {
   sort_order?: number
   badge?: string | null
   force_push?: boolean
-}
-
-export interface PlanUpdateResponse {
-  plan: Plan
-  stripe_synced: boolean
-  note?: string
 }
 
 export interface LastTrial {
@@ -517,9 +509,10 @@ export interface Subscription {
   last_trial?: LastTrial | null
   /**
    * Whether the active billing provider supports subscription pause/resume
-   * (task 0924). True only under Stripe; false under Mollie (no native pause).
-   * The web cancel flow gates its "Pause instead?" step on this — a Mollie sub
-   * can never newly enter the pause card (where pauseSubscription() would 501).
+   * (task 0924). Always false: the current provider has no native pause.
+   * The web cancel flow gates its "Pause instead?" step on this — a
+   * subscription can never newly enter the pause card (where
+   * pauseSubscription() would 501).
    */
   pause_supported?: boolean
   /**
@@ -571,7 +564,7 @@ export interface Subscription {
    * this subscription row (task 0947). The `/billing` summary headline renders
    * the monthly total from THIS, not a client-side WASM recompute (which folded
    * in a hard-coded €10.99/TB that could drift from Mollie). Null for
-   * legacy/Stripe/mock subscriptions that never captured a Mollie amount — the
+   * legacy/mock subscriptions that never captured a Mollie amount — the
    * web then falls back to `base_plan_cents + addon_cents`.
    */
   mollie_amount_cents?: number | null
@@ -858,7 +851,7 @@ export interface AdminUserDetail {
   disabled_reason?: string | null
   /** Referral + admin-granted bonus storage on top of the plan quota. */
   bonus_storage_bytes?: number
-  /** Provenance of the active subscription row: 'stripe', 'admin_override', etc. */
+  /** Provenance of the active subscription row (e.g. 'admin_override'); historical rows may carry any string. */
   subscription_source?: string | null
   /** Free-text justification when source = 'admin_override'. */
   subscription_admin_note?: string | null
@@ -868,10 +861,6 @@ export interface AdminUserDetail {
   billing_state?: string | null
   /** ISO timestamp when the subscription became past-due. */
   past_due_since?: string | null
-  /** Stripe customer ID for linking to the Stripe dashboard. */
-  stripe_customer_id?: string | null
-  /** Stripe subscription ID for the active subscription. */
-  stripe_subscription_id?: string | null
   // ── task 0750 — emitted by GET /admin/users/:id (server admin.rs json! @ 4674-4724) ──
   /** ISO timestamp the recovery PDF was downloaded, or null — server admin.rs:4711. */
   recovery_pdf_downloaded_at?: string | null
@@ -1353,8 +1342,8 @@ export interface AdminBillingStats {
  * Reconciled field-by-field against the server emission site
  * `beebeeb-api/src/routes/admin.rs` `admin_config()` json! @ 6923-6931 (task 0752,
  * runtime-probed 2026-06-10; re-verified task 1151). The server emits EXACTLY:
- * notifications_configured, notification_connector_count, stripe_configured,
- * stripe_webhook_configured, email_backend, blob_store, opaque_enabled. There is no
+ * notifications_configured, notification_connector_count, email_backend,
+ * blob_store, opaque_enabled. There is no
  * `email`/`slack`/`turnstile` nested object — those were a phantom removed in 1151;
  * do not reintroduce fields here without a matching server emission.
  */
@@ -1364,10 +1353,6 @@ export interface AdminConfig {
   notifications_configured?: boolean
   /** Count of active notification connectors — server admin.rs:6925. */
   notification_connector_count?: number
-  /** Live billing wired (`STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`) — server admin.rs:6926. */
-  stripe_configured?: boolean
-  /** Webhook secret set so signatures are verified, not skipped — server admin.rs:6927. */
-  stripe_webhook_configured?: boolean
   /** Email backend label (e.g. "smtp" / "console") — server admin.rs:6928. */
   email_backend?: string
   /** Default storage pool provider label (e.g. "s3" / "local") — server admin.rs:6929. */

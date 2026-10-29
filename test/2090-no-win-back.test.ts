@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// Task 2090: the Stripe-only win-back offer is retired. The server no longer
+// Task 2090: the legacy-provider-only win-back offer is retired. The server no longer
 // serves winback-eligible / winback-claim, so the client must not call them.
 const root = join(import.meta.dir, '..')
 const read = (p: string) => readFileSync(join(root, p), 'utf8')

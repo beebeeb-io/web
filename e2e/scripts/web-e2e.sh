@@ -164,7 +164,7 @@ export BB_REQUIRE_PLAN_AT_SIGNUP
 # Fix, three layers:
 #   0. The API is launched from a scratch cwd with NO `.env` in it or any
 #      parent (see start_backend), so dotenvy finds nothing at all — this also
-#      keeps the workspace `.env`'s Stripe/S3/other keys out of the test API.
+#      keeps the workspace `.env`'s billing/S3/other keys out of the test API.
 #   1. EMAIL_PROVIDER is forced to "console" explicitly — from_env() reads
 #      this var FIRST and never even looks at SMTP_HOST when it's set.
 #   2. Every SMTP_*/EMAIL_* var `EmailService::from_env()` reads

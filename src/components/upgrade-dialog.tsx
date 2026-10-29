@@ -339,7 +339,7 @@ export function UpgradeDialog({
             methods here because the set Mollie actually offers depends on the
             account config Guus controls — advertising one we don't enable would
             be an honest-voice violation. Guus to confirm the enabled method set,
-            then we can enumerate (e.g. "Card · iDEAL · SEPA") if desired.
+            then we can enumerate (e.g. "Card · iDEAL") if desired.
           */}
           <div className="text-[11px] text-ink-4 text-center mt-2">
             Next: billing details, then choose your payment method

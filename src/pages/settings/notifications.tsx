@@ -20,8 +20,8 @@ import {
  * This is the ONLY source of truth for the Email column. It mirrors the
  * senders that exist in beebeeb-api's EmailService and are called on main:
  *   - password_changed -> send_password_changed (routes/password.rs)
- *   - payment_failed   -> send_payment_failed (Stripe webhook, routes/billing.rs)
- *   - plan_expiring    -> send_trial_will_end / send_card_expiring (routes/billing.rs)
+ *   - payment_failed   -> in-app only; the legacy billing sender was retired
+ *   - plan_expiring    -> in-app only; the legacy billing senders were retired
  * Every other event has no email sender (new sign-ins are push-only via
  * push_delivery::notify_new_login; 2FA and recovery-phrase events send
  * nothing), and the server never reads a per-type `email` preference. So the

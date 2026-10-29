@@ -2471,15 +2471,15 @@ interface RawBillingInvoice extends Omit<BillingInvoice, 'invoice_number'> {
 
 /**
  * GET /api/v1/billing/invoices — the VAT-compliant invoice list backed by the
- * `invoices` table (NOT Stripe). Each row carries a `pdf_url` pointing at
- * `/api/v1/billing/invoices/{id}/pdf`. `stripe_configured` is always false now.
+ * local `invoices` table. Each row carries a `pdf_url` pointing at
+ * `/api/v1/billing/invoices/{id}/pdf`.
  *
  * The server returns the invoice number under `number`; we normalise it to
  * `invoice_number` so the list cell, the download aria-label, and the saved PDF
  * filename are populated (they previously read an undefined key → blank/"undefined").
  */
 export async function getBillingInvoices(): Promise<BillingInvoice[]> {
-  const data = await request<{ invoices: RawBillingInvoice[]; stripe_configured?: boolean }>(
+  const data = await request<{ invoices: RawBillingInvoice[] }>(
     '/api/v1/billing/invoices',
   )
   return (data.invoices ?? []).map(({ number, ...rest }) => ({
@@ -2855,31 +2855,15 @@ export async function payTrialNow(): Promise<TrialPayNowResult> {
   })
 }
 
-/**
- * Open the Stripe Customer Portal for the current user.
- * Returns the portal session URL on success, or null when the endpoint is not
- * yet deployed (404) — callers should show a "not available yet" notice.
- */
-export async function createPortalSession(): Promise<{ url: string } | null> {
-  try {
-    return await request<{ url: string }>('/api/v1/billing/portal-session', {
-      method: 'POST',
-    })
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) return null
-    throw err
-  }
-}
-
 export async function getPaymentMethod(): Promise<PaymentMethod> {
   return request<PaymentMethod>('/api/v1/billing/payment-method')
 }
 
 /**
- * Start a native payment-method update (task 0925). Provider-agnostic: under
- * Mollie this returns a hosted card re-auth checkout URL; for legacy Stripe
- * customers it returns a Stripe portal URL. The client just redirects the
- * browser to `url`. 404 if there is no active subscription.
+ * Start a native payment-method update (task 0925). The server returns a hosted
+ * card re-auth checkout URL (or, for a legacy account, the billing page URL).
+ * The client just redirects the browser to `url`. 404 if there is no active
+ * subscription.
  */
 export async function updatePaymentMethod(): Promise<{ url: string }> {
   return request<{ url: string }>('/api/v1/billing/payment-method/update', { method: 'POST' })
@@ -2940,10 +2924,6 @@ export async function downgradePlan(params: {
 
 export async function cancelDowngrade(): Promise<{ plan: string; message: string }> {
   return request('/api/v1/billing/downgrade/cancel', { method: 'POST' })
-}
-
-export async function createSetupIntent(): Promise<{ client_secret: string }> {
-  return request<{ client_secret: string }>('/api/v1/billing/setup-intent', { method: 'POST' })
 }
 
 // ─── Storage add-on endpoints ──────────────────────

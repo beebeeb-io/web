@@ -4,7 +4,7 @@
  * Rules:
  *   - Triggers at used/quota >= 0.80
  *   - Auto-recommends the next plan tier (free → basic → pro → business)
- *   - "Upgrade now" creates a Stripe Checkout session directly
+ *   - "Upgrade now" starts a hosted checkout directly
  *   - "View all plans" navigates to /billing
  *   - Shown once per browser session (sessionStorage flag)
  *   - Top-of-drive banner at 100% is always visible (separate export)

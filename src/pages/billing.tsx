@@ -1320,10 +1320,10 @@ function openUpgrade(plan: string) {
   }
 
   /**
-   * Native payment-method update (task 0925). Provider-agnostic: the server
-   * returns a hosted card re-auth checkout (Mollie) or a Stripe portal URL
-   * (legacy Stripe customers); either way we just redirect. No Stripe-hosted
-   * "manage billing" portal is surfaced — everything else is native on this page.
+   * Native payment-method update (task 0925). The server returns a hosted card
+   * re-auth checkout URL; for a legacy account it returns the billing page URL.
+   * Either way we just redirect. No provider-hosted "manage billing" portal is
+   * surfaced — everything else is native on this page.
    * `portalLoading` keeps the redirect spinner; the intent is now "update payment
    * method", not "open the portal".
    */
@@ -1462,8 +1462,8 @@ function openUpgrade(plan: string) {
     try {
       const preview = await previewStorageAddons({ extra_storage_tb: sliderTB })
       if (preview.requires_payment_method) {
-        // Redirect to the native payment-method update flow (Mollie checkout /
-        // legacy Stripe portal) so the user can add a card, then come back.
+        // Redirect to the native payment-method update flow (hosted card
+        // checkout) so the user can add a card, then come back.
         try {
           const result = await updatePaymentMethod()
           window.location.href = result.url
@@ -3112,7 +3112,7 @@ function openUpgrade(plan: string) {
               </div>
             )}
 
-            {/* Paused state — billing collection paused via Stripe pause_collection (task 0544) */}
+            {/* Paused state — billing collection paused (task 0544) */}
             {sub?.status === 'paused' && (
               <div className="rounded-lg border border-line-2 bg-paper-2 p-4 space-y-3">
                 <div className="flex items-start justify-between gap-3">
@@ -3726,7 +3726,7 @@ Cancel plan
         </Card>
 
         {/* ── Payment method (native, task 0925) ─────────
-            Paid, non-trialing subscribers manage their card here — no Stripe
+            Paid, non-trialing subscribers manage their card here — no provider-
             hosted portal. Shows the card on file (brand + last4 + expiry, digits
             in mono) with a secondary "Update payment method", or an honest "No
             payment method on file" + "Add payment method" when the server has
