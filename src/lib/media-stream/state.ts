@@ -171,6 +171,18 @@ export function isFullyVerified(state: MediaState): boolean {
   return state.totalParts > 0 && state.verified.size === state.totalParts
 }
 
+/** The two §7 error copies. They name a part index (0-based in, 1-based out). */
+export function streamErrorCopy(kind: ErrorKind, index: number): string {
+  if (kind === 'auth') {
+    return `Part ${index + 1} of this file couldn't be verified, so playback stopped there. Nothing unverified was played.`
+  }
+  return `The download stopped at part ${index + 1}. Check your connection and try again.`
+}
+
+/** Row 9: the pinned version is gone. Never shown as an authentication error. */
+export const CHANGED_COPY =
+  'This file changed while it was playing. Reopen it to play the new version.'
+
 /** Decimal-style MB used by every streaming string: `4.1 MB`. */
 export function formatMB(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -212,15 +224,9 @@ export function statusCopy(state: MediaState): string | null {
         ? `All ${state.totalParts} parts verified`
         : `Played to the end · ${state.verified.size} of ${state.totalParts} parts opened. Parts you skipped were not opened.`
     case 'error':
-      if (state.errorKind === 'auth') {
-        return `Part ${(state.errorIndex ?? 0) + 1} of this file couldn't be verified, so playback stopped there. Nothing unverified was played.`
-      }
-      if (state.errorKind === 'network') {
-        return `The download stopped at part ${(state.errorIndex ?? 0) + 1}. Check your connection and try again.`
-      }
-      return null
+      return state.errorKind ? streamErrorCopy(state.errorKind, state.errorIndex ?? 0) : null
     case 'changed':
-      return 'This file changed while it was playing. Reopen it to play the new version.'
+      return CHANGED_COPY
     default:
       return null
   }

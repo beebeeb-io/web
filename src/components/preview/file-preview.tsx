@@ -9,6 +9,8 @@ import { ImagePreview } from './image-preview'
 import { PdfPreview } from './pdf-preview'
 import { VideoPreview } from './video-preview'
 import { AudioPreview } from './audio-preview'
+import { useMediaStream } from '../../lib/media-stream/use-media-stream'
+import { DOWNLOAD_CARD_COPY, mediaKindFor } from '../../lib/media-stream/path'
 import { MarkdownPreview } from './markdown-preview'
 import { TextPreview } from './text-preview'
 import { DocxPreview } from './docx-preview'
@@ -614,6 +616,21 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // Effective MIME: prefer server value (legacy), then encrypted metadata, then null
   const effectiveMime = file.mime_type ?? localMimeType
 
+  // LD-0001 PR-B: the streaming session (contract §4). The path is decided
+  // synchronously on this render, so the whole-file effect below can never
+  // start a download for a file that will stream. Keyed by (file.id,
+  // selectedVersionId) inside the hook — a parent re-render with a new `file`
+  // object does not restart playback.
+  const mediaKind = mediaKindFor(effectiveMime, getExtension(name))
+  const stream = useMediaStream({
+    file,
+    mediaKind,
+    selectedVersionId,
+    isUnlocked,
+    mime: effectiveMime,
+    resolveFileKey,
+  })
+
   // Load + decrypt content for the current selection (null = live version).
   // For images viewing the current version, try large thumbnail first to avoid
   // downloading the full original (spec 031 — thumbnail-first viewing).
@@ -623,6 +640,11 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     setBlobIsOriginal(false)
     setError(null)
     if (!isUnlocked) return
+    // LD-0001 PR-B: a file on the streaming path must NEVER load whole-file.
+    if (stream.streaming) {
+      setVersionLoading(false)
+      return
+    }
 
     const imageExt = getExtension(name)
     // TIFF stays IN the thumbnail-first fast-path eligibility (task 1574
@@ -759,7 +781,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       cancelled = true
     }
     // `versions` is intentionally NOT a dependency — see versionsRef above.
-  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, resolveFileKey, file, selectedVersionId, effectiveMime, name])
+  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, resolveFileKey, file, selectedVersionId, effectiveMime, name, stream.streaming])
 
   const handleRestore = useCallback(async () => {
     if (selectedVersionId === null) return
@@ -942,7 +964,17 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     ? { zoom, rotation, onZoomChange: setZoom, onClose, onPrev, onNext, hasPrev, hasNext, onRawInfo: setRawExifInfo }
     : undefined
 
-  const renderer = blob ? pickRenderer(effectiveMime, blob, name, imageControls, blobIsOriginal) : null
+  // LD-0001 PR-B: a streaming session renders the media element against
+  // /sw-stream/<id> — no blob exists on that path.
+  const streamRenderer =
+    stream.src && mediaKind === 'video' ? (
+      <VideoPreview src={stream.src} onElement={stream.setElement} overlay={stream.overlay} />
+    ) : stream.src && mediaKind === 'audio' ? (
+      <AudioPreview src={stream.src} filename={name} onElement={stream.setElement} />
+    ) : null
+  const renderer = blob
+    ? pickRenderer(effectiveMime, blob, name, imageControls, blobIsOriginal)
+    : streamRenderer
   const canPreview = renderer !== null
 
   function saveBlob(data: Blob) {
@@ -1127,16 +1159,51 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
                 ? file.chunk_count
                 : versions?.find((v) => v.id === selectedVersionId)?.chunk_count
             }
-            tagsVerified={!!blob && blobIsOriginal && !error}
+            // LD-0001 PR-B: a stream verifies tags only, per distinct part.
+            tagsVerified={stream.tagsVerified || (!!blob && blobIsOriginal && !error)}
+            streamLine={stream.infoLine ?? undefined}
           />
         )
       }
     >
       {/* Loading state */}
-      {!blob && !error && (
+      {!blob && !error && !streamRenderer && stream.path !== 'download-card' && stream.path !== 'unsupported' && (
         <div className="flex flex-col items-center gap-3">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-amber" />
           <span className="text-sm text-ink-3">Decrypting...</span>
+        </div>
+      )}
+
+      {/* Streaming-only states (LD-0001 PR-B, contract §4 rows 5-9). */}
+      {!blob && !error && stream.errorCopy && (
+        <div className="flex flex-col items-center gap-3 text-center">
+          <Icon name="shield" size={32} className="text-red" />
+          <p className="max-w-[380px] text-sm font-medium text-ink">{stream.errorCopy}</p>
+          {stream.path !== 'changed' && (
+            <BBButton variant="default" size="sm" onClick={stream.retry}>
+              Try again
+            </BBButton>
+          )}
+        </div>
+      )}
+      {!blob && !error && stream.path === 'download-card' && (
+        <div className="flex flex-col items-center gap-4 text-center">
+          <Icon name="file" size={40} className="text-ink-3" />
+          <p className="max-w-[360px] text-sm text-ink-2">{DOWNLOAD_CARD_COPY}</p>
+          <BBButton variant="amber" size="md" onClick={handleDownload}>
+            <Icon name="download" size={14} className="mr-2" />
+            Download
+          </BBButton>
+        </div>
+      )}
+      {!blob && !error && stream.path === 'unsupported' && (
+        <div className="flex flex-col items-center gap-4 text-center">
+          <Icon name="file" size={40} className="text-ink-3" />
+          <p className="text-sm text-ink-2">Preview not available for this file type</p>
+          <BBButton variant="amber" size="md" onClick={handleDownload}>
+            <Icon name="download" size={14} className="mr-2" />
+            Download
+          </BBButton>
         </div>
       )}
 
