@@ -57,6 +57,26 @@ export interface TotpSetupResponse {
   backup_codes: string[]
 }
 
+/** One stored chunk of a file's download version (server `version_download.rs`). */
+export interface DownloadVersionChunk {
+  index: number
+  size_bytes: number
+}
+
+/**
+ * The exact object version a file's content currently lives in (LD-0001).
+ * Optional on the row because older server responses do not carry it.
+ */
+export interface DownloadVersion {
+  object_version_id: string
+  version_number: number
+  chunk_count: number
+  chunk_size_bytes: number
+  plaintext_size_bytes: number
+  ciphertext_size_bytes: number
+  chunks: DownloadVersionChunk[]
+}
+
 export interface DriveFile {
   id: string
   name_encrypted: string
@@ -69,6 +89,8 @@ export interface DriveFile {
   is_trashed: boolean
   parent_id: string | null
   chunk_count: number
+  /** The pinned object version (LD-0001). Absent on older responses. */
+  download_version?: DownloadVersion | null
   is_starred?: boolean
   /** True when the file is an image or video. Set by the client at upload time
    *  because MIME types are encrypted — the server cannot infer media type.
