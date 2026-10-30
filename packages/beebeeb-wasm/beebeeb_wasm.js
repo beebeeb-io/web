@@ -1,6 +1,152 @@
 /* @ts-self-types="./beebeeb_wasm.d.ts" */
 
 /**
+ * Opaque handle holding ONLY the derived client-metadata key (task 1922).
+ *
+ * Make it once when the vault unlocks, free it on lock. List views and SSE
+ * frames call `seal` / `open` / `openMany` on the handle, so the master key is
+ * not copied into WASM memory on every frame. The derived key never leaves
+ * Rust; the handle is zeroized on drop and `free()` is wasm-bindgen's own.
+ */
+export class ClientMetaKey {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ClientMetaKeyFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_clientmetakey_free(ptr, 0);
+    }
+    /**
+     * Derive the key from a 32-byte master key. The bytes are taken into a
+     * `Zeroizing` buffer and the master key is dropped before returning.
+     * @param {Uint8Array} master_key
+     */
+    constructor(master_key) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.clientmetakey_new(retptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            this.__wbg_ptr = r0 >>> 0;
+            ClientMetaKeyFinalization.register(this, this.__wbg_ptr, this);
+            return this;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Open one field's `bbcm1.` envelope.
+     * @param {string} record_key
+     * @param {string | null | undefined} device_key
+     * @param {number} field
+     * @param {string} envelope
+     * @returns {string}
+     */
+    open(record_key, device_key, field, envelope) {
+        let deferred5_0;
+        let deferred5_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(record_key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            var ptr1 = isLikeNone(device_key) ? 0 : passStringToWasm0(device_key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            var len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(envelope, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len2 = WASM_VECTOR_LEN;
+            wasm.clientmetakey_open(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1, field, ptr2, len2);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            var ptr4 = r0;
+            var len4 = r1;
+            if (r3) {
+                ptr4 = 0; len4 = 0;
+                throw takeObject(r2);
+            }
+            deferred5_0 = ptr4;
+            deferred5_1 = len4;
+            return getStringFromWasm0(ptr4, len4);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred5_0, deferred5_1, 1);
+        }
+    }
+    /**
+     * Open many rows in one call: `items` is
+     * `[{ recordKey, deviceKey?, field, envelope? }]`; the result is
+     * `[{ ok: bool, value?: string }]`. One bad row never fails the batch: a
+     * null envelope, a bad field or UUID, a malformed row and a failed open
+     * each yield `{ ok: false }` for that row only.
+     * @param {any} items
+     * @returns {any}
+     */
+    openMany(items) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.clientmetakey_openMany(retptr, this.__wbg_ptr, addHeapObject(items));
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Seal one field. `device_key` must be `null` for field 1 and set for 2-4.
+     * @param {string} record_key
+     * @param {string | null | undefined} device_key
+     * @param {number} field
+     * @param {string} plaintext
+     * @returns {string}
+     */
+    seal(record_key, device_key, field, plaintext) {
+        let deferred5_0;
+        let deferred5_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(record_key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            var ptr1 = isLikeNone(device_key) ? 0 : passStringToWasm0(device_key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            var len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(plaintext, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len2 = WASM_VECTOR_LEN;
+            wasm.clientmetakey_seal(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1, field, ptr2, len2);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            var ptr4 = r0;
+            var len4 = r1;
+            if (r3) {
+                ptr4 = 0; len4 = 0;
+                throw takeObject(r2);
+            }
+            deferred5_0 = ptr4;
+            deferred5_1 = len4;
+            return getStringFromWasm0(ptr4, len4);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred5_0, deferred5_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) ClientMetaKey.prototype[Symbol.dispose] = ClientMetaKey.prototype.free;
+
+/**
  * k-anonymity breach check for one password. Core hashes and matches; **JS
  * makes the HTTP call**, to the endpoint the onboarding document declares in
  * `policy.password.breach_check.endpoint` (Beebeeb's own API, never a third
@@ -815,6 +961,16 @@ export class WasmDownloadPlanner {
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
+    }
+    /**
+     * The ciphertext length of chunk `index` once the first window was accepted, else `null`.
+     * The link's `length` is this number; the caller checks a storage answer against it.
+     * @param {number} index
+     * @returns {number | null}
+     */
+    chunkLength(index) {
+        const ret = wasm.wasmdownloadplanner_chunkLength(this.__wbg_ptr, index);
+        return takeObject(ret);
     }
     /**
      * Chunk `index` arrived but did not authenticate when decrypted.
@@ -1833,6 +1989,55 @@ export class WasmSignupCeremony {
 if (Symbol.dispose) WasmSignupCeremony.prototype[Symbol.dispose] = WasmSignupCeremony.prototype.free;
 
 /**
+ * Was the body a storage GET actually delivered the chunk? Same answer shape as
+ * `checkStorageGet`, but decided by the counted bytes: `stored` only when `received` is
+ * exactly `expected`. `Content-Length` is only the head; a truncated stream ends short.
+ * @param {number} received
+ * @param {number} expected
+ * @returns {DirectStorageGet}
+ */
+export function checkStorageBody(received, expected) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.checkStorageBody(retptr, received, expected);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Was a storage GET answer the chunk we asked for? `{ kind: "stored" }` or
+ * `{ kind: "failed", status }`; status `0` means there was no HTTP answer at all.
+ * Only a `200` whose `Content-Length` is exactly `expected` is `stored`.
+ * @param {number} status
+ * @param {number | null | undefined} content_length
+ * @param {number} expected
+ * @returns {DirectStorageGet}
+ */
+export function checkStorageGet(status, content_length, expected) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.checkStorageGet(retptr, status, !isLikeNone(content_length), isLikeNone(content_length) ? 0 : content_length, expected);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * May the client follow this storage link? Throws an `Error` whose `code` is
  * the refusal (`malformed`, `not_https`, `userinfo`, `ip_literal`, `loopback`,
  * `bad_host`, `port`, `host_not_listed`, `bucket_not_listed`, `bad_path`); the
@@ -2618,9 +2823,11 @@ export function directDownloadGrantsPath(file_id) {
 /**
  * `{ cap_object_download_v1, cap_object_upload_v1, capabilities_header,
  * discovery_path, max_window, default_window, chunk_overhead,
+ * max_discovery_body_bytes, max_grant_body_bytes, max_chunk_body_bytes,
  * storage_connect_timeout_ms, storage_get_idle_ms, discovery_timeout_ms,
  * api_call_timeout_ms, background_put_resource_timeout_ms }`: the contract's
- * names and numbers, and the time bounds every client applies, so no client re-types them.
+ * names and numbers, the response caps and the time bounds every client applies,
+ * so no client re-types them.
  * @returns {any}
  */
 export function directTransferConstants() {
@@ -2966,6 +3173,31 @@ export function evaluate_password(password, min_length) {
 }
 
 /**
+ * Shorten a client-metadata string for sealing: over 1024 UTF-8 bytes, keep
+ * the last 1021 bytes on a char boundary behind a leading `…`.
+ * @param {string} s
+ * @returns {string}
+ */
+export function fitForSeal(s) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(s, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.fitForSeal(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * A shared folder's key id (task 2133): a one-way id of the folder's 32-byte
  * key, for a server to compare folder keys without learning them (HKDF-SHA256,
  * info `beebeeb/folder-key-id/v1`). Returns a 32-byte `Uint8Array`; not secret,
@@ -3143,6 +3375,30 @@ export function list_tar_entries(data) {
             throw takeObject(r1);
         }
         return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The ciphertext bytes a process of `class` (`"native"`, `"browser"`, `"mobile_app"`,
+ * `"mobile_extension"`) may hold at once. Throws `class_invalid` for any other string.
+ * @param {string} _class
+ * @returns {number}
+ */
+export function maxInFlightBytes(_class) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(_class, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.maxInFlightBytes(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -3334,6 +3590,143 @@ export function open_request_upload(r_priv, e_pub, file_id, wrapped_key) {
         var v5 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export4(r0, r1 * 1, 1);
         return v5;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Resolve the owner's per-file key for ONE content version of a file from the
+ * canonical `file_id` and that version's first chunk frame, and report which
+ * id convention that version's key came from (SF-0002). Returns
+ * `{ key: Uint8Array, convention }`, where `convention` is `"string"`,
+ * `"binary"` or `"upper_repair"`.
+ *
+ * The first chunk frame may be a v1 legacy frame (`nonce || ciphertext ||
+ * tag`, no AAD — what the iOS File Provider wrote) or core's v2 frame 0.
+ *
+ * A file is READ-ONLY for the client if EITHER
+ * [`ownerFileKeyForName`](owner_file_key_for_name) or ANY of its versions
+ * reports `"upper_repair"`: no rename, no new version; save an edit as a new
+ * file. Resolve each version separately — the name's convention does not
+ * decide the content key.
+ * @param {Uint8Array} master_key
+ * @param {string} file_id
+ * @param {Uint8Array} first_chunk_frame
+ * @returns {any}
+ */
+export function ownerFileKeyForContent(master_key, file_id, first_chunk_frame) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(first_chunk_frame, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.ownerFileKeyForContent(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Resolve the owner's per-file key for a file from the `(file_id,
+ * name_encrypted)` pair the server stores, and report which id convention the
+ * key came from (SF-0002). Returns `{ key: Uint8Array, convention }`, where
+ * `convention` is `"string"`, `"binary"` or `"upper_repair"`.
+ *
+ * The string convention is tried first, then the legacy binary one, then the
+ * uppercase repair one (only when uppercasing changes the id). The first
+ * candidate whose key authenticates `name_encrypted` wins.
+ *
+ * `"upper_repair"` is READ-ONLY: treat the file as read-only — no rename and
+ * no new version; save an edit as a new file. Core only reports the
+ * convention; it never re-seals or migrates an existing row.
+ * @param {Uint8Array} master_key
+ * @param {string} file_id
+ * @param {string} name_encrypted
+ * @returns {any}
+ */
+export function ownerFileKeyForName(master_key, file_id, name_encrypted) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(name_encrypted, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.ownerFileKeyForName(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * When `wire_bytes` received since `start_ms` at `kbps` KiB/s lets the next storage
+ * request start. The three counts cross as JS numbers (`f64`), like every other count.
+ * `-Infinity` (`i64::MIN` in core) means there is no ceiling: a real deadline is a
+ * finite number, so a caller only has to test `Number.isFinite`. Desktop's formula,
+ * unchanged in value.
+ * @param {number} start_ms
+ * @param {number} wire_bytes
+ * @param {number} kbps
+ * @returns {number}
+ */
+export function pacedUntilMs(start_ms, wire_bytes, kbps) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.pacedUntilMs(retptr, start_ms, wire_bytes, kbps);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * May this client use the direct transport for `direction`? True only when discovery
+ * offers it AND has at least one storage pair AND every pair in `discovery.storage_buckets`
+ * is in `pairs` (an array of `{host, bucket}`). Hosts compare ASCII case-insensitively,
+ * buckets exactly.
+ * @param {any} discovery
+ * @param {string} direction
+ * @param {any} pairs
+ * @returns {boolean}
+ */
+export function pairsAllowed(discovery, direction, pairs) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(direction, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.pairsAllowed(retptr, addHeapObject(discovery), ptr0, len0, addHeapObject(pairs));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return r0 !== 0;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -4585,6 +4978,10 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(getObject(arg0));
             return addHeapObject(ret);
         },
+        __wbg_new_34d45cc8e36aaead: function() {
+            const ret = new Map();
+            return addHeapObject(ret);
+        },
         __wbg_new_5e360d2ff7b9e1c3: function(arg0, arg1) {
             const ret = new Error(getStringFromWasm0(arg0, arg1));
             return addHeapObject(ret);
@@ -4648,6 +5045,10 @@ function __wbg_get_imports() {
         },
         __wbg_set_6be42768c690e380: function(arg0, arg1, arg2) {
             getObject(arg0)[takeObject(arg1)] = takeObject(arg2);
+        },
+        __wbg_set_fde2cec06c23692b: function(arg0, arg1, arg2) {
+            const ret = getObject(arg0).set(getObject(arg1), getObject(arg2));
+            return addHeapObject(ret);
         },
         __wbg_static_accessor_GLOBAL_8cfadc87a297ca02: function() {
             const ret = typeof global === 'undefined' ? null : global;
@@ -4720,6 +5121,9 @@ function __wbg_get_imports() {
     };
 }
 
+const ClientMetaKeyFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_clientmetakey_free(ptr >>> 0, 1));
 const WasmBreachCheckFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmbreachcheck_free(ptr >>> 0, 1));

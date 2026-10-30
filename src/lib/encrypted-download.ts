@@ -20,13 +20,16 @@
 
 import {
   CHUNK_SIZE,
+  deriveFileKey,
   readFileMetadata,
   startDecryptStream,
+  ownerRepairContentKey,
   UnverifiedFileMetadataError,
   type ContentPin,
 } from './crypto'
 import { getToken, getApiUrl, ApiError } from './api'
 import { dispatchDecrypted } from './decrypt-events'
+import { markOwnerRepairReadOnly } from './owner-repair'
 
 export { UnverifiedFileMetadataError }
 
@@ -84,6 +87,53 @@ export function inferChunkCountFromEncryptedSize(
   return overheadSize / CHUNK_OVERHEAD
 }
 
+/**
+ * SF-0002: a version's first frame did not authenticate under the key the
+ * caller has. Ask core for the owner key of THAT frame (the caller passes the
+ * master key only when it holds one). A key that resolves as `upper_repair`
+ * also marks the file read-only for the rest of this session. Null when the
+ * frame is not a repaired row, so the caller rethrows the original error.
+ */
+async function contentKeyFromFrame(
+  masterKey: Uint8Array | undefined,
+  fileKey: Uint8Array,
+  content: FileContentRef,
+  firstChunkFrame: Uint8Array,
+): Promise<Uint8Array | null> {
+  if (!masterKey) return null
+  // Only the OWNER's own derivation may take the repair fallback. A
+  // shared-folder or other foreign key is never switched to an owner key, even
+  // though the master key would let core resolve one (SF-0002 review).
+  if (!(await isOwnerDerivedKey(masterKey, content.fileId, fileKey))) return null
+  try {
+    const repair = await ownerRepairContentKey(masterKey, content.fileId, firstChunkFrame)
+    if (!(repair.key instanceof Uint8Array)) return null
+    // Accept ONLY the read-only repair convention. A `string`/`binary` answer
+    // would be a write-capable key switch, which recovery never does.
+    if (repair.convention !== 'upper_repair') {
+      repair.key.fill(0)
+      return null
+    }
+    markOwnerRepairReadOnly(content.fileId)
+    return repair.key
+  } catch {
+    return null
+  }
+}
+
+/** Does this key equal the owner's ordinary (string-convention) derivation? */
+async function isOwnerDerivedKey(masterKey: Uint8Array, fileId: string, key: Uint8Array): Promise<boolean> {
+  const derived = await deriveFileKey(masterKey, fileId)
+  try {
+    if (derived.length !== key.length) return false
+    let diff = 0
+    for (let i = 0; i < derived.length; i++) diff |= derived[i] ^ key[i]
+    return diff === 0
+  } finally {
+    derived.fill(0)
+  }
+}
+
 export async function decryptEncryptedBytes(
   fileKey: Uint8Array,
   content: FileContentRef,
@@ -91,6 +141,7 @@ export async function decryptEncryptedBytes(
   chunkCount: number,
   sizeBytes: number,
   chunkSize = CHUNK_SIZE,
+  masterKey?: Uint8Array,
 ): Promise<Uint8Array> {
   // Detect whether sizeBytes is the plaintext size (legacy/correct) or the
   // encrypted total size (an older server bug stored encrypted blob bytes
@@ -106,7 +157,7 @@ export async function decryptEncryptedBytes(
   const decryptedParts: Uint8Array[] = []
   let offset = 0
 
-  const decryptor = await startDecryptStream(fileKey, content.fileId, content.pin)
+  let decryptor = await startDecryptStream(fileKey, content.fileId, content.pin)
   try {
     for (let i = 0; i < chunkCount; i++) {
       // Calculate the plaintext size for this chunk
@@ -134,7 +185,17 @@ export async function decryptEncryptedBytes(
       // The whole wire frame (nonce || ciphertext || tag), as a copy that owns
       // its buffer: the decryptor transfers it to the crypto worker.
       const frame = encryptedBytes.slice(offset, offset + encryptedChunkSize)
-      decryptedParts.push(await decryptor.pushFrame(frame))
+      try {
+        decryptedParts.push(await decryptor.pushFrame(frame))
+      } catch (err) {
+        // SF-0002: only a first frame that fails may resolve as a repaired
+        // version; every later frame keeps the key chunk 0 proved.
+        const repaired = i === 0 ? await contentKeyFromFrame(masterKey, fileKey, content, frame) : null
+        if (!repaired) throw err
+        await decryptor.dispose()
+        decryptor = await startDecryptStream(repaired, content.fileId, content.pin)
+        decryptedParts.push(await decryptor.pushFrame(frame))
+      }
 
       offset += encryptedChunkSize
     }
@@ -332,6 +393,7 @@ export async function pipeDecryptedChunks(
   signal: AbortSignal | undefined,
   onChunk: (chunk: Uint8Array) => Promise<void>,
   onProgress: ((bytesWritten: number) => void) | undefined,
+  masterKey?: Uint8Array,
 ): Promise<void> {
   const reader = body.getReader()
   // Buffer of unconsumed encrypted bytes from the network. We keep it as a
@@ -398,7 +460,18 @@ export async function pipeDecryptedChunks(
         ? new Uint8Array(0)
         : buffer.slice(encryptedChunkSize)
 
-      const plaintext = await decryptor.pushFrame(frame)
+      let plaintext: Uint8Array
+      try {
+        plaintext = await decryptor.pushFrame(frame)
+      } catch (err) {
+        // SF-0002: only chunk 0 may switch keys (to the repaired version's
+        // owner key); later frames keep the key chunk 0 proved.
+        const repaired = chunkIndex === 0 ? await contentKeyFromFrame(masterKey, fileKey, content, frame) : null
+        if (!repaired) throw err
+        await decryptor.dispose()
+        decryptor = await startDecryptStream(repaired, content.fileId, content.pin)
+        plaintext = await decryptor.pushFrame(frame)
+      }
       await onChunk(plaintext)
       bytesWritten += plaintext.length
       onProgress?.(bytesWritten)
@@ -446,6 +519,7 @@ export async function encryptedDownload(
   chunkCount: number,
   sizeBytes: number,
   opts?: EncryptedDownloadOptions,
+  masterKey?: Uint8Array,
 ): Promise<void> {
   // 1. The file's authenticated metadata: name, MIME type and content pin.
   //    Refused (nothing is downloaded) when it cannot be verified.
@@ -510,6 +584,7 @@ export async function encryptedDownload(
           opts?.onProgress
             ? (written: number) => opts.onProgress!(written, effectivePlaintextSize)
             : undefined,
+          masterKey,
         )
         await handles.close()
       } finally {
@@ -548,6 +623,7 @@ export async function encryptedDownload(
     effectiveChunkCount,
     sizeBytes,
     effectiveChunkSize,
+    masterKey,
   )
 
   // Fire a single progress event after decryption so observers still see
@@ -577,6 +653,7 @@ export async function decryptToBlob(
   mimeType: string | null | undefined,
   chunkCount: number,
   sizeBytes: number,
+  masterKey?: Uint8Array,
 ): Promise<{ plaintext: Blob; filename: string }> {
   const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
   const filename = meta.name
@@ -600,6 +677,7 @@ export async function decryptToBlob(
     effectiveChunkCount,
     sizeBytes,
     effectiveChunkSize,
+    masterKey,
   )
 
   const plaintext = new Blob([decrypted as BlobPart], { type: blobMime })
@@ -626,6 +704,7 @@ export async function decryptVersionToBlob(
   mimeType: string | null | undefined,
   chunkCount: number,
   sizeBytes: number,
+  masterKey?: Uint8Array,
 ): Promise<Blob> {
   const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
   const token = getToken()
@@ -649,6 +728,7 @@ export async function decryptVersionToBlob(
     effectiveChunkCount,
     sizeBytes,
     effectiveChunkSize,
+    masterKey,
   )
 
   const plaintext = new Blob([decrypted as BlobPart], { type: mimeType || meta.mimeType || 'application/octet-stream' })

@@ -28,6 +28,8 @@ import type { DriveFile } from '../../lib/api'
 import { abandonUpload, getFile, listVersions } from '../../lib/api'
 import { discardInFlightUpload } from '../../lib/upload-discard'
 import { decryptToBlob } from '../../lib/encrypted-download'
+import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly } from '../../lib/owner-repair'
+import { assertCurrentVersionWritable } from '../../lib/owner-write-guard'
 import { encryptedUpload } from '../../lib/encrypted-upload'
 import { useKeys } from '../../lib/key-context'
 import {
@@ -132,6 +134,9 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
   onRequestExitEdit,
 }, ref) {
   const { getFileKey, getMasterKey } = useKeys()
+  // SF-0002: a file repaired from the iOS Files-app convention opens and
+  // downloads, but every write would have to re-key an existing object.
+  const ownerReadOnly = isOwnerRepairReadOnly(file.id)
 
   const [doc, setDoc] = useState(initialText)
   const lastSavedTextRef = useRef(initialText)
@@ -213,6 +218,9 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
     nameOverride?: string,
   ): Promise<DriveFile> {
     const uploadFileId = targetFileId ?? crypto.randomUUID()
+    // SF-0002 review: a new version under this id needs the CURRENT version's
+    // content writable, not only a mark set when the file was opened.
+    if (uploadFileId === file.id) await assertCurrentVersionWritable(file, getMasterKey())
     const fileKey = await getFileKey(uploadFileId)
     const name = nameOverride ?? decryptedName
     const effectiveType = mimeType ?? (isMarkdown ? 'text/markdown' : 'text/plain')
@@ -239,6 +247,10 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
   }
 
   const handleSave = useCallback(async () => {
+    if (isOwnerRepairReadOnly(file.id)) {
+      setSaveError(OWNER_REPAIR_READ_ONLY)
+      return
+    }
     // Both the toolbar Save button (disabled via `saving || !dirty`) AND the
     // keyboard paths (CodeMirror's own Mod-s keymap, plus the document-level
     // fallback listener below) call this same handler — the button's
@@ -296,6 +308,7 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
               mimeType ?? undefined,
               latest.chunk_count,
               latest.size_bytes,
+              getMasterKey(),
             )
             const text = await plaintext.text()
             setConflict({ latestVersionNumber: serverVersion, latestText: text })
@@ -490,7 +503,7 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
         size="sm"
         variant="amber"
         onClick={handleSave}
-        disabled={saving || !dirty}
+        disabled={saving || !dirty || ownerReadOnly}
         data-testid="editor-save"
       >
         <Icon name="lock" size={12} className="mr-1" />

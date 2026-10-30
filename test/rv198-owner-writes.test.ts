@@ -196,13 +196,16 @@ describe("P2-4: renaming a guest's or member's row seals under ITS key or not at
     expect(Array.from(fallen).every((b) => b === 0)).toBe(true) // zeroized
   })
 
-  test("the owner's own row keeps its derived key", async () => {
+  test("the owner's own row is renamed under the key that authenticated its name", async () => {
+    // SF-0002 review: an owner row goes through the RESOLVED key, so a
+    // binary-convention row is renamed under its binary key, not the plain
+    // string derivation.
     const key = await renameKeyFor({
       fileId: MOVED_FILE, file: ownRow, viewerId: VIEWER,
-      getFileKey: async () => new Uint8Array(derived),
-      getFileKeyForFile: async () => {
-        throw new Error('not used for an own row')
+      getFileKey: async () => {
+        throw new Error('the plain derivation is not used for owner renames')
       },
+      getFileKeyForFile: async () => new Uint8Array(derived),
       readName: async () => undefined,
     })
     expect(Array.from(key)).toEqual(Array.from(derived))

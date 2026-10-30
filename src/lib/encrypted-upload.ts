@@ -38,6 +38,7 @@ import {
   type UploadState,
 } from './upload-resume'
 import { isLikelyAlbumArtOrIcon } from './photo-library'
+import { assertOwnerRepairWritable } from './owner-repair'
 import { runWithSessionReinit } from './upload-session-reinit'
 
 /**
@@ -147,6 +148,9 @@ async function uploadFile(
   deriveFileKeyForId?: FileKeyResolver,
   options: EncryptedUploadOptions = {},
 ): Promise<DriveFile> {
+  // SF-0002: a repaired read-only row is never replaced or given a new
+  // version. A NEW upload (fresh id) is unaffected: only a marked id throws.
+  assertOwnerRepairWritable(fileId)
   onProgress?.({ stage: 'Preparing', progress: 0 })
 
   const mimeType = file.type || null

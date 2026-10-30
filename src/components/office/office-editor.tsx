@@ -50,6 +50,8 @@ import { OfficeAbout } from './office-about'
 import { CommandPalette } from './command-palette'
 import { OfficeConflictDialog } from './office-conflict-dialog'
 import { UnsavedChangesDialog } from '../editor/unsaved-changes-dialog'
+import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly } from '../../lib/owner-repair'
+import { assertCurrentVersionWritable } from '../../lib/owner-write-guard'
 import { ImpressFilmstrip } from './impress-filmstrip'
 import { ImpressPresentOverlay } from './impress-present-overlay'
 import { useImpressChrome } from '../../hooks/use-impress-chrome'
@@ -199,6 +201,9 @@ export function OfficeEditor({
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  // SF-0002: repaired-from-iOS files open read-only; a save would have to
+  // rewrite an object sealed under the older key convention.
+  const ownerReadOnly = isOwnerRepairReadOnly(file.id)
   const [imageInsertError, setImageInsertError] = useState<string | null>(null)
   const [conflict, setConflict] = useState<ConflictState | null>(null)
   const [confirmExit, setConfirmExit] = useState(false)
@@ -576,6 +581,9 @@ export function OfficeEditor({
   )
 
   async function performUpload(uploadFileId: string, conflictCreated: boolean, signal: AbortSignal, savedBytes: Uint8Array, nameOverride?: string): Promise<DriveFile> {
+    // SF-0002 review: a new version under this id needs the CURRENT version's
+    // content writable, not only a mark set when the file was opened.
+    if (uploadFileId === file.id) await assertCurrentVersionWritable(file, getMasterKey())
     const fileKey = await getFileKey(uploadFileId)
     const name = nameOverride ?? decryptedName
     const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
@@ -589,6 +597,10 @@ export function OfficeEditor({
   }
 
   const handleSave = useCallback(async () => {
+    if (isOwnerRepairReadOnly(file.id)) {
+      setSaveError(OWNER_REPAIR_READ_ONLY)
+      return
+    }
     if (saving || !dirty || !bridgeRef.current) return
     setSaving(true)
     setSaveError(null)
@@ -735,6 +747,7 @@ export function OfficeEditor({
           onOpenPalette={() => setPaletteOpen(true)}
           onShare={onShare}
           onSave={handleSave}
+          readOnly={ownerReadOnly}
         />
       )}
       {/* CRITIQUE.md finding #5: the ribbon was already rendered

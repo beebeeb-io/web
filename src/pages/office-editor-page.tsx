@@ -61,7 +61,7 @@ type LoadState =
 
 export function OfficeEditorPage() {
   const { fileId } = useParams<{ fileId: string }>()
-  const { getFileKeyForFile, isUnlocked } = useKeys()
+  const { getFileKeyForFile, getMasterKey, isUnlocked } = useKeys()
   const [state, setState] = useState<LoadState>({ stage: 'loading' })
   const [closedHint, setClosedHint] = useState(false)
   // Ship-prep Codex review (PR #113, P1): this route's own top-level
@@ -103,7 +103,7 @@ export function OfficeEditorPage() {
         }
         const [{ current_version: openedVersionNumber }, { plaintext }, thumbnailUrl] = await Promise.all([
           listVersions(file.id).catch(() => ({ current_version: file.version_number ?? 1 })),
-          decryptToBlob(file.id, fileKey, file.name_encrypted, mimeType ?? undefined, file.chunk_count, file.size_bytes).catch((err: unknown) => {
+          decryptToBlob(file.id, fileKey, file.name_encrypted, mimeType ?? undefined, file.chunk_count, file.size_bytes, getMasterKey()).catch((err: unknown) => {
             throw asDecryptFailure(err)
           }),
           // CRITIQUE.md finding #5: best-effort — a brand-new/never-

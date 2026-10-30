@@ -364,6 +364,29 @@ export async function decryptNote(fileKey: Uint8Array, noteEncrypted: string): P
   return withProxy((p) => p.decryptNote(fileKey, noteEncrypted))
 }
 
+// ─── SF-0002 owner read-repair ──────────────────────
+// The two core derivations that open a row an older iOS File Provider sealed
+// under the uppercase id. See src/lib/owner-repair.ts for the rule; these are
+// only the worker transport (the WASM call must stay off the main thread).
+
+/** Owner key for a name that does not open under this client's derived key. */
+export async function ownerRepairNameKey(
+  masterKey: Uint8Array,
+  fileId: string,
+  nameEncrypted: string,
+): Promise<{ key: Uint8Array; convention: string }> {
+  return withProxy((p) => p.ownerRepairNameKey(masterKey, fileId, nameEncrypted))
+}
+
+/** Owner key for a version whose first frame does not open under the key we have. */
+export async function ownerRepairContentKey(
+  masterKey: Uint8Array,
+  fileId: string,
+  firstChunkFrame: Uint8Array,
+): Promise<{ key: Uint8Array; convention: string }> {
+  return withProxy((p) => p.ownerRepairContentKey(masterKey, fileId, firstChunkFrame))
+}
+
 /** The worker calls a content decryptor needs. Production: the crypto worker over Comlink. */
 export interface DecryptorPort {
   decryptorPushFrame(handle: number, frame: Uint8Array): Promise<Uint8Array>

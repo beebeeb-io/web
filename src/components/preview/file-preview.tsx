@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listVersions, restoreVersion, type DriveFile, type FileVersion } from '../../lib/api'
 import { decryptToBlob, decryptVersionToBlob } from '../../lib/encrypted-download'
+import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly } from '../../lib/owner-repair'
 import { fetchAndDecryptLargeThumbnail, fetchAndDecryptThumbnail } from '../../lib/thumbnail'
 import { PreviewChrome } from './preview-chrome'
 import { InfoRail, CONTENT_CIPHER_LABEL } from './info-rail'
@@ -451,7 +452,10 @@ function resolveEditableKind(
 }
 
 export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext, startInEditMode, folderId, onDelete }: FilePreviewProps) {
-  const { getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, isUnlocked } = useKeys()
+  const { getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, isUnlocked } = useKeys()
+  // SF-0002: the row's name or a version was sealed under the iOS Files-app
+  // convention, so it is openable/downloadable but not writable in place.
+  const ownerReadOnly = isOwnerRepairReadOnly(file.id)
   const [blob, setBlob] = useState<Blob | null>(null)
   /** True when `blob` holds the full original (non-image / fallback / version
    *  paths). False when `blob` is only a thumbnail (the thumbnail-first image
@@ -551,14 +555,18 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
   /** Every load path asks here: an ordinary file derives from the master key,
    *  a guest- or member-added row goes through the shared-folder resolver. */
-  const resolveFileKey = useCallback(async (): Promise<Uint8Array> => {
-    if (!sharedFile) return getFileKeyForFile(file)
+  // `ownerDerived` says whether the key came from the owner's own derivation.
+  // Only then may a content read ask core for the read-only repair key: a
+  // shared-folder or foreign key is never switched to an owner key (SF-0002
+  // review).
+  const resolveFileKey = useCallback(async (): Promise<{ key: Uint8Array; ownerDerived: boolean }> => {
+    if (!sharedFile) return { key: await getFileKeyForFile(file), ownerDerived: true }
     // rv-web198d R1: with the flag off there is no shared-folder walk for the
     // owner (no invites read, no link route asked); the key is derived, as on main.
-    if (!(await sharedFoldersEnabled())) return getFileKeyForFile(file)
+    if (!(await sharedFoldersEnabled())) return { key: await getFileKeyForFile(file), ownerDerived: true }
     const root = await sharedRootFor(folderId ?? null, file.id)
     const key = root ? await getFileKeyForSharedFile(file, root) : null
-    if (key) return key
+    if (key) return { key, ownerDerived: false }
     const label = root ? await getSharedFileOrigin(file, root) : null
     setShareOrigin(label)
     throw new Error(label ? `Can't open this file (added via ${label})` : "Can't open this file")
@@ -577,7 +585,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     let cancelled = false
     async function decrypt() {
       try {
-        const fileKey = await resolveFileKey()
+        const { key: fileKey } = await resolveFileKey()
         const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted)
         if (!cancelled) {
           setLocalDecryptedName(name)
@@ -643,7 +651,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
     async function loadAndDecrypt() {
       try {
-        const fileKey = await resolveFileKey()
+        const { key: fileKey, ownerDerived } = await resolveFileKey()
 
         // Thumbnail-first path for images (current version only)
         if (isImageFile && selectedVersionId === null) {
@@ -700,6 +708,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             effectiveMime ?? undefined,
             file.chunk_count,
             file.size_bytes,
+            ownerDerived ? getMasterKey() : undefined,
           )
           plaintext = res.plaintext
         } else {
@@ -714,6 +723,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             file.mime_type ?? undefined,
             v.chunk_count,
             v.size_bytes,
+            ownerDerived ? getMasterKey() : undefined,
           )
         }
         if (!cancelled) {
@@ -969,7 +979,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
     try {
       setDownloading(true)
-      const fileKey = await resolveFileKey()
+      const { key: fileKey, ownerDerived } = await resolveFileKey()
       let original: Blob
       if (selectedVersionId === null) {
         const res = await decryptToBlob(
@@ -979,6 +989,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           effectiveMime ?? undefined,
           file.chunk_count,
           file.size_bytes,
+          ownerDerived ? getMasterKey() : undefined,
         )
         original = res.plaintext
       } else {
@@ -992,6 +1003,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           file.mime_type ?? undefined,
           v.chunk_count,
           v.size_bytes,
+          ownerDerived ? getMasterKey() : undefined,
         )
       }
       saveBlob(original)
@@ -1090,7 +1102,9 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       onZoomOut={isImage && blob ? handleZoomOut : undefined}
       onRotate={isImage && blob ? handleRotate : undefined}
       onEdit={
-        canEditOffice && !editing
+        ownerReadOnly
+          ? undefined
+          : canEditOffice && !editing
           ? openOfficeEditorTab
           : canEdit && !editing
             ? () => setEditing(true)
@@ -1197,6 +1211,17 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             toolbarSlotEl={toolbarSlot}
             onRequestExitEdit={requestExitEdit}
           />
+        </div>
+      )}
+
+      {/* SF-0002: repaired-from-iOS file — readable, not writable. */}
+      {!editing && ownerReadOnly && (
+        <div
+          className="mx-auto flex w-full max-w-[560px] items-start gap-2.5 rounded-md border border-line bg-paper px-4 py-3 text-left shadow-1"
+          data-testid="owner-repair-readonly-notice"
+        >
+          <Icon name="lock" size={16} className="mt-0.5 shrink-0 text-ink-3" />
+          <p className="text-[12.5px] leading-relaxed text-ink-2">{OWNER_REPAIR_READ_ONLY}</p>
         </div>
       )}
 

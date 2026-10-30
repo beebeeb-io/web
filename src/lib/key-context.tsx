@@ -18,7 +18,15 @@ import {
   zeroize,
   computeRecoveryCheck,
   toBase64,
+  readNameMetadata,
+  ownerRepairNameKey,
 } from './crypto'
+import {
+  ownerRepairKeyFor,
+  rememberOwnerRepairKey,
+  clearOwnerRepairReadOnly,
+  type OwnerRepairConvention,
+} from './owner-repair'
 import { registerLogoutCallback, registerLoginBroadcastCallback } from './auth-context'
 import {
   wrapAndStore,
@@ -50,7 +58,7 @@ import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
 import { ApiError, getFolderKeys, getSentInvites, listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
 import { sharedFoldersEnabled } from './use-feature-flag'
-import { forgetSharedFolderSession, foreignRowKey, folderKeyForRoot, openOwnerFile } from './owner-adoption'
+import { forgetSharedFolderSession, foreignRowKey, folderKeyForRoot, needsOwnership, openOwnerFile } from './owner-adoption'
 import { createSharedFolderKeyCache } from './shared-folder-key-cache'
 import { activeFolderInvites } from './folder-share-crypto'
 import { decryptActorName } from './guest-actor-name'
@@ -645,17 +653,16 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     // Task 2237b: a row a link guest or another member added to a shared
     // folder is not sealed under a key we derive. Every caller (download, zip,
     // rename, versions, thumbnails), not only the listing, must take the
-    // shared-folder path for it; a row that does not open there falls through
-    // to the derived key and fails its own integrity check honestly. Only with
-    // the flag on (rv-web198d R1): with it off this asks nothing, as on main.
+    // shared-folder path for it. SF-0002 review: a foreign row the shared path
+    // cannot open is UNAVAILABLE — it never falls through to an owner key.
+    // Only with the flag on (rv-web198d R1): with it off this asks nothing.
     const shared = await foreignRowKey({
       masterKey: key,
       file,
       viewerId: residentKeyUserIdRef.current,
       keyIndexFor: (root, fileId) => sharedFolderCacheRef.current.forFile(root, fileId),
     })
-    if (shared) return shared
-    return deriveFileKey(key, file.id)
+    return resolveOwnerKeyForFile(key, file, residentKeyUserIdRef.current, shared)
   }, [isBoundTo])
 
   const getSharedFileOrigin = useCallback(async (file: DriveFile, folderId: string): Promise<string | null> => {
@@ -735,6 +742,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     // custody memory: that belongs to the device (L7d).
     forgetSharedFolderSession()
     clearCachedKey()
+    clearOwnerRepairReadOnly()
     void clearOfflineCaches()
     void clearThumbnailCache()
     setKeyPresent(false)
@@ -935,6 +943,60 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>
+}
+
+
+/**
+ * SF-0002 review: the key an OWNER row is read and written under.
+ *
+ * - a key the shared-folder path resolved wins (the row is not ours to re-key);
+ * - a FOREIGN row the shared path could not open is unavailable: it never
+ *   falls through to the owner's derived or repair key;
+ * - otherwise the client's DERIVED key is tried first, so a cached repair key
+ *   never takes precedence over a normal key that opens;
+ * - only a name that fails to open asks core for the owner repair key.
+ */
+export async function resolveOwnerKeyForFile(
+  masterKey: Uint8Array,
+  file: DriveFile,
+  viewerId: string | null,
+  sharedKey: Uint8Array | null,
+): Promise<Uint8Array> {
+  if (sharedKey) return sharedKey
+  if (needsOwnership(file, viewerId)) {
+    throw new Error("Can't open this file")
+  }
+  const derived = await deriveFileKey(masterKey, file.id)
+  let opens = true
+  if (file.name_encrypted.startsWith('{')) {
+    try {
+      await readNameMetadata(derived, file.name_encrypted)
+    } catch {
+      opens = false
+    }
+  }
+  if (opens) return derived
+  const cached = ownerRepairKeyFor(file.id)
+  if (cached) {
+    zeroize(derived)
+    return new Uint8Array(cached)
+  }
+  if (file.name_encrypted.startsWith('{')) {
+    try {
+      const repair = await ownerRepairNameKey(masterKey, file.id, file.name_encrypted)
+      if (repair.key instanceof Uint8Array) {
+        rememberOwnerRepairKey(file.id, {
+          fileKey: repair.key,
+          convention: repair.convention as OwnerRepairConvention,
+        })
+        zeroize(derived)
+        return repair.key
+      }
+    } catch {
+      /* not repairable: report the ordinary integrity failure */
+    }
+  }
+  return derived
 }
 
 export function useKeys(): KeyState {

@@ -27,8 +27,13 @@ export async function renameKeyFor(args: {
   readName: (fileKey: Uint8Array, nameEncrypted: string) => Promise<unknown>
 }): Promise<Uint8Array> {
   const { file } = args
-  if (!file || !needsOwnership(file, args.viewerId)) return args.getFileKey(args.fileId)
+  if (!file) return args.getFileKey(args.fileId)
+  // SF-0002 review: an OWNER row is renamed under the key that authenticated
+  // its name (the resolved key), not the plain string derivation. A binary-
+  // convention row therefore stays on its binary key and no mixed-key row is
+  // created. Foreign rows keep the proven-name check below.
   const key = await args.getFileKeyForFile(file)
+  if (!needsOwnership(file, args.viewerId)) return key
   try {
     await args.readName(key, file.name_encrypted)
   } catch {
