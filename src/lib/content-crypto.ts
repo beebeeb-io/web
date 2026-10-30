@@ -24,6 +24,7 @@ import type * as Wasm from 'beebeeb-wasm'
 export type ContentWasm = Pick<
   typeof Wasm,
   | 'WasmChunkDecryptor'
+  | 'decrypt_chunk_frame'
   | 'decrypt_file_metadata_with_key'
   | 'decrypt_name_metadata_with_key'
   | 'encrypt_note_for'
@@ -88,13 +89,40 @@ function pinnedFrom(raw: unknown): PinnedMetadata {
  * the worker's `WasmChunkEncryptor` registry).
  */
 export function createContentOps(wasm: ContentWasm) {
-  const liveDecryptors = new Map<number, Wasm.WasmChunkDecryptor>()
+  interface LiveDecryptor {
+    decryptor: Wasm.WasmChunkDecryptor
+    /** A private copy of the file key, wiped when this decryptor or its reader ends. */
+    key: Uint8Array
+    /** The id the file was uploaded under (v2 frames bind it). */
+    fileId: string
+    /** The authenticated pin the decryptor was created under. */
+    pin: ContentPin
+  }
+  interface LiveReader {
+    key: Uint8Array
+    fileId: string
+    versionId: Uint8Array
+    /** 1 = v1, 2 = v2. */
+    format: number
+  }
+  const liveDecryptors = new Map<number, LiveDecryptor>()
+  const liveReaders = new Map<number, LiveReader>()
   let nextHandle = 1
 
-  function decryptor(handle: number): Wasm.WasmChunkDecryptor {
+  function decryptor(handle: number): LiveDecryptor {
     const d = liveDecryptors.get(handle)
     if (!d) throw new Error(`No live decryptor for handle ${handle}`)
     return d
+  }
+
+  function reader(handle: number): LiveReader {
+    const r = liveReaders.get(handle)
+    if (!r) throw new Error(`No live chunk reader for handle ${handle}`)
+    return r
+  }
+
+  function wipeKey(key: Uint8Array | undefined): void {
+    key?.fill(0)
   }
 
   return {
@@ -107,13 +135,13 @@ export function createContentOps(wasm: ContentWasm) {
     createDecryptor(fileKey: Uint8Array, fileId: string, pin: ContentPin): number {
       const d = wasm.WasmChunkDecryptor.fromFileKey(fileKey, fileId, toContentPin(pin))
       const handle = nextHandle++
-      liveDecryptors.set(handle, d)
+      liveDecryptors.set(handle, { decryptor: d, key: fileKey.slice(), fileId, pin })
       return handle
     },
 
     /** Open the next wire frame (`nonce || ciphertext || tag`), in order from chunk 0. */
     decryptorPushFrame(handle: number, frame: Uint8Array): Uint8Array {
-      return decryptor(handle).pushFrame(frame)
+      return decryptor(handle).decryptor.pushFrame(frame)
     },
 
     /**
@@ -123,28 +151,107 @@ export function createContentOps(wasm: ContentWasm) {
      * any `decryptorPushFrame`, throws.
      */
     decryptorFinish(handle: number): DecryptSummary {
-      const d = decryptor(handle)
+      const entry = decryptor(handle)
       // `finish` takes the WASM instance by value: it is gone after this call,
       // whether it returns or throws.
       liveDecryptors.delete(handle)
-      return d.finish() as DecryptSummary
+      try {
+        return entry.decryptor.finish() as DecryptSummary
+      } finally {
+        wipeKey(entry.key)
+      }
     },
 
     /** Free a decryptor that will not be finished (failed or aborted read). Idempotent. */
     decryptorDispose(handle: number): void {
-      const d = liveDecryptors.get(handle)
-      if (!d) return
+      const entry = liveDecryptors.get(handle)
+      if (!entry) return
       liveDecryptors.delete(handle)
+      try {
+        entry.decryptor.free()
+      } catch {
+        // Already consumed: nothing to free.
+      } finally {
+        wipeKey(entry.key)
+      }
+    },
+
+    /**
+     * Turn a decryptor that has opened chunk 0 into a random-access reader
+     * handle. The reader owns the key copy, file id, v2 version id and the
+     * format chunk 0 established; the decryptor is freed. Nothing in
+     * `openChunkAt` takes a key, format or version id from the page.
+     *
+     * It REFUSES format 1 when the pin says v2 (a downgrade): with a v2 pin,
+     * core only ever opens v2 frames, and this is the belt to that suspender.
+     */
+    createChunkReader(decryptorHandle: number): number {
+      const entry = decryptor(decryptorHandle)
+      const d = entry.decryptor
+      if (d.chunksDecrypted < 1) {
+        throw new Error('createChunkReader needs chunk 0 to be pushed first')
+      }
+      const format = d.format
+      if (format !== 1 && format !== 2) {
+        throw new Error(`decryptor reports unknown chunk format ${String(format)}`)
+      }
+      if (entry.pin === PIN_V2 && format === 1) {
+        throw new Error('refusing format 1 for a file whose pin says v2')
+      }
+      const versionId = d.versionId ? d.versionId.slice() : new Uint8Array(0)
+      const handle = nextHandle++
+      liveReaders.set(handle, {
+        key: entry.key,
+        fileId: entry.fileId,
+        versionId,
+        format,
+      })
+      // The key copy moves to the reader; keep the decryptor entry from wiping
+      // it on dispose.
+      entry.key = new Uint8Array(0)
+      liveDecryptors.delete(decryptorHandle)
       try {
         d.free()
       } catch {
-        // Already consumed: nothing to free.
+        // Consumed already: nothing to free.
       }
+      return handle
+    },
+
+    /**
+     * Open ONE frame at its own index. The caller passes only the index, the
+     * `is_last` flag and the frame; the key, format and version id stay in the
+     * worker.
+     */
+    openChunkAt(handle: number, index: number, isLast: boolean, frame: Uint8Array): Uint8Array {
+      const r = reader(handle)
+      return wasm.decrypt_chunk_frame(
+        r.key,
+        r.fileId,
+        r.versionId.length ? r.versionId : new Uint8Array(0),
+        index,
+        isLast,
+        r.format,
+        frame,
+      )
+    },
+
+    /** Close a reader and wipe its key copy. Idempotent. */
+    closeChunkReader(handle: number): void {
+      const r = liveReaders.get(handle)
+      if (!r) return
+      liveReaders.delete(handle)
+      wipeKey(r.key)
     },
 
     /** Decryptors not yet finished or disposed (the worker never recycles while one is live). */
     liveDecryptorCount(): number {
       return liveDecryptors.size
+    },
+
+    /** Random-access readers not yet closed (the worker never recycles while one is live). */
+    liveReaderCount(): number {
+      return liveReaders.size
     },
 
     /**
