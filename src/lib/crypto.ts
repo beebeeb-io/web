@@ -133,6 +133,7 @@ async function hasLiveWorkerInstances(proxy: Comlink.Remote<CryptoWorker>): Prom
   return (
     (await proxy.liveEncryptorCount()) > 0 ||
     (await proxy.liveDecryptorCount()) > 0 ||
+    (await proxy.liveReaderCount()) > 0 ||
     (await proxy.liveSearchIndexCount()) > 0 ||
     (await proxy.liveCeremonyCount()) > 0
   )
@@ -398,6 +399,19 @@ export class StreamingDecryptor {
     this.#port = port
   }
 
+  /** The worker-owned handle. Only `createChunkReader` hands it over. */
+  get handle(): number {
+    return this.#handle
+  }
+
+  /**
+   * The worker took this decryptor over (it became a random-access reader).
+   * Mark it consumed WITHOUT touching the handle: it no longer exists.
+   */
+  release(): void {
+    this.#consumed = true
+  }
+
   /**
    * Open the next wire frame (`nonce || ciphertext || tag`). The frame's
    * buffer is transferred to the worker: pass a frame that owns its buffer and
@@ -438,6 +452,71 @@ export async function startDecryptStream(
 ): Promise<StreamingDecryptor> {
   const handle = await withProxy((p) => p.createDecryptor(fileKey, fileId, pin))
   return new StreamingDecryptor(handle)
+}
+
+/** The worker calls a chunk reader needs. Production: the crypto worker over Comlink. */
+export interface ChunkReaderPort {
+  createChunkReader(decryptorHandle: number): Promise<number>
+  openChunkAt(handle: number, index: number, isLast: boolean, frame: Uint8Array): Promise<Uint8Array>
+  closeChunkReader(handle: number): Promise<void>
+}
+
+const workerChunkReaderPort: ChunkReaderPort = {
+  createChunkReader: (handle) => withProxy((p) => p.createChunkReader(handle)),
+  openChunkAt: (handle, index, isLast, frame) =>
+    withProxy((p) =>
+      p.openChunkAt(handle, index, isLast, Comlink.transfer(frame, [frame.buffer])),
+    ),
+  closeChunkReader: (handle) => withProxy((p) => p.closeChunkReader(handle)),
+}
+
+/**
+ * Main-thread proxy over a worker-owned random-access reader (contract LD-0001
+ * §5.1). It opens ONE frame at its own index; the key, format and v2 version id
+ * live in the worker and are never passed from the page. The plaintext buffer
+ * is transferred back, so each call allocates a fresh buffer.
+ */
+export class ChunkReader {
+  #handle: number
+  #port: ChunkReaderPort
+  #closed = false
+
+  constructor(handle: number, port: ChunkReaderPort = workerChunkReaderPort) {
+    this.#handle = handle
+    this.#port = port
+  }
+
+  /** Open the frame at `index`; `isLast` must be `index === chunkCount - 1`. */
+  async openAt(index: number, isLast: boolean, frame: Uint8Array): Promise<Uint8Array> {
+    if (this.#closed) throw new Error('chunk reader already closed')
+    return this.#port.openChunkAt(this.#handle, index, isLast, frame)
+  }
+
+  /** Close the worker-side reader and wipe its key copy. Idempotent. */
+  async close(): Promise<void> {
+    if (this.#closed) return
+    this.#closed = true
+    try {
+      await this.#port.closeChunkReader(this.#handle)
+    } catch (err) {
+      console.warn('[crypto] chunk reader close failed', err)
+    }
+  }
+}
+
+/**
+ * Turn a `StreamingDecryptor` whose chunk 0 was pushed into a random-access
+ * reader. The worker frees the decryptor and moves the key copy into the
+ * reader; this proxy is then consumed.
+ */
+export async function createChunkReader(
+  decryptor: StreamingDecryptor,
+  port: ChunkReaderPort = workerChunkReaderPort,
+): Promise<ChunkReader> {
+  if (decryptor.handle < 0) throw new Error('decryptor is not live')
+  const handle = await port.createChunkReader(decryptor.handle)
+  decryptor.release()
+  return new ChunkReader(handle, port)
 }
 
 // ─── Metadata (filename) encryption ─────────────────
