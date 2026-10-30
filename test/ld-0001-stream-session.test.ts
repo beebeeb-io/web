@@ -110,6 +110,12 @@ describe('LD-0001 stream session setup', () => {
   test('v2_count_too_small_or_too_large_refuses_before_ready', async () => {
     const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
 
+    // The honest fixture opens (this assertion is what catches a tail opened
+    // with the wrong is_last flag).
+    const honest = await open(fx)
+    expect(honest.chunkCount).toBe(3)
+    await honest.close()
+
     // X-Chunk-Count says 2, the row says 3.
     const small = new FakeChunkSource(fx.frames, 2)
     await expect(open(fx, { source: small })).rejects.toMatchObject({ kind: 'auth' })
@@ -577,6 +583,11 @@ describe('LD-0001 v2 vector full guarantee', () => {
     }
     expect([...honest.verified].sort((a, b) => a - b)).toEqual([0, 1, 2])
     await honest.close()
+
+    // Metadata count cross-check (§5.2): X-Chunk-Count 2 vs the row's 3.
+    await expect(openVector(new FakeChunkSource(V2_FRAMES, 2))).rejects.toMatchObject({
+      kind: 'auth',
+    })
 
     // Swap: frame 1 served for frame 2 (the tail open fails before ready).
     const swapped = [...V2_FRAMES]
