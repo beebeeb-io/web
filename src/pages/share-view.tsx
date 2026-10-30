@@ -796,7 +796,7 @@ function BundleShareView({
                           onClick={() => handleDownloadOne(row)}
                         >
                           <Icon name={isThis ? 'lock' : 'download'} size={12} />
-                          {isThis ? 'Decrypting…' : 'Download'}
+                          {isThis ? 'Downloading…' : 'Download'}
                         </BBButton>
                       </div>
                     )
@@ -1595,7 +1595,7 @@ export function ShareViewPage() {
                 disabled={downloading}
               >
                 <Icon name="download" size={14} />
-                {downloading ? 'Decrypting...' : 'Download and decrypt'}
+                {downloading ? 'Downloading…' : 'Download and decrypt'}
               </BBButton>
             )}
 
