@@ -91,8 +91,38 @@ export interface UploadState {
    * new file: its record carries neither field.
    */
   replace_pin_file_id?: string
+  /**
+   * L13 (contract 2275, SF-0001): this session's `fileId` is one THIS client
+   * chose (a minted id, or a listed row's id), never an id the server handed
+   * back. Records written before this field existed have no marker: their id
+   * may be server-chosen, so they are abandoned, never resumed.
+   */
+  selfMinted?: true
   parentId: string | null
   createdAt: number // Date.now()
+}
+
+/** The id a resume must use, and the legacy id (if any) to abandon first. */
+export interface ResumePlan {
+  /** The id the upload writes under; a fresh client-chosen id for a legacy record. */
+  resumeId: string
+  /** A stored session this client did not mint: abandon it server-side, never resume it. */
+  abandonId: string | null
+}
+
+/**
+ * L13: a persisted session may only be resumed when this client minted the id
+ * itself. A record without the marker (or whose stored id is not the one being
+ * resumed) is abandoned through the upload-abandon endpoint and the upload
+ * restarts under a fresh id the client chooses now — it is never resumed, and
+ * never left looping on the old id.
+ */
+export function planResume(
+  record: Pick<UploadState, 'fileId' | 'selfMinted'>,
+  mintId: () => string,
+): ResumePlan {
+  if (record.selfMinted === true) return { resumeId: record.fileId, abandonId: null }
+  return { resumeId: mintId(), abandonId: record.fileId }
 }
 
 /**

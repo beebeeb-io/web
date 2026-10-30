@@ -1,19 +1,10 @@
 /**
- * Task 1943 — a replace pin belongs to ONE file id (Codex P2 on web#170,
- * "Clear the replace pin for server-generated IDs").
- *
- * A replace reads the pin from the replaced file's authenticated name. When
- * the server answers the init with ANOTHER file id, the upload is a brand-new
- * file (fresh name, no pin, core's write rule): the replaced file's pin must
- * not follow it. Before this fix the resume record still carried the old pin
- * under the NEW id, so an interrupted upload resumed with that pin applied to
- * the new file: with pin 2 it restarted the v1 session and wrote v2 content
- * under an unpinned name, which a later replace would downgrade.
- *
- * Every place the record is written after an init (the first init, the swept-
- * session re-init, the resume-rule restart) and the one place a recorded pin
- * is read back (resume) is held here, through the real `encryptedUpload` with
- * an encryptor whose format and resume policy are core's.
+ * Task 1943 — a replace pin belongs to ONE file id (Codex P2 on web#170).
+ * and L13 (contract 2275, SF-0001) — a replace init answered with ANOTHER
+ * file id now ABORTS: nothing is sealed, pinned, recorded or written under the
+ * echoed id (previously it continued as a brand-new file). The pin rules for
+ * the ids this client chose still hold, through the real `encryptedUpload`
+ * with an encryptor whose format and resume policy are core's.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type * as Wasm from 'beebeeb-wasm'
@@ -21,6 +12,7 @@ import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { hexToBytes, loadVectors, loadWasm } from './helpers/wasm-crypto-mirror'
 import { createContentOps } from '../src/lib/content-crypto'
 import type { UploadState } from '../src/lib/upload-resume'
+import { SERVER_CHANGED_ITEM_ID_MESSAGE, ServerChangedItemIdError } from '../src/lib/item-id-echo'
 
 const wasm = loadWasm()
 const ops = createContentOps(wasm)
@@ -155,86 +147,65 @@ async function upload(
   resumeFileId?: string,
 ) {
   return encryptedUpload(
-    file(), fileId, fileKey, MK, undefined, undefined, resumeFileId, undefined, undefined, async () => fileKey, options,
+    file(), fileId, fileKey, MK, undefined, undefined, resumeFileId, undefined, undefined, options,
   )
 }
 
 /** Every record saved under `id`. */
 const savedFor = (id: string) => cap.saved.filter((s) => s.fileId === id)
 
-describe('a replace answered with another file id is a new file: its pin stays with the replaced file', () => {
-  test('remap + interrupt + resume: the new file records no pin, resumes its v1 session, and the old pin is never applied', async () => {
-    // 1. Replace of a v2-pinned file; the server answers with NEW_ID; the
-    //    first chunk PUT is interrupted.
+describe('L13: a replace answered with another file id aborts before anything is written under it', () => {
+  test('a replace init answering a different id aborts: no pin, no chunk, no record, no write', async () => {
     initAnswers = [(_requested) => v2Init(NEW_ID, 'new-session')]
-    putFailures = [interrupted]
-    await expect(upload(V2_FILE_ID, V2_KEY, { replaceOf: { nameEncrypted: V2_NAME } })).rejects.toThrow('Failed to fetch')
+    const err = await upload(V2_FILE_ID, V2_KEY, { replaceOf: { nameEncrypted: V2_NAME } }).then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(ServerChangedItemIdError)
+    expect((err as ServerChangedItemIdError).code).toBe('server_changed_item_id')
+    expect((err as Error).message).toBe(SERVER_CHANGED_ITEM_ID_MESSAGE)
 
-    const records = savedFor(NEW_ID)
-    expect(records.length).toBeGreaterThan(0)
-
-    // 2. The resume banner resumes the NEW file from its record. (Asserted
-    //    before the record itself, so the old code's red shows what the
-    //    resume DID with the carried pin.)
-    stored = records.at(-1)!
-    cap.events.length = 0
-    cap.puts.length = 0
-    cap.inits.length = 0
-    await upload(NEW_ID, NEW_KEY, undefined, NEW_ID)
-
-    expect(cap.events.filter((e) => e.startsWith('pin:'))).toEqual([])
-    expect(cap.events).toContain('policy(1)=continue')
-    expect(cap.abandons).toEqual([])
-    expect(cap.inits).toEqual([])
-    expect(cap.puts).toEqual([{ fileId: NEW_ID, session: 'new-session' }])
-
-    // The interrupted upload's record never carried the replaced file's pin.
-    expect(records.map((r) => r.replace_pin)).toEqual(records.map(() => undefined))
-    expect(records.at(-1)?.chunk_format).toBe(1)
-    expect(savedFor(V2_FILE_ID)).toEqual([])
-    expect(savedFor(NEW_ID).every((r) => r.replace_pin === undefined)).toBe(true)
+    // Nothing was sealed, pinned or written under the echoed id.
+    expect(cap.events.filter((e) => e.startsWith('enc:') || e.startsWith('pin:') || e.startsWith('put:'))).toEqual([])
+    expect(cap.puts).toEqual([])
+    expect(cap.saved).toEqual([])
   })
 
-  test('a swept session re-inited under another id records no pin and writes without it', async () => {
-    // The replace starts on its own id (pin applied), the session is swept,
-    // and the re-init answers with NEW_ID.
+  test('a swept session re-inited under another id aborts instead of writing the new file', async () => {
     initAnswers = [
       (requested) => v2Init(requested, 'first-session'),
       (_requested) => v2Init(NEW_ID, 'reinit-session'),
     ]
     putFailures = [swept]
-    await upload(V2_FILE_ID, V2_KEY, { replaceOf: { nameEncrypted: V2_NAME } })
+    await expect(upload(V2_FILE_ID, V2_KEY, { replaceOf: { nameEncrypted: V2_NAME } })).rejects.toBeInstanceOf(
+      ServerChangedItemIdError,
+    )
 
-    expect(cap.events.filter((e) => e.startsWith('pin:'))).toEqual([`pin:2@${V2_FILE_ID}`])
     expect(cap.inits).toEqual([V2_FILE_ID, V2_FILE_ID])
-    expect(cap.puts).toEqual([{ fileId: NEW_ID, session: 'reinit-session' }])
-    const records = savedFor(NEW_ID)
-    expect(records.length).toBeGreaterThan(0)
-    expect(records.map((r) => r.replace_pin)).toEqual(records.map(() => undefined))
-    expect(records.at(-1)?.chunk_format).toBe(1)
+    expect(cap.puts).toEqual([])
+    // Records under the client's own id from the first attempt are fine; the
+    // answered id gets nothing.
+    expect(savedFor(NEW_ID)).toEqual([])
+    // The one pin that ran was the replaced file's own, for its own id.
+    expect(cap.events.filter((e) => e.startsWith('pin:'))).toEqual([`pin:2@${V2_FILE_ID}`])
   })
 
-  test('a resume-rule restart re-inited under another id records no pin and writes without it', async () => {
-    // A resumed replace of the v2 file whose record says nothing about its
-    // frames: core says restart, and the fresh init answers with NEW_ID.
+  test('a resume-rule restart re-inited under another id aborts instead of writing the new file', async () => {
     stored = {
       fingerprint: 'fp', fileId: V2_FILE_ID, fileName: 'report.bin', fileSize: 4, totalChunks: 1,
       upload_session_id: 'old-session', object_version_id: 'ov-old', chunk_size_bytes: 4, chunk_count: 1,
       region: 'Europe', parentId: null, createdAt: 1,
       replace_pin: 2, replace_pin_file_id: V2_FILE_ID,
+      selfMinted: true,
     } as UploadState
     initAnswers = [(_requested) => v2Init(NEW_ID, 'restart-session')]
-    await upload(V2_FILE_ID, V2_KEY, undefined, V2_FILE_ID)
+    await expect(upload(V2_FILE_ID, V2_KEY, undefined, V2_FILE_ID)).rejects.toBeInstanceOf(ServerChangedItemIdError)
 
     expect(cap.events).toContain('policy(none)=restart')
     expect(cap.abandons).toEqual([])
-    // the pin went to the replaced file's (refused) encryptor only
     expect(cap.events.filter((e) => e.startsWith('pin:'))).toEqual([`pin:2@${V2_FILE_ID}`])
-    expect(cap.puts).toEqual([{ fileId: NEW_ID, session: 'restart-session' }])
-    const records = savedFor(NEW_ID)
-    expect(records.length).toBeGreaterThan(0)
-    expect(records.map((r) => r.replace_pin)).toEqual(records.map(() => undefined))
-    expect(records.at(-1)?.chunk_format).toBe(1)
+    expect(cap.puts).toEqual([])
+    expect(cap.saved).toEqual([])
   })
 })
 

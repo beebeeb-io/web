@@ -25,8 +25,6 @@ export async function uploadWelcomeFile(masterKey: Uint8Array): Promise<void> {
     undefined,
     undefined,
     undefined,
-    undefined,
-    (serverFileId) => deriveFileKey(masterKey, serverFileId),
   )
 }
 

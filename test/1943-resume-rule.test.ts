@@ -158,7 +158,7 @@ function record(over: Partial<UploadState>): UploadState {
 
 async function upload(fileId: string, fileKey: Uint8Array, options?: { replaceOf?: { nameEncrypted: string } }, resumeFileId?: string) {
   return encryptedUpload(
-    file(), fileId, fileKey, MK, undefined, undefined, resumeFileId, undefined, undefined, async () => fileKey, options,
+    file(), fileId, fileKey, MK, undefined, undefined, resumeFileId, undefined, undefined, options,
   )
 }
 

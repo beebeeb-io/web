@@ -21,6 +21,7 @@ import type * as Wasm from 'beebeeb-wasm'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import type { UploadState } from '../src/lib/upload-resume'
+import { ServerChangedItemIdError } from '../src/lib/item-id-echo'
 
 const wasm = loadWasm()
 const MK = new Uint8Array(32).fill(5)
@@ -165,7 +166,7 @@ beforeEach(() => {
 function upload(fileKey = new Uint8Array(32).fill(3)) {
   return encryptedUpload(
     new File([new Uint8Array([1, 2, 3, 4])], 'report.bin'),
-    FILE_ID, fileKey, MK, undefined, undefined, FILE_ID, undefined, undefined, async () => fileKey,
+    FILE_ID, fileKey, MK, undefined, undefined, FILE_ID, undefined, undefined,
   )
 }
 
@@ -216,10 +217,11 @@ describe('the old resume record is kept until a fresh session exists (Codex P2)'
     expect(idb.size).toBe(0)
   })
 
-  test('a fresh init answered under another id drops the old id’s record once the new one is written', async () => {
+  test('L13: a fresh init answered under another id aborts; the old record survives untouched', async () => {
     remapTo = NEW_ID
-    await upload()
-    expect(cap.idbAtPut).toEqual([{ [NEW_ID]: 'fresh-session' }])
-    expect(idb.size).toBe(0)
+    await expect(upload()).rejects.toBeInstanceOf(ServerChangedItemIdError)
+    expect(cap.idbAtPut).toEqual([])
+    expect(idb.get(FILE_ID)).toEqual(staleRecord())
+    expect(cap.puts).toEqual([])
   })
 })

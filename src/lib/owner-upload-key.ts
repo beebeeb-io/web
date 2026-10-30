@@ -12,6 +12,7 @@ import { ApiError, createFolder, publishSharedFolderKeys, updateFile, type Drive
 import { collectAllChildItems, sealChildKey } from './folder-share-crypto'
 import { assertNoSeenCustodyAbove, folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
 import { deriveFileKey, zeroize } from './crypto'
+import { assertEchoedItemId } from './item-id-echo'
 import { sharedFoldersEnabled } from './use-feature-flag'
 
 /**
@@ -79,6 +80,11 @@ export async function createOwnerFolder(args: {
   masterKey?: Uint8Array
 }): Promise<DriveFile> {
   const created = await createFolder(args.nameEncrypted, args.parentId, args.folderId)
+  // L13 (contract 2275, SF-0001): the folder's name is sealed under the key
+  // derived from the id THIS client chose. An answer with any other id aborts
+  // here — before a wrap is published, and before the caller indexes, moves
+  // items into, or navigates to the answer.
+  assertEchoedItemId(args.folderId, created.id)
   if (args.parentId && args.nameKey && args.masterKey) {
     await publishOwnerUploadKey(args.masterKey, args.parentId, created.id, args.nameKey, true)
   }

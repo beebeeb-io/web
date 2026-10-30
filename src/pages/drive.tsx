@@ -86,6 +86,7 @@ import {
 } from '../components/upgrade-nudge-modal'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { UploadRestartFailedError } from '../lib/upload-session-reinit'
+import { prepareResume } from '../lib/resume-under-own-id'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../lib/bulk-download'
 import {
@@ -1155,12 +1156,25 @@ export function Drive() {
       // Remove from paused list immediately
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== match.fileId))
 
-      const fileKey = await getFileKey(match.fileId)
+      // L13 (SF-0001): only a session this client minted may be resumed. A
+      // record from before the marker (its id may be the server's) is abandoned
+      // through the upload-abandon endpoint and restarted under a fresh id this
+      // client chooses now — never resumed, never left looping on the old id.
+      const plan = await prepareResume(match, () => crypto.randomUUID())
+      if (plan.restarted) {
+        showToast({
+          icon: 'upload',
+          title: 'Upload restarted',
+          description: `${file.name} was started by an older version, so it uploads again as a new file.`,
+        })
+      }
+      const resumeFileId = plan.abandonId ? undefined : plan.resumeId
+      const fileKey = await getFileKey(plan.resumeId)
       try {
         let resumeStartedAt: number | undefined
         await encryptedUpload(
           file,
-          match.fileId,
+          plan.resumeId,
           fileKey,
           getMasterKey(),
           match.parentId ?? undefined,
@@ -1187,13 +1201,12 @@ export function Drive() {
               ),
             )
           },
-          match.fileId, // resumeFileId
+          resumeFileId, // only a self-minted session resumes
           undefined,
           undefined,
-          getFileKey,
         )
         setUploads((prev) => prev.filter((u) => u.id !== uploadId))
-        showToast({ icon: 'check', title: 'Upload resumed', description: file.name })
+        showToast({ icon: 'check', title: plan.abandonId ? 'Uploaded' : 'Upload resumed', description: file.name })
         fetchFiles()
       } catch (err) {
         // Task 1589: the server swept this paused upload (its lease expired)
@@ -1538,7 +1551,7 @@ export function Drive() {
               : u,
           ),
         )
-      }, undefined, undefined, abortController.signal, getFileKey, { conflictCreated, replaceOf })
+      }, undefined, undefined, abortController.signal, { conflictCreated, replaceOf })
       const uploadedFileId = uploadedFile.id
 
       // Update the encrypted search index with the new file
@@ -1805,7 +1818,7 @@ export function Drive() {
                 : u,
             ),
           )
-        }, undefined, undefined, undefined, getFileKey)
+        }, undefined, undefined, undefined)
 
         // Index each file
         const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
@@ -2005,7 +2018,6 @@ export function Drive() {
           undefined,
           undefined,
           undefined,
-          getFileKey,
         )
         const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
         const now = new Date().toISOString()

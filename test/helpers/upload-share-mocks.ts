@@ -25,7 +25,32 @@ export const cap = {
   removedStates: [] as string[],
   encryptedMetadataKeys: [] as number[],
   addFolderKeysCalls: [] as Array<{ inviteId: string; keys: unknown[]; folderKeyId: string; format?: string }>,
+  createdFolders: [] as Array<{ nameEncrypted: string; parentId?: string; folderId?: string }>,
+  movedItems: [] as Array<{ id: string; parentId: string | null }>,
+  abandons: [] as string[],
 }
+/**
+ * L13 (contract 2275, SF-0001): by default the mocked server ECHOES the id the
+ * client proposed — the only answer an uploader may write under. A test that
+ * needs a substituted id sets one of these.
+ */
+export const echo = {
+  /** 'v2' (default) or 'v1' — the protocol the mocked init answers on. */
+  protocol: 'v2' as 'v1' | 'v2',
+  init: null as ((requested: string) => string) | null,
+  complete: null as ((requested: string) => string) | null,
+  createFolder: null as ((requested: string | undefined) => string) | null,
+  /** When set, every chunk PUT waits on it (a test's admission hold). */
+  chunkGate: null as Promise<void> | null,
+}
+export function resetEchoes(): void {
+  echo.protocol = 'v2'
+  echo.init = null
+  echo.complete = null
+  echo.createFolder = null
+  echo.chunkGate = null
+}
+
 export function resetCaptures(): void {
   cap.ownerKeys.length = 0
   cap.initCalls.length = 0
@@ -35,6 +60,9 @@ export function resetCaptures(): void {
   cap.removedStates.length = 0
   cap.encryptedMetadataKeys.length = 0
   cap.addFolderKeysCalls.length = 0
+  cap.createdFolders.length = 0
+  cap.movedItems.length = 0
+  cap.abandons.length = 0
 }
 
 // Listing pager (the folder-share suite drives this).
@@ -99,19 +127,23 @@ export async function installMocks(): Promise<void> {
     listFilesPage: async (opts: { parentId?: string; cursor?: string }) => pageImpl(opts),
     initUpload: async (metadata: unknown) => {
       cap.initCalls.push(metadata)
+      const requested = (metadata as { file_id: string }).file_id
+      const answered = echo.init ? echo.init(requested) : requested
+      if (echo.protocol === 'v1') return { protocol: 'v1', file_id: answered, chunk_count: 1 }
       return {
-        protocol: 'v2', file_id: 'server-file-id', tenant_id: 'tenant-id',
+        protocol: 'v2', file_id: answered, tenant_id: 'tenant-id',
         object_version_id: 'object-version-id', upload_session_id: 'upload-session-id',
         chunk_size_bytes: 4, chunk_count: 1, storage_format_version: 2,
         storage_pool_id: 'pool-id', region: 'Europe',
       }
     },
     uploadChunk: async (fileId: string, index: number, data: Uint8Array, uploadSessionId?: string | null) => {
+      if (echo.chunkGate) await echo.chunkGate
       cap.uploadedChunks.push({ fileId, index, firstByte: data[0], uploadSessionId })
       return { index, size: data.byteLength }
     },
-    completeUpload: async () => ({
-      id: 'server-file-id', name_encrypted: cap.updatedFiles.at(-1)?.nameEncrypted ?? '',
+    completeUpload: async (fileId: string) => ({
+      id: echo.complete ? echo.complete(fileId) : fileId, name_encrypted: cap.updatedFiles.at(-1)?.nameEncrypted ?? '',
       mime_type: null, size_bytes: 4, chunk_count: 1, is_folder: false, is_uploading: false,
       created_at: '2026-05-08T00:00:00.000Z', updated_at: '2026-05-08T00:00:00.000Z',
     }),
@@ -122,9 +154,25 @@ export async function installMocks(): Promise<void> {
       cap.ownerKeys.push({ folderId, keys })
       return { written: keys.length, skipped: 0 }
     },
+    abandonUpload: async (fileId: string) => {
+      cap.abandons.push(fileId)
+      return { outcome: 'reverted_to_previous_version' as const }
+    },
+    createFolder: async (nameEncrypted: string, parentId?: string, folderId?: string) => {
+      cap.createdFolders.push({ nameEncrypted, parentId, folderId })
+      return {
+        id: echo.createFolder ? echo.createFolder(folderId) : (folderId ?? 'server-folder-id'),
+        name_encrypted: nameEncrypted, mime_type: null, size_bytes: 0, chunk_count: 0,
+        is_folder: true, is_uploading: false,
+        created_at: '2026-05-08T00:00:00.000Z', updated_at: '2026-05-08T00:00:00.000Z',
+      }
+    },
     getUploadStatus: async () => ({ uploaded_chunks: [] }),
-    updateFile: async (fileId: string, updates: { name_encrypted?: string }) => {
-      cap.updatedFiles.push({ fileId, nameEncrypted: updates.name_encrypted ?? '' })
+    updateFile: async (fileId: string, updates: { name_encrypted?: string; parent_id?: string | null }) => {
+      // A destination write (a move) is captured separately: L13 asserts an
+      // abort puts nothing INTO an answered folder.
+      if (updates.parent_id !== undefined) cap.movedItems.push({ id: fileId, parentId: updates.parent_id })
+      else cap.updatedFiles.push({ fileId, nameEncrypted: updates.name_encrypted ?? '' })
       return { id: fileId }
     },
   })

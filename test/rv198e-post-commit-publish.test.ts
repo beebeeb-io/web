@@ -41,8 +41,7 @@ const PARENT = '66666666-6666-4666-8666-666666666666'
 async function upload(parentId: string) {
   const { encryptedUpload } = await import('../src/lib/encrypted-upload')
   return encryptedUpload(new File([new Uint8Array([1, 2, 3, 4])], 'photo.png', { type: 'image/png' }), 'proposed',
-    new Uint8Array([1]), new Uint8Array([9]), parentId, undefined, undefined, undefined, undefined,
-    async () => new Uint8Array([9]))
+    new Uint8Array([1]), new Uint8Array([9]), parentId, undefined, undefined, undefined, undefined)
 }
 
 beforeEach(() => {
@@ -54,8 +53,8 @@ beforeEach(() => {
 describe('final review P2: a failed flag read after the upload committed', () => {
   test('flag request failing, an upload into an unshared folder succeeds, reports success, and writes its thumbnails', async () => {
     const uploaded = await upload(PARENT)
-    expect(uploaded.id).toBe('server-file-id')
-    expect(thumbnails).toEqual(['server-file-id'])
+    expect(uploaded.id).toBe('proposed')
+    expect(thumbnails).toEqual(['proposed'])
     expect(cap.ownerKeys).toHaveLength(0)
   })
 

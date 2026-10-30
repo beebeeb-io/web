@@ -585,7 +585,7 @@ export function OfficeEditor({
     // Same file id = a new version of THIS file: its recorded pin decides the
     // format (task 1943). Keep Both is a new file and has none.
     const replaceOf = uploadFileId === file.id ? { nameEncrypted: file.name_encrypted } : undefined
-    return encryptedUpload(uploadFile, uploadFileId, fileKey, masterKey, file.parent_id ?? undefined, undefined, undefined, undefined, signal, getFileKey, { conflictCreated, replaceOf })
+    return encryptedUpload(uploadFile, uploadFileId, fileKey, masterKey, file.parent_id ?? undefined, undefined, undefined, undefined, signal, { conflictCreated, replaceOf })
   }
 
   const handleSave = useCallback(async () => {

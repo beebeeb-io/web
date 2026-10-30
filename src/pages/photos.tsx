@@ -366,7 +366,7 @@ export function Photos() {
           storageRegion: p.region,
           storageCountry: p.country ?? undefined,
         } : u))
-      }, undefined, undefined, abortController.signal, getFileKey)
+      }, undefined, undefined, abortController.signal)
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
       uploadAbortRef.current.delete(uploadId)
       uploadFilesRef.current.delete(uploadId)

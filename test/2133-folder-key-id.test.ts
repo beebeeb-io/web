@@ -107,7 +107,6 @@ describe('the shared-folder upload registers its child key with the id of ITS fo
       // An invite-only folder (L7b legacy format); the format must be named.
       { folderKey: enc('K-ctx'), sharedFolderId: 'F', inviteId: 'inv-7', format: 'legacy_invite' },
       undefined,
-      async () => new Uint8Array([9]),
     )
     expect(cap.addFolderKeysCalls).toHaveLength(1)
     expect(cap.addFolderKeysCalls[0].inviteId).toBe('inv-7')
