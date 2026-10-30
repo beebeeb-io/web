@@ -1,7 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 interface VideoPreviewProps {
-  blob: Blob
+  /** A whole-file blob (the non-streaming paths). */
+  blob?: Blob
+  /** LD-0001 PR-B: a `/sw-stream/<id>` URL from the streaming session. */
+  src?: string
+  /** The hook wires the element's events and its network-error recovery. */
+  onElement?: (el: HTMLVideoElement | null) => void
+  /** The buffering/stalled pill (streaming only). */
+  overlay?: ReactNode
 }
 
 interface VideoFrameFitInput {
@@ -58,7 +65,7 @@ export function getVideoFrameFit({
   }
 }
 
-export function VideoPreview({ blob }: VideoPreviewProps) {
+export function VideoPreview({ blob, src, onElement, overlay }: VideoPreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const [url, setUrl] = useState<string | null>(null)
@@ -69,6 +76,17 @@ export function VideoPreview({ blob }: VideoPreviewProps) {
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null)
 
   useEffect(() => {
+    // Streaming: the session's URL IS the source; re-setting it (a recovered
+    // network error) must not reset the player's own state, which the hook
+    // restores from the element.
+    if (src) {
+      setUrl(src)
+      return
+    }
+    if (!blob) {
+      setUrl(null)
+      return
+    }
     const objectUrl = URL.createObjectURL(blob)
     setCurrentTime(0)
     setDuration(0)
@@ -76,7 +94,7 @@ export function VideoPreview({ blob }: VideoPreviewProps) {
     setVideoSize(null)
     setUrl(objectUrl)
     return () => URL.revokeObjectURL(objectUrl)
-  }, [blob])
+  }, [blob, src])
 
   useEffect(() => {
     const container = containerRef.current
@@ -152,8 +170,12 @@ export function VideoPreview({ blob }: VideoPreviewProps) {
         }}
       >
         <video
-          ref={videoRef}
+          ref={(el) => {
+            videoRef.current = el
+            onElement?.(el)
+          }}
           src={url}
+          preload={src ? 'metadata' : undefined}
           className="h-full w-full object-contain"
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
@@ -161,6 +183,13 @@ export function VideoPreview({ blob }: VideoPreviewProps) {
           onLoadedMetadata={handleLoadedMetadata}
           onClick={togglePlay}
         />
+
+        {/* Streaming pill: buffering / stalled (LD-0001 PR-B) */}
+        {overlay && (
+          <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full border border-line bg-paper/90 px-3 py-1.5 text-[11px] font-medium text-ink-2 shadow-1">
+            {overlay}
+          </div>
+        )}
 
         {/* Play button overlay */}
         {!playing && (

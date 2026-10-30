@@ -21,6 +21,12 @@ interface InfoRailProps {
    * showing an encrypted thumbnail instead of the original.
    */
   tagsVerified?: boolean
+  /**
+   * LD-0001 PR-B: the streaming line (`Streaming · 41 of 120 parts verified`
+   * or `All 120 parts verified`). It reports only parts OPENED in this
+   * session — tags, never order or completeness.
+   */
+  streamLine?: string
 }
 
 export function InfoRail({
@@ -31,6 +37,7 @@ export function InfoRail({
   cipher,
   chunkCount,
   tagsVerified = false,
+  streamLine,
 }: InfoRailProps) {
   const rows: [string, string][] = [
     ['Name', filename],
@@ -70,6 +77,7 @@ export function InfoRail({
         >
           <div>{cipher}</div>
           <div>256-bit per-file key</div>
+          {streamLine && <div data-testid="preview-stream-line">{streamLine}</div>}
           {chunkCount !== undefined && chunkCount > 0 && (
             <div>
               {chunkCount} {chunkCount === 1 ? 'chunk' : 'chunks'}
