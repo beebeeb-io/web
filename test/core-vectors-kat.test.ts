@@ -213,6 +213,14 @@ const IMPLEMENTED_FAMILIES = new Set([
 ])
 
 const SKIPPED_FAMILIES: Record<string, string> = {
+  client_meta_device_hostname:
+    'task 1922 client-meta envelopes are consumed by the desktop/CLI sync clients, not web; ' +
+    'web imports no client-meta binding (grep of src/ finds none). Core does expose ClientMetaKey ' +
+    'in the vendored WASM, so a future web consumer can add a KAT here.',
+  client_meta_session_paths:
+    'same as client_meta_device_hostname: the desktop/CLI client-meta lane (task 1922), not web.',
+  client_meta_padding_buckets:
+    'same as client_meta_device_hostname: the desktop/CLI client-meta lane (task 1922), not web.',
   envelope_serialization:
     'not implemented client-side in web: repos/core/beebeeb-wasm/src/lib.rs exposes no ' +
     'OpaqueEnvelope::to_bytes/from_bytes WASM binding (checked the full export list — only ' +
