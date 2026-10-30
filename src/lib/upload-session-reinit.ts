@@ -24,6 +24,8 @@
 // Kept free of any `./api` import (duck-typed status) so it is unit-testable
 // without bun's process-global `mock.module('./api')` (see task 1590).
 
+import { isServerChangedItemIdError } from './item-id-echo'
+
 /**
  * Thrown when a swept upload session cannot be resumed: the fresh re-init
  * itself failed, or the freshly re-inited session was swept too. Either
@@ -107,6 +109,9 @@ export async function runWithSessionReinit<T>(opts: SessionReinitOptions<T>): Pr
     await reinit()
   } catch (err) {
     if (isAbort(err, signal)) throw err
+    // L13: a re-init answered with another id is an abort with its own plain
+    // message, not an expired session to be retried.
+    if (isServerChangedItemIdError(err)) throw err
     throw new UploadRestartFailedError(err)
   }
 

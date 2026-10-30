@@ -25,7 +25,8 @@ import {
   UnverifiedFileMetadataError,
   type ContentPin,
 } from './crypto'
-import { initUpload, uploadChunk, completeUpload, getUploadStatus, updateFile } from './api'
+import { abandonUpload, initUpload, uploadChunk, completeUpload, getUploadStatus } from './api'
+import { assertEchoedItemId } from './item-id-echo'
 import { withNetworkRetry } from './net-retry'
 import { fileStorageCountry } from './storage-regions'
 import type { DriveFile } from './api'
@@ -81,8 +82,6 @@ export interface SharedFolderUploadContext {
   sharedFolderId: string
   inviteId: string
 }
-
-type FileKeyResolver = (fileId: string) => Promise<Uint8Array>
 
 interface EncryptedUploadOptions {
   conflictCreated?: boolean
@@ -144,7 +143,6 @@ async function uploadFile(
   resumeFileId?: string,
   sharedFolderContext?: SharedFolderUploadContext,
   signal?: AbortSignal,
-  deriveFileKeyForId?: FileKeyResolver,
   options: EncryptedUploadOptions = {},
 ): Promise<DriveFile> {
   onProgress?.({ stage: 'Preparing', progress: 0 })
@@ -261,6 +259,13 @@ async function uploadFile(
       conflict_created: options.conflictCreated ?? false,
     }, signal), signal)
 
+    // L13 (contract 2275, SF-0001): init answers name the item this upload
+    // writes under. Any id but the one this client proposed — a create's own
+    // minted id, or the listed row's id for a replace/version — aborts HERE,
+    // before a chunk, a name, a pin or a resume record can be sealed under it.
+    // (A server dedup/replace-by-name answer lands in this branch too: it is an
+    // abort, never a silent replace.)
+    assertEchoedItemId(requestedFileId, init.file_id)
     serverFileId = init.file_id
     totalChunks = init.chunk_count
     // Task 2062: both protocols answer with the pool's country at init.
@@ -268,27 +273,12 @@ async function uploadFile(
     // A fresh session holds no frames: nothing to resume, nothing recorded yet.
     sessionFormat = undefined
     resumingStoredFrames = false
-    // Every init (the first, a swept-session re-init, a resume-rule restart)
-    // can be answered with a server-generated id: a brand-new file with a
-    // fresh, unpinned name. From here on `pinForCurrentFile()` is null for
-    // it, so the replaced file's pin reaches neither the encryptor nor the
-    // resume record (Codex P2, web#170).
     if (init.protocol !== 'v2') return
 
     uploadSessionId = init.upload_session_id
     objectVersionId = init.object_version_id
     chunkBytes = init.chunk_size_bytes
     region = init.region
-
-    if (init.file_id === requestedFileId) return
-
-    if (!deriveFileKeyForId) {
-      throw new Error('V2 upload init returned a server-generated file id, but no file-key resolver was provided.')
-    }
-
-    activeFileKey = await deriveFileKeyForId(init.file_id)
-    nameEncrypted = await encryptMetadata(activeFileKey)
-    await withNetworkRetry(() => updateFile(init.file_id, { name_encrypted: nameEncrypted }, signal), signal)
   }
 
   let fingerprint: string
@@ -362,6 +352,11 @@ async function uploadFile(
       }
     } else {
       if (existing && existing.fileId !== fileId) {
+        // L13: a stored session for another id is not this upload's. A record
+        // this client did not mint (no marker) may hold a server-chosen id, so
+        // abandon it through the endpoint rather than leave it on the server;
+        // then the upload continues under the id this client minted now.
+        if (existing.selfMinted !== true) await abandonUpload(existing.fileId).catch(() => {})
         await removeUploadState(existing.fileId)
       }
       // No prior upload — start fresh
@@ -389,6 +384,9 @@ async function uploadFile(
       chunk_format: sessionFormat,
       // Recorded only under the file it belongs to, with that file's id.
       ...(pin !== null ? { replace_pin: pin, replace_pin_file_id: serverFileId } : {}),
+      // L13 (SF-0001): after the init echo check, this id is one this client
+      // chose — its own minted id, or the listed row's id for a replace.
+      selfMinted: true,
       parentId: parentId ?? null,
       createdAt: Date.now(),
     })
@@ -566,7 +564,12 @@ async function uploadFile(
       throw err
     }
 
-    return completeUpload(serverFileId, uploadSessionId)
+    // L13: the completion answer names the item that was written. Anything but
+    // this upload's id aborts before the resume record is dropped or any key is
+    // published under the echoed id.
+    const completed = await completeUpload(serverFileId, uploadSessionId)
+    assertEchoedItemId(serverFileId, completed.id)
+    return completed
   }
 
   // ── Upload chunks + complete ──────────────────────

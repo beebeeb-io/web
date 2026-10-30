@@ -110,7 +110,9 @@ export async function memberUploadFiles(
         undefined,
         sharedFolderContext,
         undefined,
-        async (id: string) => deriveFileKey(ctx.masterKey!, id),
+        // L13 (SF-0001): the member's file key is derived from the member's own
+        // minted id. encryptedUpload aborts on any other id the init answers,
+        // so the key is never re-derived for a substituted one.
       )
       added += 1
     } catch {
