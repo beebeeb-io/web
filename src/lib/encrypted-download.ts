@@ -27,6 +27,7 @@ import {
 } from './crypto'
 import { getToken, getApiUrl, ApiError } from './api'
 import { dispatchDecrypted } from './decrypt-events'
+import { mediaKind, TooLargeToPreviewError } from './preview-load-policy'
 
 export { UnverifiedFileMetadataError }
 
@@ -84,6 +85,23 @@ export function inferChunkCountFromEncryptedSize(
   return overheadSize / CHUNK_OVERHEAD
 }
 
+/**
+ * The one legacy `size_bytes` rule (round-2 review, item 13). An older server
+ * stored the ENCRYPTED total in `files.size_bytes`; when the observed ciphertext
+ * length equals that value, the plaintext size is the value minus the per-chunk
+ * overhead. Both the array-buffer path and the streaming path ask here, so they
+ * cannot disagree.
+ */
+export function plaintextSizeFor(
+  sizeBytes: number,
+  ciphertextTotal: number | null,
+  chunkCount: number,
+): number {
+  return ciphertextTotal !== null && ciphertextTotal === sizeBytes
+    ? sizeBytes - chunkCount * CHUNK_OVERHEAD
+    : sizeBytes
+}
+
 export async function decryptEncryptedBytes(
   fileKey: Uint8Array,
   content: FileContentRef,
@@ -94,14 +112,9 @@ export async function decryptEncryptedBytes(
 ): Promise<Uint8Array> {
   // Detect whether sizeBytes is the plaintext size (legacy/correct) or the
   // encrypted total size (an older server bug stored encrypted blob bytes
-  // in files.size_bytes). If encryptedBytes.length === sizeBytes, then
-  // sizeBytes IS the encrypted total — subtract chunk overhead to recover
-  // the plaintext size. Otherwise, treat sizeBytes as the plaintext size.
+  // in files.size_bytes). `plaintextSizeFor` owns that rule for every path.
   const encryptedTotal = encryptedBytes.length
-  const isEncryptedSizeStored = encryptedTotal === sizeBytes
-  const effectivePlaintextSize = isEncryptedSizeStored
-    ? sizeBytes - chunkCount * CHUNK_OVERHEAD
-    : sizeBytes
+  const effectivePlaintextSize = plaintextSizeFor(sizeBytes, encryptedTotal, chunkCount)
 
   const decryptedParts: Uint8Array[] = []
   let offset = 0
@@ -158,6 +171,36 @@ export async function decryptEncryptedBytes(
 
   return decrypted
 }
+
+// ─── Whole-file progress (LD-0001 PR-C) ─────────────
+
+/**
+ * One progress sample for a whole-file preview load. `receivedBytes` counts
+ * ciphertext bytes that arrived from the network; `decryptedChunks` counts
+ * plaintext parts opened so far. The rule (§7): never report `decrypting`
+ * while `receivedBytes < totalBytes`.
+ */
+export interface TransferProgress {
+  phase: 'downloading' | 'decrypting' | 'done'
+  receivedBytes: number
+  totalBytes: number | null
+  decryptedChunks: number
+  totalChunks: number
+}
+
+export interface WholeFileOptions {
+  onProgress?: (p: TransferProgress) => void
+  signal?: AbortSignal
+  /**
+   * Reject a video/audio file larger than this without fetching the body. The
+   * decision is made from the file's AUTHENTICATED metadata (the encrypted
+   * name/MIME read before any content), never the caller's UI row.
+   */
+  mediaCapBytes?: number
+}
+
+/** Emit at most once per 64 KiB received, plus on every part and phase change. */
+const PROGRESS_BYTES_STEP = 64 * 1024
 
 // ─── Streaming infrastructure ───────────────────────
 
@@ -334,34 +377,29 @@ export async function pipeDecryptedChunks(
   onProgress: ((bytesWritten: number) => void) | undefined,
 ): Promise<void> {
   const reader = body.getReader()
-  // Buffer of unconsumed encrypted bytes from the network. We keep it as a
-  // growable Uint8Array to avoid per-chunk allocations for small reads.
-  let buffer: Uint8Array = new Uint8Array(0)
+
+  /** Always safe to call; the stream may already be closed or errored. */
+  const cancelBody = async (reason?: unknown) => {
+    try { await reader.cancel(reason) } catch {}
+  }
+
+  if (signal?.aborted) {
+    await cancelBody(signal.reason ?? 'aborted')
+    try { reader.releaseLock() } catch {}
+    throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+  }
+
+  const onAbort = () => { void cancelBody(signal?.reason ?? 'aborted') }
+  if (signal) signal.addEventListener('abort', onAbort, { once: true })
+
+  // Bytes read from the network but not yet consumed by a frame. Each network
+  // read is copied ONCE, straight into the frame being assembled (round-2
+  // review, item 1): the old growable buffer re-copied its whole contents on
+  // every read, which made a 32 MiB frame quadratic (7.8 s/frame measured).
+  let leftover: Uint8Array | null = null
   let chunkIndex = 0
   let bytesWritten = 0
-  let done = false
-
-  const append = (next: Uint8Array) => {
-    if (buffer.length === 0) {
-      buffer = next
-      return
-    }
-    const merged = new Uint8Array(buffer.length + next.length)
-    merged.set(buffer, 0)
-    merged.set(next, buffer.length)
-    buffer = merged
-  }
-
-  const onAbort = () => {
-    try { reader.cancel(signal?.reason ?? 'aborted') } catch {}
-  }
-  if (signal) {
-    if (signal.aborted) {
-      onAbort()
-      throw signal.reason ?? new DOMException('Aborted', 'AbortError')
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-  }
+  let streamDone = false
 
   let decryptor: Awaited<ReturnType<typeof startDecryptStream>> | null = null
   try {
@@ -379,24 +417,28 @@ export async function pipeDecryptedChunks(
       }
       const encryptedChunkSize = NONCE_LENGTH + thisPlaintextSize + GCM_TAG_LENGTH
 
-      while (buffer.length < encryptedChunkSize && !done) {
-        const { value, done: streamDone } = await reader.read()
-        if (streamDone) { done = true; break }
-        if (value && value.length) append(value)
+      // ONE frame-sized allocation; every read lands directly in it.
+      const frame = new Uint8Array(encryptedChunkSize)
+      let filled = 0
+      while (filled < encryptedChunkSize) {
+        if (leftover !== null) {
+          const take = Math.min(leftover.byteLength, encryptedChunkSize - filled)
+          frame.set(leftover.subarray(0, take), filled)
+          filled += take
+          leftover = take === leftover.byteLength ? null : leftover.subarray(take)
+          continue
+        }
+        if (streamDone) break
+        const { value, done: streamDoneNow } = await reader.read()
+        if (streamDoneNow) { streamDone = true; break }
+        if (!value || value.byteLength === 0) continue
+        leftover = value
       }
-      if (buffer.length < encryptedChunkSize) {
+      if (filled < encryptedChunkSize) {
         throw new Error(
-          `Chunk ${chunkIndex}: expected ${encryptedChunkSize} bytes, only ${buffer.length} available before stream end`,
+          `Chunk ${chunkIndex}: expected ${encryptedChunkSize} bytes, only ${filled} available before stream end`,
         )
       }
-
-      // The whole wire frame (nonce || ciphertext || tag), copied so it owns
-      // its buffer (the decryptor transfers it to the crypto worker).
-      const frame = buffer.slice(0, encryptedChunkSize)
-      // Advance the buffer.
-      buffer = buffer.length === encryptedChunkSize
-        ? new Uint8Array(0)
-        : buffer.slice(encryptedChunkSize)
 
       const plaintext = await decryptor.pushFrame(frame)
       await onChunk(plaintext)
@@ -409,13 +451,135 @@ export async function pipeDecryptedChunks(
     const finishing = decryptor
     decryptor = null
     await finishing.finish()
+    // The last frame is in: close the body so a source that streams past the
+    // file (or is still open) is released (round-2 review, item 8).
+    await cancelBody()
   } catch (err) {
     if (decryptor) await decryptor.dispose()
+    // Any error path releases the body, not just the abort handler (item 8).
+    await cancelBody(err)
+    // An abort is not a truncation: callers and the UI must see AbortError
+    // even when the loop ended by hitting the (cancelled) stream end (item 9).
+    if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
     throw err
   } finally {
     if (signal) signal.removeEventListener('abort', onAbort)
     try { reader.releaseLock() } catch {}
   }
+}
+
+// ─── Whole-file pipelined read ─────────────────────
+
+/**
+ * Read a whole-file response through the pipelined decryptor and return the
+ * plaintext copy. Ciphertext is counted as it arrives; `onProgress` reports
+ * downloading, then decrypting, then done. Every plaintext part is wiped after
+ * it is copied into the result, and on any failure (M7).
+ */
+async function decryptWholeFileResponse(
+  res: Response,
+  fileKey: Uint8Array,
+  content: FileContentRef,
+  chunkCount: number,
+  sizeBytes: number,
+  opts?: WholeFileOptions,
+): Promise<Uint8Array> {
+  const effectiveChunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? chunkCount
+  const effectiveChunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size')) ?? CHUNK_SIZE
+  const contentLength = parseHeaderInt(res.headers.get('Content-Length'))
+  const totalChunks = effectiveChunkCount
+
+  // Without a Content-Length the plaintext size cannot be known before the body
+  // is read, so keep today's buffered path: it applies the legacy `size_bytes`
+  // rule against the REAL body length (round-2 review, item 4).
+  if (!res.body || contentLength === null) {
+    const encryptedBytes = new Uint8Array(await res.arrayBuffer())
+    const decrypted = await decryptEncryptedBytes(
+      fileKey, content, encryptedBytes, totalChunks, sizeBytes, effectiveChunkSize,
+    )
+    opts?.onProgress?.({
+      phase: 'done',
+      receivedBytes: encryptedBytes.length,
+      totalBytes: encryptedBytes.length,
+      decryptedChunks: totalChunks,
+      totalChunks,
+    })
+    return decrypted
+  }
+
+  const totalBytes = contentLength
+  const effectivePlaintextSize = plaintextSizeFor(sizeBytes, totalBytes, totalChunks)
+
+  // Allocate the output BEFORE the body is read (round-2 review item 3): peak
+  // memory is one plaintext copy plus one part, and an allocation failure now
+  // happens before any download starts.
+  const out = new Uint8Array(effectivePlaintextSize)
+  let writeOffset = 0
+  let receivedBytes = 0
+  let decryptedChunks = 0
+  let lastEmittedBytes = 0
+  let lastPhase: TransferProgress['phase'] | null = null
+
+  const phaseNow = (): TransferProgress['phase'] =>
+    receivedBytes >= totalBytes ? 'decrypting' : 'downloading'
+  const emitNow = (phase: TransferProgress['phase']) => {
+    lastEmittedBytes = receivedBytes
+    lastPhase = phase
+    opts?.onProgress?.({ phase, receivedBytes, totalBytes, decryptedChunks, totalChunks })
+  }
+  /** The byte throttle applies ONLY to `received` updates (item 5). */
+  const emitReceived = () => {
+    if (!opts?.onProgress) return
+    const phase = phaseNow()
+    if (phase === lastPhase && receivedBytes - lastEmittedBytes < PROGRESS_BYTES_STEP) return
+    emitNow(phase)
+  }
+  /** Every decrypted part emits, however small. */
+  const emitPart = () => {
+    if (opts?.onProgress) emitNow(phaseNow())
+  }
+
+  // Ciphertext bytes received. The transform only counts; it never reorders or
+  // copies, so pipeDecryptedChunks sees the same bytes it did before.
+  const counting = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      receivedBytes += chunk.byteLength
+      controller.enqueue(chunk)
+      emitReceived()
+    },
+  })
+
+  // Everything after the first decrypted byte — the `done` emit included —
+  // stays inside this try so any throw wipes the whole output (item 3).
+  try {
+    await pipeDecryptedChunks(
+      res.body.pipeThrough(counting),
+      fileKey,
+      content,
+      totalChunks,
+      effectivePlaintextSize,
+      effectiveChunkSize,
+      opts?.signal,
+      async (part) => {
+        try {
+          out.set(part, writeOffset)
+        } finally {
+          part.fill(0)
+        }
+        writeOffset += part.length
+        decryptedChunks++
+        emitPart()
+      },
+      undefined,
+    )
+    decryptedChunks = totalChunks
+    emitNow('done')
+  } catch (err) {
+    // A failed read never hands out a prefix: wipe everything already copied.
+    out.fill(0)
+    throw err
+  }
+  return out
 }
 
 // ─── Public API ─────────────────────────────────────
@@ -475,10 +639,7 @@ export async function encryptedDownload(
   // Account for the legacy "encrypted total stored in size_bytes" case so the
   // streaming path sees the same plaintext size the buffered path does.
   const contentLengthHeader = parseHeaderInt(res.headers.get('Content-Length'))
-  const overhead = effectiveChunkCount * CHUNK_OVERHEAD
-  const effectivePlaintextSize = (contentLengthHeader !== null && contentLengthHeader === sizeBytes)
-    ? sizeBytes - overhead
-    : sizeBytes
+  const effectivePlaintextSize = plaintextSizeFor(sizeBytes, contentLengthHeader, effectiveChunkCount)
 
   const controller = canStreamToDisk() ? await awaitController() : null
 
@@ -567,6 +728,23 @@ export async function encryptedDownload(
 }
 
 /**
+ * The whole-file media cap, decided on AUTHENTICATED metadata only (round-2
+ * review, item 6): the caller's row (`file.mime_type`, UI filename) is
+ * unauthenticated, so a server could otherwise suppress or force the card.
+ * Runs after `openFileMetadata` and before any fetch.
+ */
+function guardMediaCap(
+  meta: { name: string; mimeType: string | null },
+  sizeBytes: number,
+  mediaCapBytes: number | undefined,
+): void {
+  if (mediaCapBytes === undefined) return
+  if (!(sizeBytes > mediaCapBytes)) return
+  const kind = mediaKind(meta.mimeType, meta.name)
+  if (kind) throw new TooLargeToPreviewError(kind)
+}
+
+/**
  * Download and decrypt a shared file, returning the plaintext blob and filename.
  * Same as encryptedDownload but returns data instead of triggering a browser save.
  */
@@ -577,8 +755,10 @@ export async function decryptToBlob(
   mimeType: string | null | undefined,
   chunkCount: number,
   sizeBytes: number,
+  opts?: WholeFileOptions,
 ): Promise<{ plaintext: Blob; filename: string }> {
   const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
+  guardMediaCap(meta, sizeBytes, opts?.mediaCapBytes)
   const filename = meta.name
   const blobMime = mimeType || meta.mimeType || 'application/octet-stream'
 
@@ -586,21 +766,14 @@ export async function decryptToBlob(
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, { headers, credentials: 'include' })
+  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, {
+    headers,
+    credentials: 'include',
+    signal: opts?.signal,
+  })
   if (!res.ok) throw new ApiError(res.statusText, res.status)
 
-  const encryptedBytes = new Uint8Array(await res.arrayBuffer())
-  const effectiveChunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? chunkCount
-  const effectiveChunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size')) ?? CHUNK_SIZE
-
-  const decrypted = await decryptEncryptedBytes(
-    fileKey,
-    meta.content,
-    encryptedBytes,
-    effectiveChunkCount,
-    sizeBytes,
-    effectiveChunkSize,
-  )
+  const decrypted = await decryptWholeFileResponse(res, fileKey, meta.content, chunkCount, sizeBytes, opts)
 
   const plaintext = new Blob([decrypted as BlobPart], { type: blobMime })
   dispatchDecrypted(fileId)
@@ -626,30 +799,21 @@ export async function decryptVersionToBlob(
   mimeType: string | null | undefined,
   chunkCount: number,
   sizeBytes: number,
+  opts?: WholeFileOptions,
 ): Promise<Blob> {
   const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
+  guardMediaCap(meta, sizeBytes, opts?.mediaCapBytes)
   const token = getToken()
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   const res = await fetch(
     `${getApiUrl()}/api/v1/files/${fileId}/versions/${versionId}/download`,
-    { headers, credentials: 'include' },
+    { headers, credentials: 'include', signal: opts?.signal },
   )
   if (!res.ok) throw new ApiError(res.statusText, res.status)
 
-  const encryptedBytes = new Uint8Array(await res.arrayBuffer())
-  const effectiveChunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? chunkCount
-  const effectiveChunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size')) ?? CHUNK_SIZE
-
-  const decrypted = await decryptEncryptedBytes(
-    fileKey,
-    meta.content,
-    encryptedBytes,
-    effectiveChunkCount,
-    sizeBytes,
-    effectiveChunkSize,
-  )
+  const decrypted = await decryptWholeFileResponse(res, fileKey, meta.content, chunkCount, sizeBytes, opts)
 
   const plaintext = new Blob([decrypted as BlobPart], { type: mimeType || meta.mimeType || 'application/octet-stream' })
   dispatchDecrypted(fileId)

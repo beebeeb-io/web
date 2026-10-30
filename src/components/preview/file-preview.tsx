@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listVersions, restoreVersion, type DriveFile, type FileVersion } from '../../lib/api'
-import { decryptToBlob, decryptVersionToBlob } from '../../lib/encrypted-download'
+import { decryptToBlob, decryptVersionToBlob, encryptedDownload, type TransferProgress } from '../../lib/encrypted-download'
+import { progressCopy } from '../../lib/transfer-progress-copy'
+import {
+  AUDIO_EXTENSIONS_SET,
+  TooLargeToPreviewError,
+  VIDEO_EXTENSIONS_SET,
+  WHOLE_FILE_MEDIA_CAP_BYTES,
+  downloadRoute,
+  getExtension,
+} from '../../lib/preview-load-policy'
+import { formatSize } from '../../lib/format-size'
+import { createTransferThrottle } from '../../lib/progress-throttle'
 import { fetchAndDecryptLargeThumbnail, fetchAndDecryptThumbnail } from '../../lib/thumbnail'
 import { PreviewChrome } from './preview-chrome'
 import { InfoRail, CONTENT_CIPHER_LABEL } from './info-rail'
@@ -53,14 +64,6 @@ interface FilePreviewProps {
   onDelete?: (file: DriveFile) => void | Promise<void>
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-}
-
 /** Map file extensions to language names for syntax coloring */
 const EXT_LANGUAGE: Record<string, string> = {
   // JavaScript / TypeScript
@@ -92,15 +95,9 @@ const EXT_LANGUAGE: Record<string, string> = {
   cs: 'csharp',
 }
 
-/** Image/video extension sets used when mime_type is null (ZK-uploaded files) */
+/** Image extension set used when mime_type is null (ZK-uploaded files) */
 const IMAGE_EXTENSIONS_SET = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'tiff', 'tif', 'svg', 'ico',
-])
-const VIDEO_EXTENSIONS_SET = new Set([
-  'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'ogv', 'hevc',
-])
-const AUDIO_EXTENSIONS_SET = new Set([
-  'mp3', 'flac', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'aiff', 'aif', 'wma', 'alac',
 ])
 
 /** Extensions that should render as plain text (no syntax coloring) */
@@ -140,20 +137,6 @@ const CODE_MIME_TYPES: Record<string, string> = {
   'text/x-shellscript': 'shell',
   'application/sql': 'sql',
   'application/toml': 'toml',
-}
-
-function getExtension(filename: string): string {
-  const dot = filename.lastIndexOf('.')
-  // Bare filenames with no dot at all (Dockerfile, Makefile, ...) previously
-  // returned '' here, which matches nothing in any extension set/map below —
-  // task 1565's preview matrix caught this: a real `Dockerfile` fixture fell
-  // through pickRenderer entirely (EXT_LANGUAGE already had a `dockerfile:
-  // 'docker'` entry that could never be reached) straight to the generic
-  // "Preview not available" card. Falling back to the whole lowercased
-  // filename lets bare-filename entries already present in EXT_LANGUAGE /
-  // TEXT_EXTENSIONS (dockerfile, makefile, gitignore, ...) actually match.
-  if (dot === -1) return filename.toLowerCase()
-  return filename.slice(dot + 1).toLowerCase()
 }
 
 function getKindLabel(mimeType: string | null | undefined, filename: string): string {
@@ -460,6 +443,10 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   const [blobIsOriginal, setBlobIsOriginal] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Live whole-file transfer progress (LD-0001 PR-C); null before the first event. */
+  const [transfer, setTransfer] = useState<TransferProgress | null>(null)
+  /** Set when this load was skipped because the media is over the 2 GiB cap. */
+  const [capCopy, setCapCopy] = useState<string | null>(null)
   const [localDecryptedName, setLocalDecryptedName] = useState<string | null>(null)
   /** MIME type extracted from encrypted metadata (null for legacy files) */
   const [localMimeType, setLocalMimeType] = useState<string | null>(null)
@@ -622,7 +609,14 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     setBlob(null)
     setBlobIsOriginal(false)
     setError(null)
+    setTransfer(null)
+    setCapCopy(null)
+    // Every run starts (and every cleanup ends) with the version spinner off:
+    // an aborted version load used to leave it spinning forever (item 7).
+    setVersionLoading(false)
     if (!isUnlocked) return
+
+    const abort = new AbortController()
 
     const imageExt = getExtension(name)
     // TIFF stays IN the thumbnail-first fast-path eligibility (task 1574
@@ -640,6 +634,16 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     // `<img>` decodes WebP natively) until the real original has loaded.
     const isImageFile =
       effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt)
+
+    // One React update per 150 ms at most, plus every phase change and the
+    // final event (item 12): a fast transfer used to re-render the preview on
+    // every network read.
+    const throttle = createTransferThrottle((p) => {
+      if (!cancelled) setTransfer(p)
+    })
+    const onTransfer = (p: TransferProgress) => {
+      if (!cancelled) throttle.push(p)
+    }
 
     async function loadAndDecrypt() {
       try {
@@ -700,6 +704,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             effectiveMime ?? undefined,
             file.chunk_count,
             file.size_bytes,
+            { onProgress: onTransfer, signal: abort.signal, mediaCapBytes: WHOLE_FILE_MEDIA_CAP_BYTES },
           )
           plaintext = res.plaintext
         } else {
@@ -711,9 +716,10 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             v.id,
             fileKey,
             file.name_encrypted,
-            file.mime_type ?? undefined,
+            effectiveMime ?? undefined,
             v.chunk_count,
             v.size_bytes,
+            { onProgress: onTransfer, signal: abort.signal, mediaCapBytes: WHOLE_FILE_MEDIA_CAP_BYTES },
           )
         }
         if (!cancelled) {
@@ -738,11 +744,21 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     async function loadWithRetry() {
       const maxAttempts = 3
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (attempt > 1) {
+          // Each attempt starts from a clean transfer state (item 10): a retry
+          // must not show the previous attempt's bytes/parts.
+          if (!cancelled) setTransfer(null)
+        }
         try {
           await loadAndDecrypt()
           return
         } catch (err: unknown) {
           if (cancelled) return
+          // An over-cap card is a decision, not a failure: show the card.
+          if (err instanceof TooLargeToPreviewError) {
+            setCapCopy(err.message)
+            return
+          }
           if (isTransientNetworkError(err) && attempt < maxAttempts) {
             await new Promise((r) => setTimeout(r, 400 * attempt))
             if (cancelled) return
@@ -757,6 +773,10 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
     return () => {
       cancelled = true
+      throttle.cancel()
+      // A cleanup always clears the version spinner too (item 7).
+      setVersionLoading(false)
+      abort.abort()
     }
     // `versions` is intentionally NOT a dependency — see versionsRef above.
   }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, resolveFileKey, file, selectedVersionId, effectiveMime, name])
@@ -963,13 +983,32 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // rather than silently saving a downscaled WebP.
   async function handleDownload() {
     if (downloading) return
-    if (blob && blobIsOriginal) {
+    const overCap = capCopy !== null
+    if (
+      downloadRoute(!!blob && blobIsOriginal, overCap) === 'blob' &&
+      blob && blobIsOriginal
+    ) {
       saveBlob(blob)
       return
     }
     try {
       setDownloading(true)
       const fileKey = await resolveFileKey()
+      if (overCap && selectedVersionId === null) {
+        // The over-cap card has no Blob and must NEVER load the whole file into
+        // memory: stream the plaintext to disk through the service worker, the
+        // same path the toolbar Download uses (item 2). `downloading` disables
+        // the button for the duration.
+        await encryptedDownload(
+          file.id,
+          fileKey,
+          file.name_encrypted,
+          effectiveMime ?? undefined,
+          file.chunk_count,
+          file.size_bytes,
+        )
+        return
+      }
       let original: Blob
       if (selectedVersionId === null) {
         const res = await decryptToBlob(
@@ -989,7 +1028,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           v.id,
           fileKey,
           file.name_encrypted,
-          file.mime_type ?? undefined,
+          effectiveMime ?? undefined,
           v.chunk_count,
           v.size_bytes,
         )
@@ -1070,6 +1109,14 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       ]
     : []
 
+  // Bar geometry: received is ciphertext progress; decrypted never exceeds it.
+  const receivedPct = transfer && transfer.totalBytes && transfer.totalBytes > 0
+    ? Math.min(100, (transfer.receivedBytes / transfer.totalBytes) * 100)
+    : 0
+  const decryptedPct = transfer && transfer.totalChunks > 0
+    ? Math.min(receivedPct, (transfer.decryptedChunks / transfer.totalChunks) * 100)
+    : 0
+
   return (
     <PreviewChrome
       filename={name}
@@ -1132,11 +1179,39 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         )
       }
     >
-      {/* Loading state */}
-      {!blob && !error && (
-        <div className="flex flex-col items-center gap-3">
+      {/* Loading state — honest whole-file progress (LD-0001 PR-C) */}
+      {!blob && !error && !capCopy && (
+        <div className="flex flex-col items-center gap-3" data-testid="preview-transfer-progress">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-amber" />
-          <span className="text-sm text-ink-3">Decrypting...</span>
+          <span className="text-sm text-ink-3">{transfer ? progressCopy(transfer) : 'Downloading…'}</span>
+          {transfer && (
+            <div className="w-64 space-y-1" aria-hidden="true">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
+                <div
+                  className="h-full bg-ink-3 transition-[width] duration-200"
+                  style={{ width: `${receivedPct}%` }}
+                />
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
+                <div
+                  className="h-full bg-amber transition-[width] duration-200"
+                  style={{ width: `${decryptedPct}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Over the 2 GiB whole-file media cap (contract §4 row 5) */}
+      {!blob && !error && capCopy && (
+        <div className="flex flex-col items-center gap-4 text-center" data-testid="preview-too-large">
+          <Icon name="file" size={40} className="text-ink-3" />
+          <p className="max-w-[320px] text-sm text-ink-2">{capCopy}</p>
+          <BBButton variant="amber" size="md" onClick={handleDownload} disabled={downloading}>
+            <Icon name="download" size={14} className="mr-2" />
+            {downloading ? 'Downloading…' : 'Download'}
+          </BBButton>
         </div>
       )}
 
