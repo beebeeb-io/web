@@ -97,6 +97,7 @@ import {
 } from '../lib/upload-resume'
 import { encryptFilename, encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata, readFileMetadata } from '../lib/crypto'
 import { renameKeyFor } from '../lib/owner-rename'
+import { assertCurrentVersionWritable } from '../lib/owner-write-guard'
 import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { RestoreFromEraseOffer } from '../components/restore-from-erase'
@@ -1505,6 +1506,12 @@ export function Drive() {
     uploadAbortRef.current.set(uploadId, abortController)
 
     try {
+      if (replaceFileId) {
+        // SF-0002 review: the row may be read-only from its CONTENT alone; a
+        // version gate needs chunk 0 checked, not only a mark set on open.
+        const row = files.find((f) => f.id === replaceFileId) ?? (await getFile(replaceFileId))
+        await assertCurrentVersionWritable(row, getMasterKey())
+      }
       // Replace: the existing file's current name, whose recorded pin decides
       // the format of the new version (task 1943). Read from the listing, or
       // from the server when the row is not loaded here; a new file has none.
@@ -2398,6 +2405,10 @@ export function Drive() {
       return
     }
     try {
+      // SF-0002 review: a rename rewrites the name envelope; refuse a row
+      // whose current version is still repair-sealed even if it was never opened.
+      const renameRow = files.find((f) => f.id === renameFileId)
+      if (renameRow) await assertCurrentVersionWritable(renameRow, getMasterKey())
       // rv-web198c P2-4: a guest's or member's row is renamed under ITS key,
       // proven to open its current name; otherwise the rename is refused.
       const fileKey = await renameKeyFor({

@@ -29,6 +29,7 @@ import { abandonUpload, getFile, listVersions } from '../../lib/api'
 import { discardInFlightUpload } from '../../lib/upload-discard'
 import { decryptToBlob } from '../../lib/encrypted-download'
 import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly } from '../../lib/owner-repair'
+import { assertCurrentVersionWritable } from '../../lib/owner-write-guard'
 import { encryptedUpload } from '../../lib/encrypted-upload'
 import { useKeys } from '../../lib/key-context'
 import {
@@ -217,6 +218,9 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
     nameOverride?: string,
   ): Promise<DriveFile> {
     const uploadFileId = targetFileId ?? crypto.randomUUID()
+    // SF-0002 review: a new version under this id needs the CURRENT version's
+    // content writable, not only a mark set when the file was opened.
+    if (uploadFileId === file.id) await assertCurrentVersionWritable(file, getMasterKey())
     const fileKey = await getFileKey(uploadFileId)
     const name = nameOverride ?? decryptedName
     const effectiveType = mimeType ?? (isMarkdown ? 'text/markdown' : 'text/plain')

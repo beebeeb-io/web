@@ -13,6 +13,7 @@ import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { encryptFilename, readFileMetadata, serializeEncryptedBlob } from '../lib/crypto'
 import { renameKeyFor } from '../lib/owner-rename'
+import { assertCurrentVersionWritable } from '../lib/owner-write-guard'
 import { moveOwnerItems } from '../lib/owner-upload-key'
 import { encryptedDownload } from '../lib/encrypted-download'
 import {
@@ -125,6 +126,10 @@ export function Starred() {
   async function handleRenameConfirm(newName: string) {
     if (!renameFileId || !isUnlocked || !cryptoReady) return
     try {
+      // SF-0002 review: refuse a rename of a row whose current version is
+      // still repair-sealed (it may never have been opened).
+      const renameRow = files.find((f) => f.id === renameFileId)
+      if (renameRow) await assertCurrentVersionWritable(renameRow, getMasterKey())
       // rv-web198c P2-4: a guest's or member's row is renamed under ITS key.
       const fileKey = await renameKeyFor({ fileId: renameFileId, file: files.find((f) => f.id === renameFileId), viewerId: null, getFileKey, getFileKeyForFile, readName: readFileMetadata })
       const enc = await encryptFilename(fileKey, newName)

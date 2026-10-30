@@ -51,6 +51,7 @@ import { CommandPalette } from './command-palette'
 import { OfficeConflictDialog } from './office-conflict-dialog'
 import { UnsavedChangesDialog } from '../editor/unsaved-changes-dialog'
 import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly } from '../../lib/owner-repair'
+import { assertCurrentVersionWritable } from '../../lib/owner-write-guard'
 import { ImpressFilmstrip } from './impress-filmstrip'
 import { ImpressPresentOverlay } from './impress-present-overlay'
 import { useImpressChrome } from '../../hooks/use-impress-chrome'
@@ -580,6 +581,9 @@ export function OfficeEditor({
   )
 
   async function performUpload(uploadFileId: string, conflictCreated: boolean, signal: AbortSignal, savedBytes: Uint8Array, nameOverride?: string): Promise<DriveFile> {
+    // SF-0002 review: a new version under this id needs the CURRENT version's
+    // content writable, not only a mark set when the file was opened.
+    if (uploadFileId === file.id) await assertCurrentVersionWritable(file, getMasterKey())
     const fileKey = await getFileKey(uploadFileId)
     const name = nameOverride ?? decryptedName
     const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()

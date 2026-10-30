@@ -20,6 +20,7 @@
 
 import {
   CHUNK_SIZE,
+  deriveFileKey,
   readFileMetadata,
   startDecryptStream,
   ownerRepairContentKey,
@@ -95,17 +96,41 @@ export function inferChunkCountFromEncryptedSize(
  */
 async function contentKeyFromFrame(
   masterKey: Uint8Array | undefined,
+  fileKey: Uint8Array,
   content: FileContentRef,
   firstChunkFrame: Uint8Array,
 ): Promise<Uint8Array | null> {
   if (!masterKey) return null
+  // Only the OWNER's own derivation may take the repair fallback. A
+  // shared-folder or other foreign key is never switched to an owner key, even
+  // though the master key would let core resolve one (SF-0002 review).
+  if (!(await isOwnerDerivedKey(masterKey, content.fileId, fileKey))) return null
   try {
     const repair = await ownerRepairContentKey(masterKey, content.fileId, firstChunkFrame)
     if (!(repair.key instanceof Uint8Array)) return null
-    if (repair.convention === 'upper_repair') markOwnerRepairReadOnly(content.fileId)
+    // Accept ONLY the read-only repair convention. A `string`/`binary` answer
+    // would be a write-capable key switch, which recovery never does.
+    if (repair.convention !== 'upper_repair') {
+      repair.key.fill(0)
+      return null
+    }
+    markOwnerRepairReadOnly(content.fileId)
     return repair.key
   } catch {
     return null
+  }
+}
+
+/** Does this key equal the owner's ordinary (string-convention) derivation? */
+async function isOwnerDerivedKey(masterKey: Uint8Array, fileId: string, key: Uint8Array): Promise<boolean> {
+  const derived = await deriveFileKey(masterKey, fileId)
+  try {
+    if (derived.length !== key.length) return false
+    let diff = 0
+    for (let i = 0; i < derived.length; i++) diff |= derived[i] ^ key[i]
+    return diff === 0
+  } finally {
+    derived.fill(0)
   }
 }
 
@@ -165,7 +190,7 @@ export async function decryptEncryptedBytes(
       } catch (err) {
         // SF-0002: only a first frame that fails may resolve as a repaired
         // version; every later frame keeps the key chunk 0 proved.
-        const repaired = i === 0 ? await contentKeyFromFrame(masterKey, content, frame) : null
+        const repaired = i === 0 ? await contentKeyFromFrame(masterKey, fileKey, content, frame) : null
         if (!repaired) throw err
         await decryptor.dispose()
         decryptor = await startDecryptStream(repaired, content.fileId, content.pin)
@@ -441,7 +466,7 @@ export async function pipeDecryptedChunks(
       } catch (err) {
         // SF-0002: only chunk 0 may switch keys (to the repaired version's
         // owner key); later frames keep the key chunk 0 proved.
-        const repaired = chunkIndex === 0 ? await contentKeyFromFrame(masterKey, content, frame) : null
+        const repaired = chunkIndex === 0 ? await contentKeyFromFrame(masterKey, fileKey, content, frame) : null
         if (!repaired) throw err
         await decryptor.dispose()
         decryptor = await startDecryptStream(repaired, content.fileId, content.pin)

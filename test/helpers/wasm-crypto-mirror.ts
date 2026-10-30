@@ -68,6 +68,8 @@ export async function installWasmCryptoMirror(): Promise<WasmCryptoMirror> {
       port: DecryptorPort,
     ) => StreamingDecryptor
     return {
+      deriveFileKey: async (masterKey: Uint8Array, fileId: string) =>
+        w.derive_file_key(masterKey, new TextEncoder().encode(fileId)),
       readFileMetadata: async (fileKey: Uint8Array, nameEncrypted: string) => {
         mirror.fileMetadataReads.push(nameEncrypted)
         return ops.readFileMetadata(fileKey, nameEncrypted)
