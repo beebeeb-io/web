@@ -1872,6 +1872,8 @@ export function Drive() {
         file.mime_type ?? undefined,
         file.chunk_count,
         file.size_bytes,
+        undefined,
+        getMasterKey(),
       )
     } catch (err) {
       console.error('Download failed:', err)
@@ -2639,6 +2641,7 @@ export function Drive() {
           onProgress: (done, tot) => setBulkZipProgress({ done, total: tot }),
           zipFilename: `beebeeb-files-${new Date().toISOString().slice(0, 10)}.zip`,
         },
+        getMasterKey(),
       )
       if (errorCount > 0) {
         showToast({

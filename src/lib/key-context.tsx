@@ -18,7 +18,15 @@ import {
   zeroize,
   computeRecoveryCheck,
   toBase64,
+  readNameMetadata,
+  ownerRepairNameKey,
 } from './crypto'
+import {
+  ownerRepairKeyFor,
+  rememberOwnerRepairKey,
+  clearOwnerRepairReadOnly,
+  type OwnerRepairConvention,
+} from './owner-repair'
 import { registerLogoutCallback, registerLoginBroadcastCallback } from './auth-context'
 import {
   wrapAndStore,
@@ -655,7 +663,41 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       keyIndexFor: (root, fileId) => sharedFolderCacheRef.current.forFile(root, fileId),
     })
     if (shared) return shared
-    return deriveFileKey(key, file.id)
+    const derived = await deriveFileKey(key, file.id)
+    // SF-0002: an owner row an older iOS File Provider sealed under the
+    // uppercase id does not open under the derived key. The rule is
+    // try-first: only a name that FAILS here asks core for the repair key,
+    // and a row that resolves as `upper_repair` is read-only from then on.
+    // Already-repaired rows use the cached key (no repeat probe).
+    const cached = ownerRepairKeyFor(file.id)
+    if (cached) {
+      zeroize(derived)
+      return new Uint8Array(cached)
+    }
+    if (file.name_encrypted.startsWith('{')) {
+      let opens = true
+      try {
+        await readNameMetadata(derived, file.name_encrypted)
+      } catch {
+        opens = false
+      }
+      if (!opens) {
+        try {
+          const repair = await ownerRepairNameKey(key, file.id, file.name_encrypted)
+          if (repair.key instanceof Uint8Array) {
+            rememberOwnerRepairKey(file.id, {
+              fileKey: repair.key,
+              convention: repair.convention as OwnerRepairConvention,
+            })
+            zeroize(derived)
+            return repair.key
+          }
+        } catch {
+          /* not repairable: report the ordinary integrity failure */
+        }
+      }
+    }
+    return derived
   }, [isBoundTo])
 
   const getSharedFileOrigin = useCallback(async (file: DriveFile, folderId: string): Promise<string | null> => {
@@ -735,6 +777,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     // custody memory: that belongs to the device (L7d).
     forgetSharedFolderSession()
     clearCachedKey()
+    clearOwnerRepairReadOnly()
     void clearOfflineCaches()
     void clearThumbnailCache()
     setKeyPresent(false)

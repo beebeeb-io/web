@@ -107,6 +107,7 @@ import { parsePitch } from './coupon'
 import type { CouponPitch, CouponRedeemed } from './coupon'
 import { withServerBusyRetry } from './server-busy-retry'
 import { postEraseRequestOnce } from './erase-request-transport'
+import { assertOwnerRepairWritable } from './owner-repair'
 
 export const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 const STATUS_URL = import.meta.env.VITE_STATUS_URL || 'https://status.beebeeb.io'
@@ -1337,6 +1338,13 @@ export async function updateFile(
   updates: { parent_id?: string | null; name_encrypted?: string; note_encrypted?: string | null },
   signal?: AbortSignal,
 ): Promise<DriveFile> {
+  // SF-0002: a row recovered under the uppercase repair convention is
+  // read-only. Its NAME and NOTE are content of that row — a move (parent_id
+  // only) stays allowed. A repair that resolved on the CONTENT side marks the
+  // id too, so a note write is refused as well.
+  if (updates.name_encrypted !== undefined || updates.note_encrypted !== undefined) {
+    assertOwnerRepairWritable(fileId)
+  }
   return request<DriveFile>(`/api/v1/files/${fileId}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
@@ -1423,6 +1431,8 @@ export async function toggleStar(
  * key before calling this — the server never sees thumbnail plaintext.
  */
 export async function uploadThumbnail(fileId: string, blob: Blob): Promise<void> {
+  // SF-0002: no thumbnail write on a repaired read-only row (reads stay fine).
+  assertOwnerRepairWritable(fileId)
   const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/octet-stream',
@@ -1442,6 +1452,8 @@ export async function uploadThumbnail(fileId: string, blob: Blob): Promise<void>
 }
 
 export async function uploadThumbnailLarge(fileId: string, blob: Blob): Promise<void> {
+  // SF-0002: no thumbnail write on a repaired read-only row (reads stay fine).
+  assertOwnerRepairWritable(fileId)
   const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/octet-stream',

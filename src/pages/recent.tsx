@@ -88,7 +88,16 @@ export function Recent() {
     if (!isUnlocked || !cryptoReady || file.is_folder) return
     try {
       const fileKey = await getFileKeyForFile(file)
-      await encryptedDownload(file.id, fileKey, file.name_encrypted, file.mime_type ?? undefined, file.chunk_count, file.size_bytes)
+      await encryptedDownload(
+        file.id,
+        fileKey,
+        file.name_encrypted,
+        file.mime_type ?? undefined,
+        file.chunk_count,
+        file.size_bytes,
+        undefined,
+        getMasterKey(),
+      )
     } catch (err) {
       showToast({ icon: 'download', title: 'Download failed', description: err instanceof Error ? err.message : 'Could not decrypt the file.', danger: true })
     }

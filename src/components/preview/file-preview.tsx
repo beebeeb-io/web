@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listVersions, restoreVersion, type DriveFile, type FileVersion } from '../../lib/api'
 import { decryptToBlob, decryptVersionToBlob } from '../../lib/encrypted-download'
+import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly } from '../../lib/owner-repair'
 import { fetchAndDecryptLargeThumbnail, fetchAndDecryptThumbnail } from '../../lib/thumbnail'
 import { PreviewChrome } from './preview-chrome'
 import { InfoRail, CONTENT_CIPHER_LABEL } from './info-rail'
@@ -451,7 +452,10 @@ function resolveEditableKind(
 }
 
 export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext, startInEditMode, folderId, onDelete }: FilePreviewProps) {
-  const { getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, isUnlocked } = useKeys()
+  const { getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, isUnlocked } = useKeys()
+  // SF-0002: the row's name or a version was sealed under the iOS Files-app
+  // convention, so it is openable/downloadable but not writable in place.
+  const ownerReadOnly = isOwnerRepairReadOnly(file.id)
   const [blob, setBlob] = useState<Blob | null>(null)
   /** True when `blob` holds the full original (non-image / fallback / version
    *  paths). False when `blob` is only a thumbnail (the thumbnail-first image
@@ -700,6 +704,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             effectiveMime ?? undefined,
             file.chunk_count,
             file.size_bytes,
+            getMasterKey(),
           )
           plaintext = res.plaintext
         } else {
@@ -714,6 +719,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             file.mime_type ?? undefined,
             v.chunk_count,
             v.size_bytes,
+            getMasterKey(),
           )
         }
         if (!cancelled) {
@@ -979,6 +985,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           effectiveMime ?? undefined,
           file.chunk_count,
           file.size_bytes,
+          getMasterKey(),
         )
         original = res.plaintext
       } else {
@@ -992,6 +999,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           file.mime_type ?? undefined,
           v.chunk_count,
           v.size_bytes,
+          getMasterKey(),
         )
       }
       saveBlob(original)
@@ -1090,7 +1098,9 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       onZoomOut={isImage && blob ? handleZoomOut : undefined}
       onRotate={isImage && blob ? handleRotate : undefined}
       onEdit={
-        canEditOffice && !editing
+        ownerReadOnly
+          ? undefined
+          : canEditOffice && !editing
           ? openOfficeEditorTab
           : canEdit && !editing
             ? () => setEditing(true)
@@ -1197,6 +1207,17 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             toolbarSlotEl={toolbarSlot}
             onRequestExitEdit={requestExitEdit}
           />
+        </div>
+      )}
+
+      {/* SF-0002: repaired-from-iOS file — readable, not writable. */}
+      {!editing && ownerReadOnly && (
+        <div
+          className="mx-auto flex w-full max-w-[560px] items-start gap-2.5 rounded-md border border-line bg-paper px-4 py-3 text-left shadow-1"
+          data-testid="owner-repair-readonly-notice"
+        >
+          <Icon name="lock" size={16} className="mt-0.5 shrink-0 text-ink-3" />
+          <p className="text-[12.5px] leading-relaxed text-ink-2">{OWNER_REPAIR_READ_ONLY}</p>
         </div>
       )}
 

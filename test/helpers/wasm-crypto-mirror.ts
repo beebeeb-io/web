@@ -81,6 +81,10 @@ export async function installWasmCryptoMirror(): Promise<WasmCryptoMirror> {
       encryptNoteFor: async (fileKey: Uint8Array, text: string, pin: ContentPin) =>
         ops.encryptNoteFor(fileKey, text, pin),
       decryptNote: async (fileKey: Uint8Array, noteEncrypted: string) => ops.decryptNote(fileKey, noteEncrypted),
+      ownerRepairNameKey: async (masterKey: Uint8Array, fileId: string, nameEncrypted: string) =>
+        w.ownerFileKeyForName(masterKey, fileId, nameEncrypted),
+      ownerRepairContentKey: async (masterKey: Uint8Array, fileId: string, firstChunkFrame: Uint8Array) =>
+        w.ownerFileKeyForContent(masterKey, fileId, firstChunkFrame),
     }
   })
 
@@ -104,7 +108,7 @@ export type Vector = Record<string, any>
 
 /** The vendored copy of core's test-vectors/vectors.json (byte-identical; see core-vectors-kat.test.ts). */
 export function loadVectors(): Record<string, Vector> {
-  const path = fileURLToPath(new URL('../vectors/core-vectors.v12.json', import.meta.url))
+  const path = fileURLToPath(new URL('../vectors/core-vectors.v13.json', import.meta.url))
   const root = JSON.parse(readFileSync(path, 'utf8')) as { version: number; vectors: Vector[] }
   return Object.fromEntries(root.vectors.map((v) => [v.name as string, v]))
 }

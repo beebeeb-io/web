@@ -52,7 +52,7 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // relate to this one).
 //
 // ── Vendoring + refresh procedure ───────────────────────────────────────────
-// The vendored copy lives at test/vectors/core-vectors.v12.json and MUST be a
+// The vendored copy lives at test/vectors/core-vectors.v13.json and MUST be a
 // byte-for-byte copy of repos/core/test-vectors/vectors.json (so the drift
 // check below is a real sha256 comparison, not a comparison against a
 // modified copy). To refresh after core bumps the vector file:
@@ -95,12 +95,16 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // never touch the worker — so those ARE called directly, exactly as the app
 // calls them.
 
-const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v12.json', import.meta.url))
+const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v13.json', import.meta.url))
 // Sibling core checkout (present on developer machines / worktrees that keep
 // `core` next to `web`; absent in a bare CI checkout of web alone).
 const CORE_SIBLING_PATH = fileURLToPath(new URL('../../core/test-vectors/vectors.json', import.meta.url))
 
-// Pin from: shasum -a 256 test/vectors/core-vectors.v12.json
+// Pin from: shasum -a 256 test/vectors/core-vectors.v13.json
+// v13 = core 064c622 (core#54, SF-0002): adds upper_repair_v1 and
+// upper_repair_split_v1, the owner-only read repair for rows the iOS Files
+// app sealed under the uppercase file id; web's owner-repair module is the
+// reader under test in test/sf-0002-owner-repair.test.ts.
 // v12 = core 26094b3 (core#49, task 2255 L9; the same file at core main
 // 3831a05, whose WASM web vendors): adds invite_owner_copy_v1, the
 // purpose-bound folder-invite owner copy;
@@ -114,8 +118,8 @@ const CORE_SIBLING_PATH = fileURLToPath(new URL('../../core/test-vectors/vectors
 // key_wrap_v1 (the legacy unbound shape, pinned so a reader can prove it refuses it);
 // v9 = core 9cbf856 (core#42, task 2237b): adds combine_folder_link_key;
 // v8 = core edf7cd4 (core#41, task 2237): adds shared_folder_index_key.
-const PINNED_SHA256 = '9f426bb10fe48466c5c10bd6bd8bd20b42ceaae3f1dc8c9c04ee8babd1f7d67e'
-const EXPECTED_VERSION = 12
+const PINNED_SHA256 = '71fb633774fcb13d7cca0613603282ea47ab77e265abd09b3a2ec189689c1464'
+const EXPECTED_VERSION = 13
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2)
@@ -148,7 +152,7 @@ beforeAll(() => {
 // ─── 1. Vendored-file checksum guard ────────────────────────────────────────
 
 describe('vendored vector checksum guard', () => {
-  test('test/vectors/core-vectors.v12.json matches the pinned sha256', () => {
+  test('test/vectors/core-vectors.v13.json matches the pinned sha256', () => {
     const buf = readFileSync(VENDORED_PATH)
     expect(sha256Hex(buf)).toBe(PINNED_SHA256)
   })
@@ -204,6 +208,8 @@ const IMPLEMENTED_FAMILIES = new Set([
   'owner_wrapped_folder_key',
   'folder_wrapped_file_key',
   'invite_owner_copy_v1',
+  'upper_repair_v1',
+  'upper_repair_split_v1',
 ])
 
 const SKIPPED_FAMILIES: Record<string, string> = {

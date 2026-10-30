@@ -58,7 +58,7 @@ export function VersionHistory({
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [loading, setLoading] = useState(false)
   const { showToast } = useToast()
-  const { getFileKey } = useKeys()
+  const { getFileKey, getMasterKey } = useKeys()
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
   const navigate = useNavigate()
   const { planDetails } = useDriveData()
@@ -114,6 +114,7 @@ export function VersionHistory({
         mimeType ?? 'application/octet-stream',
         version.chunk_count,
         version.size_bytes,
+        getMasterKey(),
       )
       const url = URL.createObjectURL(plaintext)
       const a = document.createElement('a')

@@ -7,6 +7,8 @@ export type DirectVerdict =
 | { kind: "terminal"; status: number; error: string | null }
 | { kind: "corrupt" };
 
+export type DirectStorageGet = { kind: "stored" } | { kind: "failed"; status: number };
+
 export type DirectPoll =
 | { kind: "request_window"; request: { object_version_id: string | null; start_index: number; count: number; renewal: boolean } }
 | { kind: "fetch"; index: number; method: string; url: WasmSignedUrl; length: number; expires_at: string }
@@ -16,6 +18,40 @@ export type DirectPoll =
 | { kind: "stop"; verdict: DirectVerdict };
 
 
+
+/**
+ * Opaque handle holding ONLY the derived client-metadata key (task 1922).
+ *
+ * Make it once when the vault unlocks, free it on lock. List views and SSE
+ * frames call `seal` / `open` / `openMany` on the handle, so the master key is
+ * not copied into WASM memory on every frame. The derived key never leaves
+ * Rust; the handle is zeroized on drop and `free()` is wasm-bindgen's own.
+ */
+export class ClientMetaKey {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Derive the key from a 32-byte master key. The bytes are taken into a
+     * `Zeroizing` buffer and the master key is dropped before returning.
+     */
+    constructor(master_key: Uint8Array);
+    /**
+     * Open one field's `bbcm1.` envelope.
+     */
+    open(record_key: string, device_key: string | null | undefined, field: number, envelope: string): string;
+    /**
+     * Open many rows in one call: `items` is
+     * `[{ recordKey, deviceKey?, field, envelope? }]`; the result is
+     * `[{ ok: bool, value?: string }]`. One bad row never fails the batch: a
+     * null envelope, a bad field or UUID, a malformed row and a failed open
+     * each yield `{ ok: false }` for that row only.
+     */
+    openMany(items: any): any;
+    /**
+     * Seal one field. `device_key` must be `null` for field 1 and set for 2-4.
+     */
+    seal(record_key: string, device_key: string | null | undefined, field: number, plaintext: string): string;
+}
 
 /**
  * k-anonymity breach check for one password. Core hashes and matches; **JS
@@ -315,6 +351,11 @@ export class WasmDownloadPlanner {
      */
     apiFetchFailed(index: number): void;
     /**
+     * The ciphertext length of chunk `index` once the first window was accepted, else `null`.
+     * The link's `length` is this number; the caller checks a storage answer against it.
+     */
+    chunkLength(index: number): number | null;
+    /**
      * Chunk `index` arrived but did not authenticate when decrypted.
      */
     chunkUnauthentic(index: number): void;
@@ -606,6 +647,20 @@ export class WasmSignupCeremony {
 }
 
 /**
+ * Was the body a storage GET actually delivered the chunk? Same answer shape as
+ * `checkStorageGet`, but decided by the counted bytes: `stored` only when `received` is
+ * exactly `expected`. `Content-Length` is only the head; a truncated stream ends short.
+ */
+export function checkStorageBody(received: number, expected: number): DirectStorageGet;
+
+/**
+ * Was a storage GET answer the chunk we asked for? `{ kind: "stored" }` or
+ * `{ kind: "failed", status }`; status `0` means there was no HTTP answer at all.
+ * Only a `200` whose `Content-Length` is exactly `expected` is `stored`.
+ */
+export function checkStorageGet(status: number, content_length: number | null | undefined, expected: number): DirectStorageGet;
+
+/**
  * May the client follow this storage link? Throws an `Error` whose `code` is
  * the refusal (`malformed`, `not_https`, `userinfo`, `ip_literal`, `loopback`,
  * `bad_host`, `port`, `host_not_listed`, `bucket_not_listed`, `bad_path`); the
@@ -800,9 +855,11 @@ export function directDownloadGrantsPath(file_id: string): string;
 /**
  * `{ cap_object_download_v1, cap_object_upload_v1, capabilities_header,
  * discovery_path, max_window, default_window, chunk_overhead,
+ * max_discovery_body_bytes, max_grant_body_bytes, max_chunk_body_bytes,
  * storage_connect_timeout_ms, storage_get_idle_ms, discovery_timeout_ms,
  * api_call_timeout_ms, background_put_resource_timeout_ms }`: the contract's
- * names and numbers, and the time bounds every client applies, so no client re-types them.
+ * names and numbers, the response caps and the time bounds every client applies,
+ * so no client re-types them.
  */
 export function directTransferConstants(): any;
 
@@ -891,6 +948,12 @@ export function encrypt_thumbnail_for(file_key: Uint8Array, plaintext: Uint8Arra
 export function evaluate_password(password: string, min_length: number): any;
 
 /**
+ * Shorten a client-metadata string for sealing: over 1024 UTF-8 bytes, keep
+ * the last 1021 bytes on a char boundary behind a leading `…`.
+ */
+export function fitForSeal(s: string): string;
+
+/**
  * A shared folder's key id (task 2133): a one-way id of the folder's 32-byte
  * key, for a server to compare folder keys without learning them (HKDF-SHA256,
  * info `beebeeb/folder-key-id/v1`). Returns a 32-byte `Uint8Array`; not secret,
@@ -945,6 +1008,12 @@ export function list_archive(data: Uint8Array, filename: string): any;
 export function list_tar_entries(data: Uint8Array): any;
 
 /**
+ * The ciphertext bytes a process of `class` (`"native"`, `"browser"`, `"mobile_app"`,
+ * `"mobile_extension"`) may hold at once. Throws `class_invalid` for any other string.
+ */
+export function maxInFlightBytes(_class: string): number;
+
+/**
  * Finish OPAQUE client login. Returns `{ message: Uint8Array, session_key: Uint8Array, export_key: Uint8Array }`.
  *
  * `ksf_version` selects the KSF the account's password file was registered
@@ -985,6 +1054,57 @@ export function openLegacyInviteOwnerCopy(master_key: Uint8Array, folder_id: str
  * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
  */
 export function open_request_upload(r_priv: Uint8Array, e_pub: Uint8Array, file_id: Uint8Array, wrapped_key: Uint8Array): Uint8Array;
+
+/**
+ * Resolve the owner's per-file key for ONE content version of a file from the
+ * canonical `file_id` and that version's first chunk frame, and report which
+ * id convention that version's key came from (SF-0002). Returns
+ * `{ key: Uint8Array, convention }`, where `convention` is `"string"`,
+ * `"binary"` or `"upper_repair"`.
+ *
+ * The first chunk frame may be a v1 legacy frame (`nonce || ciphertext ||
+ * tag`, no AAD — what the iOS File Provider wrote) or core's v2 frame 0.
+ *
+ * A file is READ-ONLY for the client if EITHER
+ * [`ownerFileKeyForName`](owner_file_key_for_name) or ANY of its versions
+ * reports `"upper_repair"`: no rename, no new version; save an edit as a new
+ * file. Resolve each version separately — the name's convention does not
+ * decide the content key.
+ */
+export function ownerFileKeyForContent(master_key: Uint8Array, file_id: string, first_chunk_frame: Uint8Array): any;
+
+/**
+ * Resolve the owner's per-file key for a file from the `(file_id,
+ * name_encrypted)` pair the server stores, and report which id convention the
+ * key came from (SF-0002). Returns `{ key: Uint8Array, convention }`, where
+ * `convention` is `"string"`, `"binary"` or `"upper_repair"`.
+ *
+ * The string convention is tried first, then the legacy binary one, then the
+ * uppercase repair one (only when uppercasing changes the id). The first
+ * candidate whose key authenticates `name_encrypted` wins.
+ *
+ * `"upper_repair"` is READ-ONLY: treat the file as read-only — no rename and
+ * no new version; save an edit as a new file. Core only reports the
+ * convention; it never re-seals or migrates an existing row.
+ */
+export function ownerFileKeyForName(master_key: Uint8Array, file_id: string, name_encrypted: string): any;
+
+/**
+ * When `wire_bytes` received since `start_ms` at `kbps` KiB/s lets the next storage
+ * request start. The three counts cross as JS numbers (`f64`), like every other count.
+ * `-Infinity` (`i64::MIN` in core) means there is no ceiling: a real deadline is a
+ * finite number, so a caller only has to test `Number.isFinite`. Desktop's formula,
+ * unchanged in value.
+ */
+export function pacedUntilMs(start_ms: number, wire_bytes: number, kbps: number): number;
+
+/**
+ * May this client use the direct transport for `direction`? True only when discovery
+ * offers it AND has at least one storage pair AND every pair in `discovery.storage_buckets`
+ * is in `pairs` (an array of `{host, bucket}`). Hosts compare ASCII case-insensitively,
+ * buckets exactly.
+ */
+export function pairsAllowed(discovery: any, direction: string, pairs: any): boolean;
 
 /**
  * Decode a discovery body (`GET /api/v1/transfer/capabilities`). Returns
@@ -1232,6 +1352,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_clientmetakey_free: (a: number, b: number) => void;
     readonly __wbg_wasmbreachcheck_free: (a: number, b: number) => void;
     readonly __wbg_wasmchunkdecryptor_free: (a: number, b: number) => void;
     readonly __wbg_wasmchunkencryptor_free: (a: number, b: number) => void;
@@ -1241,8 +1362,14 @@ export interface InitOutput {
     readonly __wbg_wasmsearchindex_free: (a: number, b: number) => void;
     readonly __wbg_wasmsignedurl_free: (a: number, b: number) => void;
     readonly __wbg_wasmsignupceremony_free: (a: number, b: number) => void;
+    readonly checkStorageBody: (a: number, b: number, c: number) => void;
+    readonly checkStorageGet: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly checkStorageUrl: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly classifyDirectAnswer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+    readonly clientmetakey_new: (a: number, b: number, c: number) => void;
+    readonly clientmetakey_open: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly clientmetakey_openMany: (a: number, b: number, c: number) => void;
+    readonly clientmetakey_seal: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly combineFolderLinkKey: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly compute_recovery_check: (a: number, b: number, c: number) => void;
     readonly decompress_gzip: (a: number, b: number, c: number) => void;
@@ -1276,6 +1403,7 @@ export interface InitOutput {
     readonly encrypt_thumbnail: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_thumbnail_for: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly evaluate_password: (a: number, b: number, c: number, d: number) => void;
+    readonly fitForSeal: (a: number, b: number, c: number) => void;
     readonly folder_key_id: (a: number, b: number, c: number) => void;
     readonly generate_recovery_pdf: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly generate_recovery_phrase: (a: number) => void;
@@ -1284,12 +1412,17 @@ export interface InitOutput {
     readonly is_previewable_by_extension: (a: number, b: number) => number;
     readonly list_archive: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly list_tar_entries: (a: number, b: number, c: number) => void;
+    readonly maxInFlightBytes: (a: number, b: number, c: number) => void;
     readonly opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly opaque_login_start: (a: number, b: number, c: number) => void;
     readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly opaque_registration_start: (a: number, b: number, c: number) => void;
     readonly openLegacyInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly open_request_upload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly ownerFileKeyForContent: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly ownerFileKeyForName: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly pacedUntilMs: (a: number, b: number, c: number, d: number) => void;
+    readonly pairsAllowed: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly parseDirectDiscovery: (a: number, b: number, c: number) => void;
     readonly pinnedRetryDecision: (a: number, b: number, c: number, d: number) => void;
     readonly plan_base_storage_bytes: (a: number, b: number) => bigint;
@@ -1351,6 +1484,7 @@ export interface InitOutput {
     readonly wasmdirecthealth_new: () => number;
     readonly wasmdirecthealth_restore: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wasmdownloadplanner_apiFetchFailed: (a: number, b: number, c: number) => void;
+    readonly wasmdownloadplanner_chunkLength: (a: number, b: number) => number;
     readonly wasmdownloadplanner_chunkUnauthentic: (a: number, b: number, c: number) => void;
     readonly wasmdownloadplanner_consumed: (a: number, b: number, c: number) => void;
     readonly wasmdownloadplanner_consumedCount: (a: number) => number;

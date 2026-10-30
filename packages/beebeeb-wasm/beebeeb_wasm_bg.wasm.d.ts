@@ -1,6 +1,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const __wbg_clientmetakey_free: (a: number, b: number) => void;
 export const __wbg_wasmbreachcheck_free: (a: number, b: number) => void;
 export const __wbg_wasmchunkdecryptor_free: (a: number, b: number) => void;
 export const __wbg_wasmchunkencryptor_free: (a: number, b: number) => void;
@@ -10,8 +11,14 @@ export const __wbg_wasmdownloadplanner_free: (a: number, b: number) => void;
 export const __wbg_wasmsearchindex_free: (a: number, b: number) => void;
 export const __wbg_wasmsignedurl_free: (a: number, b: number) => void;
 export const __wbg_wasmsignupceremony_free: (a: number, b: number) => void;
+export const checkStorageBody: (a: number, b: number, c: number) => void;
+export const checkStorageGet: (a: number, b: number, c: number, d: number, e: number) => void;
 export const checkStorageUrl: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const classifyDirectAnswer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+export const clientmetakey_new: (a: number, b: number, c: number) => void;
+export const clientmetakey_open: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+export const clientmetakey_openMany: (a: number, b: number, c: number) => void;
+export const clientmetakey_seal: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const combineFolderLinkKey: (a: number, b: number, c: number, d: number, e: number) => void;
 export const compute_recovery_check: (a: number, b: number, c: number) => void;
 export const decompress_gzip: (a: number, b: number, c: number) => void;
@@ -45,6 +52,7 @@ export const encrypt_note_for: (a: number, b: number, c: number, d: number, e: n
 export const encrypt_thumbnail: (a: number, b: number, c: number, d: number, e: number) => void;
 export const encrypt_thumbnail_for: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const evaluate_password: (a: number, b: number, c: number, d: number) => void;
+export const fitForSeal: (a: number, b: number, c: number) => void;
 export const folder_key_id: (a: number, b: number, c: number) => void;
 export const generate_recovery_pdf: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const generate_recovery_phrase: (a: number) => void;
@@ -53,12 +61,17 @@ export const is_previewable: (a: number, b: number) => number;
 export const is_previewable_by_extension: (a: number, b: number) => number;
 export const list_archive: (a: number, b: number, c: number, d: number, e: number) => void;
 export const list_tar_entries: (a: number, b: number, c: number) => void;
+export const maxInFlightBytes: (a: number, b: number, c: number) => void;
 export const opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
 export const opaque_login_start: (a: number, b: number, c: number) => void;
 export const opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const opaque_registration_start: (a: number, b: number, c: number) => void;
 export const openLegacyInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
 export const open_request_upload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+export const ownerFileKeyForContent: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const ownerFileKeyForName: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const pacedUntilMs: (a: number, b: number, c: number, d: number) => void;
+export const pairsAllowed: (a: number, b: number, c: number, d: number, e: number) => void;
 export const parseDirectDiscovery: (a: number, b: number, c: number) => void;
 export const pinnedRetryDecision: (a: number, b: number, c: number, d: number) => void;
 export const plan_base_storage_bytes: (a: number, b: number) => bigint;
@@ -120,6 +133,7 @@ export const wasmdirecthealth_mayStartFile: (a: number, b: number, c: number, d:
 export const wasmdirecthealth_new: () => number;
 export const wasmdirecthealth_restore: (a: number, b: number, c: number, d: number, e: number) => void;
 export const wasmdownloadplanner_apiFetchFailed: (a: number, b: number, c: number) => void;
+export const wasmdownloadplanner_chunkLength: (a: number, b: number) => number;
 export const wasmdownloadplanner_chunkUnauthentic: (a: number, b: number, c: number) => void;
 export const wasmdownloadplanner_consumed: (a: number, b: number, c: number) => void;
 export const wasmdownloadplanner_consumedCount: (a: number) => number;

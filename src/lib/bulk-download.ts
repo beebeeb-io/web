@@ -603,10 +603,22 @@ export async function packageZip(
 /** The owner drive's sources: the vault's own list and decrypt routes. */
 export function ownerDownloadPorts(
   getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>,
+  masterKey?: Uint8Array,
 ): BulkDownloadPorts {
+  if (!masterKey) return { ...OWNER_DOWNLOAD_PORTS, getFileKey: getFileKeyForFile }
   return {
     ...OWNER_DOWNLOAD_PORTS,
     getFileKey: getFileKeyForFile,
+    decryptToBlob: (file, fileKey) =>
+      decryptToBlob(
+        file.id,
+        fileKey,
+        file.name_encrypted,
+        file.mime_type ?? undefined,
+        file.chunk_count,
+        file.size_bytes,
+        masterKey,
+      ),
   }
 }
 
@@ -677,6 +689,7 @@ export async function downloadAsZip(
   items: DriveFile[],
   getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>,
   options: BulkDownloadOptions = {},
+  masterKey?: Uint8Array,
 ): Promise<BulkDownloadResult> {
-  return downloadAsZipWith(ownerDownloadPorts(getFileKeyForFile), items, options)
+  return downloadAsZipWith(ownerDownloadPorts(getFileKeyForFile, masterKey), items, options)
 }

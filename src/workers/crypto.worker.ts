@@ -367,6 +367,33 @@ const cryptoWorker = {
     return (await content()).decryptNote(fileKey, noteEncrypted)
   },
 
+  // ── SF-0002 owner read-repair ────────────────────────────────────────────
+  // Thin pass-throughs to core's two repair derivations (core 064c622). They
+  // return `{ key, convention }` or throw when nothing authenticates; the
+  // caller (`src/lib/owner-repair.ts`) turns a throw into null.
+
+  /** The owner key for a name sealed under an id convention we did not derive. */
+  async ownerRepairNameKey(
+    masterKey: Uint8Array,
+    fileId: string,
+    nameEncrypted: string,
+  ): Promise<{ key: Uint8Array; convention: string }> {
+    const wasm = await ensureWasm()
+    const result = wasm.ownerFileKeyForName(masterKey, fileId, nameEncrypted)
+    return { key: result.key as Uint8Array, convention: result.convention as string }
+  },
+
+  /** The owner key for a version whose first frame does not open under the key we have. */
+  async ownerRepairContentKey(
+    masterKey: Uint8Array,
+    fileId: string,
+    firstChunkFrame: Uint8Array,
+  ): Promise<{ key: Uint8Array; convention: string }> {
+    const wasm = await ensureWasm()
+    const result = wasm.ownerFileKeyForContent(masterKey, fileId, firstChunkFrame)
+    return { key: result.key as Uint8Array, convention: result.convention as string }
+  },
+
   /** Generate a 12-word BIP39 recovery phrase and the corresponding master key. */
   async generateRecoveryPhrase(): Promise<{
     phrase: string
