@@ -426,13 +426,21 @@ describe('LD-0001 stream cache and window', () => {
     const first = session.read('req-a', 32, 4).catch(() => null)
     await settle(4)
     expect(source.calls).toEqual(expect.arrayContaining([2, 3, 4, 5]))
+    // readAhead is 8 chunks: the first pull's window stops at chunk 9.
+    expect(source.calls).not.toContain(10)
+    expect(source.calls).not.toContain(11)
+
+    // A read that lands on a chunk a prefetch already owns must not have its
+    // prefetch aborted by its own pull (the chunk is outside the new window).
+    const reused = session.read('req-a2', 3 * 32, 4)
+    await settle(2)
+    source.release(3)
+    expect(await reused).toEqual(fx.plaintext.slice(96, 100))
 
     const second = session.read('req-b', 12 * 32, 4)
     await settle(12)
     // The latest pull's window is fetched; the superseded window is dropped/aborted.
     expect(source.calls).toEqual(expect.arrayContaining([13, 14, 15, 16]))
-    expect(source.calls).not.toContain(10)
-    expect(source.calls).not.toContain(11)
     await second
     await first
     await session.close()

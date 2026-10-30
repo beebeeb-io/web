@@ -489,6 +489,9 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     const from = index + 1
     const to = Math.min(N - 1, index + bounds.readAhead)
     for (const [prefetchIndex, controller] of prefetchControllers) {
+      // A chunk an active read is waiting on (refs > 0) is never aborted: the
+      // read found the prefetch's promise and must be allowed to finish.
+      if ((refs.get(prefetchIndex) ?? 0) > 0) continue
       if (prefetchIndex < from || prefetchIndex > to) {
         controller.abort(new DOMException('superseded pull', 'AbortError'))
         prefetchControllers.delete(prefetchIndex)
