@@ -159,6 +159,30 @@ export async function decryptEncryptedBytes(
   return decrypted
 }
 
+// ─── Whole-file progress (LD-0001 PR-C) ─────────────
+
+/**
+ * One progress sample for a whole-file preview load. `receivedBytes` counts
+ * ciphertext bytes that arrived from the network; `decryptedChunks` counts
+ * plaintext parts opened so far. The rule (§7): never report `decrypting`
+ * while `receivedBytes < totalBytes`.
+ */
+export interface TransferProgress {
+  phase: 'downloading' | 'decrypting' | 'done'
+  receivedBytes: number
+  totalBytes: number | null
+  decryptedChunks: number
+  totalChunks: number
+}
+
+export interface WholeFileOptions {
+  onProgress?: (p: TransferProgress) => void
+  signal?: AbortSignal
+}
+
+/** Emit at most once per 64 KiB received, plus on every part and phase change. */
+const PROGRESS_BYTES_STEP = 64 * 1024
+
 // ─── Streaming infrastructure ───────────────────────
 
 /**
@@ -418,6 +442,111 @@ export async function pipeDecryptedChunks(
   }
 }
 
+// ─── Whole-file pipelined read ─────────────────────
+
+/**
+ * Read a whole-file response through the pipelined decryptor and return the
+ * plaintext copy. Ciphertext is counted as it arrives; `onProgress` reports
+ * downloading, then decrypting, then done. Every plaintext part is wiped after
+ * it is copied into the result, and on any failure (M7).
+ */
+async function decryptWholeFileResponse(
+  res: Response,
+  fileKey: Uint8Array,
+  content: FileContentRef,
+  chunkCount: number,
+  sizeBytes: number,
+  opts?: WholeFileOptions,
+): Promise<Uint8Array> {
+  const effectiveChunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? chunkCount
+  const effectiveChunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size')) ?? CHUNK_SIZE
+  const totalBytes = parseHeaderInt(res.headers.get('Content-Length'))
+  // Same legacy rule as encryptedDownload (encrypted-download.ts:485-490).
+  const overhead = effectiveChunkCount * CHUNK_OVERHEAD
+  const effectivePlaintextSize = (totalBytes !== null && totalBytes === sizeBytes)
+    ? sizeBytes - overhead
+    : sizeBytes
+  const totalChunks = effectiveChunkCount
+
+  if (!res.body) {
+    // No stream to count: keep today's buffered path and report one final event.
+    const encryptedBytes = new Uint8Array(await res.arrayBuffer())
+    const decrypted = await decryptEncryptedBytes(
+      fileKey, content, encryptedBytes, totalChunks, sizeBytes, effectiveChunkSize,
+    )
+    opts?.onProgress?.({
+      phase: 'done',
+      receivedBytes: encryptedBytes.length,
+      totalBytes: encryptedBytes.length,
+      decryptedChunks: totalChunks,
+      totalChunks,
+    })
+    return decrypted
+  }
+
+  const parts: Uint8Array[] = []
+  let receivedBytes = 0
+  let decryptedChunks = 0
+  let lastEmittedBytes = 0
+  let lastPhase: TransferProgress['phase'] | null = null
+
+  const emit = (phaseOverride?: TransferProgress['phase']) => {
+    if (!opts?.onProgress) return
+    const bodyEnded = totalBytes !== null && receivedBytes >= totalBytes
+    const phase = phaseOverride ?? (bodyEnded ? 'decrypting' : 'downloading')
+    const phaseChanged = phase !== lastPhase
+    if (!phaseOverride && !phaseChanged && receivedBytes - lastEmittedBytes < PROGRESS_BYTES_STEP) return
+    lastEmittedBytes = receivedBytes
+    lastPhase = phase
+    opts.onProgress({ phase, receivedBytes, totalBytes, decryptedChunks, totalChunks })
+  }
+
+  // Ciphertext bytes received. The transform only counts; it never reorders or
+  // copies, so pipeDecryptedChunks sees the same bytes it did before.
+  const counting = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      receivedBytes += chunk.byteLength
+      controller.enqueue(chunk)
+      emit()
+    },
+  })
+
+  try {
+    await pipeDecryptedChunks(
+      res.body.pipeThrough(counting),
+      fileKey,
+      content,
+      totalChunks,
+      effectivePlaintextSize,
+      effectiveChunkSize,
+      opts?.signal,
+      async (part) => {
+        parts.push(part)
+        decryptedChunks++
+        emit()
+      },
+      undefined,
+    )
+  } catch (err) {
+    // A failed read never hands out a prefix: wipe what was already opened.
+    for (const part of parts) part.fill(0)
+    throw err
+  }
+
+  decryptedChunks = totalChunks
+  emit('done')
+
+  const totalSize = parts.reduce((sum, p) => sum + p.length, 0)
+  const out = new Uint8Array(totalSize)
+  let writeOffset = 0
+  for (const part of parts) {
+    out.set(part, writeOffset)
+    writeOffset += part.length
+    part.fill(0)
+  }
+  return out
+}
+
 // ─── Public API ─────────────────────────────────────
 
 /**
@@ -577,6 +706,7 @@ export async function decryptToBlob(
   mimeType: string | null | undefined,
   chunkCount: number,
   sizeBytes: number,
+  opts?: WholeFileOptions,
 ): Promise<{ plaintext: Blob; filename: string }> {
   const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
   const filename = meta.name
@@ -586,21 +716,14 @@ export async function decryptToBlob(
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, { headers, credentials: 'include' })
+  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, {
+    headers,
+    credentials: 'include',
+    signal: opts?.signal,
+  })
   if (!res.ok) throw new ApiError(res.statusText, res.status)
 
-  const encryptedBytes = new Uint8Array(await res.arrayBuffer())
-  const effectiveChunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? chunkCount
-  const effectiveChunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size')) ?? CHUNK_SIZE
-
-  const decrypted = await decryptEncryptedBytes(
-    fileKey,
-    meta.content,
-    encryptedBytes,
-    effectiveChunkCount,
-    sizeBytes,
-    effectiveChunkSize,
-  )
+  const decrypted = await decryptWholeFileResponse(res, fileKey, meta.content, chunkCount, sizeBytes, opts)
 
   const plaintext = new Blob([decrypted as BlobPart], { type: blobMime })
   dispatchDecrypted(fileId)
@@ -626,6 +749,7 @@ export async function decryptVersionToBlob(
   mimeType: string | null | undefined,
   chunkCount: number,
   sizeBytes: number,
+  opts?: WholeFileOptions,
 ): Promise<Blob> {
   const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
   const token = getToken()
@@ -634,22 +758,11 @@ export async function decryptVersionToBlob(
 
   const res = await fetch(
     `${getApiUrl()}/api/v1/files/${fileId}/versions/${versionId}/download`,
-    { headers, credentials: 'include' },
+    { headers, credentials: 'include', signal: opts?.signal },
   )
   if (!res.ok) throw new ApiError(res.statusText, res.status)
 
-  const encryptedBytes = new Uint8Array(await res.arrayBuffer())
-  const effectiveChunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? chunkCount
-  const effectiveChunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size')) ?? CHUNK_SIZE
-
-  const decrypted = await decryptEncryptedBytes(
-    fileKey,
-    meta.content,
-    encryptedBytes,
-    effectiveChunkCount,
-    sizeBytes,
-    effectiveChunkSize,
-  )
+  const decrypted = await decryptWholeFileResponse(res, fileKey, meta.content, chunkCount, sizeBytes, opts)
 
   const plaintext = new Blob([decrypted as BlobPart], { type: mimeType || meta.mimeType || 'application/octet-stream' })
   dispatchDecrypted(fileId)
