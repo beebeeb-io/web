@@ -30,12 +30,14 @@ let workers: FakeWorker[] = []
 interface Script {
   /** What liveDecryptorCount returns on its 1st, 2nd, ... call (the last repeats). */
   decryptorCounts: number[]
+  /** What liveReaderCount returns on its 1st, 2nd, ... call (the last repeats). */
+  readerCounts?: number[]
 }
 let script: Script = { decryptorCounts: [0] }
 const proxies: Array<{ decryptorCalls: number }> = []
 
 function scriptedProxy() {
-  const state = { decryptorCalls: 0 }
+  const state = { decryptorCalls: 0, readerCalls: 0 }
   proxies.push(state)
   return {
     init: async () => {},
@@ -44,6 +46,12 @@ function scriptedProxy() {
       const i = Math.min(state.decryptorCalls, script.decryptorCounts.length - 1)
       state.decryptorCalls++
       return script.decryptorCounts[i]
+    },
+    liveReaderCount: async () => {
+      const counts = script.readerCounts ?? [0]
+      const i = Math.min(state.readerCalls, counts.length - 1)
+      state.readerCalls++
+      return counts[i]
     },
     liveSearchIndexCount: async () => 0,
     liveCeremonyCount: async () => 0,
@@ -86,6 +94,15 @@ describe('the worker is recycled only when nothing lives in it', () => {
     expect(workers).toHaveLength(2)
     expect(workers[0].terminated).toBe(true)
     expect(workers[1].terminated).toBe(false)
+  })
+
+  test('a random-access reader live at the first check blocks the recycle', async () => {
+    script = { decryptorCounts: [0], readerCounts: [1] }
+    await crypto.initCrypto()
+    await crypto.__cryptoRestartInternals.checkMemoryNow()
+    expect(proxies[0].readerCalls).toBe(1)
+    expect(workers).toHaveLength(1)
+    expect(workers[0].terminated).toBe(false)
   })
 
   test('a decryptor live at the first check blocks the recycle without taking the lock', async () => {
