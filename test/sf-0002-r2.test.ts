@@ -232,3 +232,48 @@ describe('W2: no verdict is a refusal, never "writable"', () => {
     }
   })
 })
+
+// ── W3: the flag-off key path is main's ─────────────────────────────────────
+
+const { resolveOwnerKeyForFile } = await import('../src/lib/key-context')
+
+function hex(bytes: Uint8Array): string {
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+describe('W3: shared-folders flag off keeps the derived key (rv-web198d R1)', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  test('flag off: a row with acted_via_share_id gets the derived key, as on main', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const derived = loadWasm().derive_file_key(master, enc.encode(V1.file_id))
+    const key = await resolveOwnerKeyForFile(
+      master,
+      row({ acted_via_share_id: 'share-id', uploaded_by: null }),
+      'me',
+      null,
+      async () => false,
+    )
+    expect(hex(key)).toBe(hex(derived))
+  })
+
+  test("flag off: a member's row gets the derived key too", async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const derived = loadWasm().derive_file_key(master, enc.encode(V1.file_id))
+    const key = await resolveOwnerKeyForFile(
+      master,
+      row({ acted_via_share_id: null, uploaded_by: 'member-1' }),
+      'me',
+      null,
+      async () => false,
+    )
+    expect(hex(key)).toBe(hex(derived))
+  })
+
+  test('flag on: a foreign row the shared path cannot open stays unavailable', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    await expect(
+      resolveOwnerKeyForFile(master, row({ acted_via_share_id: 'share-id' }), 'me', null, async () => true),
+    ).rejects.toThrow("Can't open this file")
+  })
+})

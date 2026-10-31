@@ -950,21 +950,31 @@ export function KeyProvider({ children }: { children: ReactNode }) {
  * SF-0002 review: the key an OWNER row is read and written under.
  *
  * - a key the shared-folder path resolved wins (the row is not ours to re-key);
- * - a FOREIGN row the shared path could not open is unavailable: it never
- *   falls through to the owner's derived or repair key;
+ * - with the shared-folders flag ON, a FOREIGN row the shared path could not
+ *   open is unavailable: it never falls through to the owner's derived or
+ *   repair key;
+ * - with the flag OFF there is no shared-folder path at all, so a foreign row
+ *   gets the derived key exactly as on main (rv-web198d R1: "with it off this
+ *   asks nothing") and fails its own integrity check honestly; it is never
+ *   offered the owner repair key;
  * - otherwise the client's DERIVED key is tried first, so a cached repair key
  *   never takes precedence over a normal key that opens;
  * - only a name that fails to open asks core for the owner repair key.
+ *
+ * `sharedFoldersOn` is read only for a foreign row (injected by tests).
  */
 export async function resolveOwnerKeyForFile(
   masterKey: Uint8Array,
   file: DriveFile,
   viewerId: string | null,
   sharedKey: Uint8Array | null,
+  sharedFoldersOn: () => Promise<boolean> = sharedFoldersEnabled,
 ): Promise<Uint8Array> {
   if (sharedKey) return sharedKey
   if (needsOwnership(file, viewerId)) {
-    throw new Error("Can't open this file")
+    // SF-0002 round 2 (W3): the refusal is the flag-on rule only.
+    if (await sharedFoldersOn()) throw new Error("Can't open this file")
+    return deriveFileKey(masterKey, file.id)
   }
   const derived = await deriveFileKey(masterKey, file.id)
   let opens = true

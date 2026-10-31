@@ -99,6 +99,8 @@ describe('SF-0002 review: name resolution', () => {
         row({ acted_via_share_id: 'share-id' }),
         'me',
         null,
+        // SF-0002 round 2 (W3): this refusal is the shared-folders-ON rule.
+        async () => true,
       ),
     ).rejects.toThrow()
   })
