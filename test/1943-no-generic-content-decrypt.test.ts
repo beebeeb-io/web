@@ -65,7 +65,11 @@ describe('names and notes are opened by core’s readers only', () => {
 
   test('the details panel seals and opens notes through file-note.ts, not the name/metadata functions', () => {
     const panel = files.find((f) => f.path === 'src/components/file-details-panel.tsx')!
-    expect(panel.text).toMatch(/\bsealFileNote\(/)
+    // SF-0002 r2 W4: the panel writes through writeFileNote (the write-time
+    // read-only check, then the seal), which seals with sealFileNote.
+    expect(panel.text).toMatch(/\bwriteFileNote\(/)
+    const note = files.find((f) => f.path === 'src/lib/file-note.ts')!
+    expect(note.text).toMatch(/\bwriteFileNote[\s\S]*\bsealFileNote\(fileKey/)
     expect(panel.text).toMatch(/\bopenFileNote\(/)
     expect(panel.text).not.toMatch(/\bencryptFilename\b/)
     expect(panel.text).not.toMatch(/\bserializeEncryptedBlob\b/)
