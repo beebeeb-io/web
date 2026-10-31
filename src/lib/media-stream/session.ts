@@ -544,7 +544,15 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     )
   }
   const dv = opts.row.download_version
-  if (dv && dv.chunk_size_bytes !== chunkSize) {
+  // `chunk_size_bytes` is the stride the uploader declared, not chunk 0's real
+  // size. With one chunk, chunk 0 is the whole file, so S is the smaller of the
+  // stride and the plaintext size (a 300 KB phone clip under a 4 MiB stride).
+  const expectedChunkSize = dv
+    ? N === 1
+      ? Math.min(dv.chunk_size_bytes, dv.plaintext_size_bytes)
+      : dv.chunk_size_bytes
+    : chunkSize
+  if (expectedChunkSize !== chunkSize) {
     throw new StreamSessionError(
       'auth',
       `chunk size ${chunkSize} disagrees with download_version`,

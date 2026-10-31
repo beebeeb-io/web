@@ -1,0 +1,126 @@
+/**
+ * LD-0001 PR-A round 3 (web #207): the review fixes for the stream session.
+ * One describe block per review row (A1-A8). Fixtures are real core WASM
+ * frames; a row that needs 1 MiB chunks uses the synthetic reader instead.
+ */
+import { describe, expect, test } from 'bun:test'
+import { loadWasm } from './helpers/wasm-crypto-mirror'
+import {
+  deterministicFileId,
+  encryptFixture,
+  FakeChunkSource,
+  FakeClock,
+  inProcessReaderFactory,
+  patternBytes,
+  seededKey,
+  settle,
+  syntheticReaderFactory,
+  type Fixture,
+} from './helpers/media-stream-fixtures'
+import { createContentOps, type ContentOps } from '../src/lib/content-crypto'
+import {
+  createChunkReader,
+  StreamingDecryptor,
+  type ChunkReaderPort,
+  type DecryptorPort,
+} from '../src/lib/crypto'
+import {
+  openStreamSession,
+  type OpenStreamOptions,
+  type StreamEvent,
+  type StreamObserver,
+  type StreamReaderFactory,
+  type StreamRow,
+  type StreamSession,
+} from '../src/lib/media-stream/session'
+
+const wasm = loadWasm()
+const MiB = 1024 * 1024
+
+function rowFor(fx: Fixture): StreamRow {
+  const ciphertext = fx.frames.reduce((n, f) => n + f.length, 0)
+  return {
+    chunk_count: fx.chunkCount,
+    size_bytes: fx.plaintext.length,
+    download_version: {
+      object_version_id: 'ov-1',
+      version_number: 1,
+      chunk_count: fx.chunkCount,
+      chunk_size_bytes: fx.chunkSize,
+      plaintext_size_bytes: fx.plaintext.length,
+      ciphertext_size_bytes: ciphertext,
+      chunks: fx.frames.map((f, index) => ({ index, size_bytes: f.length })),
+    },
+  }
+}
+
+function open(fx: Fixture, extra: Partial<OpenStreamOptions> = {}): Promise<StreamSession> {
+  return openStreamSession({
+    fileId: fx.fileId,
+    fileKey: fx.fileKey,
+    content: { fileId: fx.fileId, pin: fx.pin },
+    row: rowFor(fx),
+    source: new FakeChunkSource(fx.frames),
+    clock: new FakeClock(),
+    readerFactory: inProcessReaderFactory(createContentOps(wasm)),
+    ...extra,
+  })
+}
+
+function allZero(bytes: Uint8Array): boolean {
+  return bytes.every((b) => b === 0)
+}
+
+function errorsOf(session: StreamSession): StreamEvent[] {
+  const out: StreamEvent[] = []
+  session.onEvent((event) => {
+    if (event.type === 'error') out.push(event)
+  })
+  return out
+}
+
+interface CacheLog {
+  cached: Array<{ index: number; bytes: Uint8Array }>
+  wiped: Array<{ index: number; bytes: Uint8Array }>
+}
+
+function observed(): { log: CacheLog; observer: StreamObserver } {
+  const log: CacheLog = { cached: [], wiped: [] }
+  return {
+    log,
+    observer: {
+      onChunkCached: (index, bytes) => log.cached.push({ index, bytes }),
+      onChunkWiped: (index, bytes) => log.wiped.push({ index, bytes }),
+    },
+  }
+}
+
+// @@ A1
+describe('LD-0001 r3 A1: a single-chunk file declares its upload stride', () => {
+  test('single_chunk_300KB_with_a_4MiB_declared_stride_opens', async () => {
+    for (const pin of [0, 2] as const) {
+      const plaintext = patternBytes(300 * 1024)
+      const fx = encryptFixture({ pin, chunkSize: 4 * MiB, plaintext })
+      expect(fx.chunkCount).toBe(1)
+      const row = rowFor(fx)
+      expect(row.download_version!.chunk_size_bytes).toBe(4 * MiB)
+      const session = await open(fx, { row })
+      expect(session.totalSize).toBe(plaintext.length)
+      expect(session.chunkSize).toBe(plaintext.length)
+      expect(await session.read('r', 0, 4096)).toEqual(plaintext.slice(0, 4096))
+      expect(await session.read('r', plaintext.length - 10, 4096)).toEqual(plaintext.slice(-10))
+      await session.close()
+    }
+  })
+
+  test('single_chunk_larger_than_its_declared_stride_is_refused', async () => {
+    const fx = encryptFixture({ pin: 2, chunkSize: 4 * MiB, plaintext: patternBytes(300 * 1024) })
+    const row = rowFor(fx)
+    await expect(
+      open(fx, {
+        row: { ...row, download_version: { ...row.download_version!, chunk_size_bytes: 256 * 1024 } },
+      }),
+    ).rejects.toMatchObject({ kind: 'auth', index: 0 })
+  })
+})
+
