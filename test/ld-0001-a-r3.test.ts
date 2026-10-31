@@ -25,6 +25,7 @@ import {
   type DecryptorPort,
 } from '../src/lib/crypto'
 import {
+  createWorkerReaderFactory,
   openStreamSession,
   type OpenStreamOptions,
   type StreamEvent,
@@ -150,6 +151,74 @@ describe('LD-0001 r3 A2: a superseded read-ahead never ends the session', () => 
     expect(await far).toEqual(fx.plaintext.slice(40 * S, 40 * S + 4))
     expect(errors).toEqual([])
     await session.close()
+  })
+})
+
+// @@ A3
+/** What Comlink.transfer does to the sender: the buffer moves, the sender's view is left empty. */
+function detach(frame: Uint8Array): Uint8Array {
+  return structuredClone(frame, { transfer: [frame.buffer] })
+}
+
+/** The production worker factory over in-process ports that transfer like the worker hop. */
+function transferringWorkerFactory(ops: ContentOps): StreamReaderFactory {
+  const decryptorPort: DecryptorPort = {
+    decryptorPushFrame: async (handle, frame) => ops.decryptorPushFrame(handle, detach(frame)),
+    decryptorFinish: async (handle) => ops.decryptorFinish(handle),
+    decryptorDispose: async (handle) => ops.decryptorDispose(handle),
+  }
+  const readerPort: ChunkReaderPort = {
+    createChunkReader: async (handle) => ops.createChunkReader(handle),
+    openChunkAt: async (handle, index, isLast, frame) =>
+      ops.openChunkAt(handle, index, isLast, detach(frame)),
+    closeChunkReader: async (handle) => ops.closeChunkReader(handle),
+  }
+  return createWorkerReaderFactory({
+    startDecryptStream: async (fileKey, fileId, pin) =>
+      new StreamingDecryptor(ops.createDecryptor(fileKey, fileId, pin), decryptorPort),
+    createChunkReader: (decryptor) => createChunkReader(decryptor, readerPort),
+  })
+}
+
+describe('LD-0001 r3 A3: the chunk-0 repair path in the worker factory', () => {
+  test('repair_receives_the_whole_head_frame_and_the_retry_opens', async () => {
+    const ops = createContentOps(wasm)
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const seen: Uint8Array[] = []
+    const repairedKey = fx.fileKey.slice()
+    const session = await open(fx, {
+      fileKey: seededKey(99),
+      readerFactory: transferringWorkerFactory(ops),
+      repair: async (frame) => {
+        seen.push(frame.slice())
+        return repairedKey
+      },
+    })
+    expect(seen.length).toBe(1)
+    expect(seen[0]).toEqual(fx.frames[0])
+    expect(await session.read('r', 32, 32)).toEqual(fx.plaintext.slice(32, 64))
+    // The page's copy of the repaired key is wiped once the reader exists.
+    expect(allZero(repairedKey)).toBe(true)
+    expect(ops.liveDecryptorCount()).toBe(0)
+    expect(ops.liveReaderCount()).toBe(1)
+    await session.close()
+    expect(ops.liveReaderCount()).toBe(0)
+  })
+
+  test('a_failing_retry_leaves_no_live_decryptor_and_wipes_the_repaired_key', async () => {
+    const ops = createContentOps(wasm)
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const wrongRepair = seededKey(98)
+    await expect(
+      open(fx, {
+        fileKey: seededKey(99),
+        readerFactory: transferringWorkerFactory(ops),
+        repair: async () => wrongRepair,
+      }),
+    ).rejects.toMatchObject({ kind: 'auth', index: 0 })
+    expect(ops.liveDecryptorCount()).toBe(0)
+    expect(ops.liveReaderCount()).toBe(0)
+    expect(allZero(wrongRepair)).toBe(true)
   })
 })
 

@@ -16,7 +16,12 @@
  * `MessagePort`, no component. Keys never leave this module or the worker.
  */
 import type { ContentPin } from '../content-crypto'
-import { startDecryptStream, createChunkReader, type ChunkReader } from '../crypto'
+import {
+  startDecryptStream,
+  createChunkReader,
+  type ChunkReader,
+  type StreamingDecryptor,
+} from '../crypto'
 import type { FileContentRef } from '../encrypted-download'
 import { ApiError } from '../api'
 import {
@@ -147,42 +152,64 @@ export interface StreamSession {
 }
 
 /**
- * Production reader factory: sequential chunk-0 open in the worker (with the
- * #204 repair hook when one is supplied), then the worker hands back a
- * random-access handle. The decryptor is consumed by `createChunkReader`.
+ * The crypto calls the production reader factory makes: a sequential chunk-0
+ * open in the worker (with the #204 repair hook when one is supplied), then the
+ * worker hands back a random-access handle. The decryptor is consumed by
+ * `createChunkReader`.
  */
-export const workerReaderFactory: StreamReaderFactory = async ({
-  fileKey,
-  fileId,
-  pin,
-  headFrame,
-  repair,
-}) => {
-  let key = fileKey
-  let repairedKey: Uint8Array | undefined
-  let decryptor = await startDecryptStream(key, fileId, pin)
-  let headPlaintext: Uint8Array
-  try {
-    headPlaintext = await decryptor.pushFrame(headFrame)
-  } catch (err) {
-    await decryptor.dispose()
-    if (!repair) throw err
-    const repaired = await repair(headFrame)
-    if (!repaired) throw err
-    key = repaired
-    repairedKey = repaired
-    decryptor = await startDecryptStream(key, fileId, pin)
-    headPlaintext = await decryptor.pushFrame(headFrame)
-  }
-  let reader: ChunkReader
-  try {
-    reader = await createChunkReader(decryptor)
-  } catch (err) {
-    await decryptor.dispose()
-    throw err
-  }
-  return { reader, headPlaintext, repairedKey }
+export interface WorkerReaderDeps {
+  startDecryptStream(fileKey: Uint8Array, fileId: string, pin: ContentPin): Promise<StreamingDecryptor>
+  createChunkReader(decryptor: StreamingDecryptor): Promise<ChunkReader>
 }
+
+/**
+ * The production factory over injectable crypto calls (tests pass in-process
+ * ports that transfer buffers the way the worker hop does).
+ *
+ * `pushFrame` TRANSFERS its buffer to the worker, so the first push gets a
+ * copy: the repair hook and the retry must still see the whole frame. A failed
+ * retry disposes its decryptor and wipes the repaired key.
+ */
+export function createWorkerReaderFactory(deps: WorkerReaderDeps): StreamReaderFactory {
+  return async ({ fileKey, fileId, pin, headFrame, repair }) => {
+    let decryptor = await deps.startDecryptStream(fileKey, fileId, pin)
+    let headPlaintext: Uint8Array
+    let repairedKey: Uint8Array | undefined
+    try {
+      headPlaintext = await decryptor.pushFrame(headFrame.slice())
+    } catch (err) {
+      await decryptor.dispose()
+      if (!repair) throw err
+      const repaired = await repair(headFrame.slice())
+      if (!repaired) throw err
+      let retry: StreamingDecryptor | null = null
+      try {
+        retry = await deps.startDecryptStream(repaired, fileId, pin)
+        headPlaintext = await retry.pushFrame(headFrame.slice())
+      } catch (retryErr) {
+        if (retry) await retry.dispose()
+        repaired.fill(0)
+        throw retryErr
+      }
+      decryptor = retry
+      repairedKey = repaired
+    }
+    try {
+      const reader = await deps.createChunkReader(decryptor)
+      return { reader, headPlaintext, repairedKey }
+    } catch (err) {
+      await decryptor.dispose()
+      headPlaintext.fill(0)
+      repairedKey?.fill(0)
+      throw err
+    }
+  }
+}
+
+export const workerReaderFactory: StreamReaderFactory = createWorkerReaderFactory({
+  startDecryptStream,
+  createChunkReader: (decryptor) => createChunkReader(decryptor),
+})
 
 function isTerminal(err: unknown): err is StreamSessionError {
   return err instanceof StreamSessionError
