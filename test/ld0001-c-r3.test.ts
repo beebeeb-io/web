@@ -321,3 +321,27 @@ describe('LD-0001 r3 C5: the cap and the renderer agree on what is media', () =>
     expect(fetchCalls).toBe(0)
   })
 })
+
+describe('LD-0001 r3 C6: the load effect does not restart when the name resolves', () => {
+  // Source-level guard: FilePreview is not rendered under bun (it needs the
+  // key context, the API and every renderer). The effect's dependency list is
+  // what decides a restart, so the list itself is asserted.
+  test('the_load_effect_is_keyed_on_file_id_and_version_not_on_name_or_mime', () => {
+    const path = fileURLToPath(new URL('../src/components/preview/file-preview.tsx', import.meta.url))
+    const src = readFileSync(path, 'utf8')
+    const start = src.indexOf('// Load + decrypt content for the current selection')
+    expect(start).toBeGreaterThan(0)
+    const marker = src.indexOf('// `versions` is intentionally NOT a dependency', start)
+    expect(marker).toBeGreaterThan(start)
+    const depsLine = src.slice(marker).split('\n').find((line) => /^\s*\}, \[/.test(line))
+    expect(depsLine).toBeDefined()
+    const match = /\}, \[(.*)\]\)/.exec(depsLine!)
+    expect(match).not.toBeNull()
+    const deps = match![1].split(',').map((d) => d.trim())
+    expect(deps).toContain('file.id')
+    expect(deps).toContain('selectedVersionId')
+    for (const banned of ['name', 'effectiveMime', 'file', 'file.mime_type', 'file.name_encrypted']) {
+      expect(deps).not.toContain(banned)
+    }
+  })
+})

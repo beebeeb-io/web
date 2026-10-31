@@ -612,10 +612,19 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // Effective MIME: prefer server value (legacy), then encrypted metadata, then null
   const effectiveMime = file.mime_type ?? localMimeType
 
+  // C6 (round 3): the load below is keyed on the content identity only (file
+  // id, version, unlock state, chunk count, size). The name, the MIME, the
+  // file object and the key resolver are read at the start of each load
+  // through this ref, so the name resolving, or a parent re-render with a new
+  // file object, never restarts a download (progress used to jump back to 0).
+  const loadInputsRef = useRef({ file, name, effectiveMime, resolveFileKey })
+  loadInputsRef.current = { file, name, effectiveMime, resolveFileKey }
+
   // Load + decrypt content for the current selection (null = live version).
   // For images viewing the current version, try large thumbnail first to avoid
   // downloading the full original (spec 031 — thumbnail-first viewing).
   useEffect(() => {
+    const { file, name, effectiveMime, resolveFileKey } = loadInputsRef.current
     let cancelled = false
     setBlob(null)
     setBlobIsOriginal(false)
@@ -802,7 +811,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       abort.abort()
     }
     // `versions` is intentionally NOT a dependency — see versionsRef above.
-  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, resolveFileKey, file, selectedVersionId, effectiveMime, name])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- C6: keyed on content identity; inputs via loadInputsRef
+  }, [file.id, selectedVersionId, isUnlocked, file.chunk_count, file.size_bytes])
 
   const handleRestore = useCallback(async () => {
     if (selectedVersionId === null) return
