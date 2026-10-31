@@ -52,37 +52,51 @@
     return true
   }
 
+  var RANGE_SPEC = /^\s*(\d*)-(\d*)\s*$/
+
   /**
-   * Parse a `Range: bytes=…` header against `total`.
-   *
-   * `bytes=a-b` and `bytes=a-` are inclusive; `bytes=-n` means the last n
-   * bytes; a multi-range is served as its FIRST range; an end past the end is
-   * clamped. Anything malformed or unsatisfiable (including `bytes=-0`,
-   * start > end, start >= total) returns null — the caller answers 416.
+   * What a `Range` header asks for, against `total` (B9):
+   *  - { kind: 'range', start, end }: one satisfiable byte range. `bytes=a-b`
+   *    and `bytes=a-` are inclusive, `bytes=-n` is the last n bytes, and an
+   *    end past the end is clamped;
+   *  - { kind: 'multi' }: more than one well-formed range. Refused with 416,
+   *    never served as its first range;
+   *  - { kind: 'unsatisfiable' }: one well-formed range that cannot be served
+   *    (`bytes=-0`, start > end, start >= total). 416;
+   *  - { kind: 'ignore' }: not a well-formed `bytes=` range at all. The header
+   *    is ignored and the whole body is served (200), as RFC 9110 allows.
    */
-  function parseRange(header, total) {
-    if (typeof header !== 'string') return null
-    if (!Number.isFinite(total) || total <= 0) return null
-    var match = /^\s*bytes\s*=\s*([^,]+)/i.exec(header)
-    if (!match) return null
-    var spec = match[1].trim()
-    var parts = /^(\d*)-(\d*)$/.exec(spec)
-    if (!parts) return null
+  function classifyRange(header, total) {
+    if (typeof header !== 'string') return { kind: 'ignore' }
+    var match = /^\s*bytes\s*=(.+)$/i.exec(header)
+    if (!match) return { kind: 'ignore' }
+    var specs = match[1].split(',')
+    for (var i = 0; i < specs.length; i++) {
+      var each = RANGE_SPEC.exec(specs[i])
+      if (!each || (each[1] === '' && each[2] === '')) return { kind: 'ignore' }
+    }
+    if (specs.length > 1) return { kind: 'multi' }
+    var parts = RANGE_SPEC.exec(specs[0])
     var rawStart = parts[1]
     var rawEnd = parts[2]
-    if (rawStart === '' && rawEnd === '') return null
+    if (!Number.isFinite(total) || total <= 0) return { kind: 'unsatisfiable' }
     if (rawStart === '') {
       var suffix = parseInt(rawEnd, 10)
-      if (!Number.isFinite(suffix) || suffix <= 0) return null
-      var start = Math.max(0, total - suffix)
-      return { start: start, end: total - 1 }
+      if (!Number.isFinite(suffix) || suffix <= 0) return { kind: 'unsatisfiable' }
+      return { kind: 'range', start: Math.max(0, total - suffix), end: total - 1 }
     }
     var from = parseInt(rawStart, 10)
-    if (!Number.isFinite(from) || from >= total) return null
-    if (rawEnd === '') return { start: from, end: total - 1 }
+    if (!Number.isFinite(from) || from >= total) return { kind: 'unsatisfiable' }
+    if (rawEnd === '') return { kind: 'range', start: from, end: total - 1 }
     var to = parseInt(rawEnd, 10)
-    if (!Number.isFinite(to) || to < from) return null
-    return { start: from, end: Math.min(to, total - 1) }
+    if (!Number.isFinite(to) || to < from) return { kind: 'unsatisfiable' }
+    return { kind: 'range', start: from, end: Math.min(to, total - 1) }
+  }
+
+  /** The satisfiable single range of a `Range` header, or null (see classifyRange). */
+  function parseRange(header, total) {
+    var range = classifyRange(header, total)
+    return range.kind === 'range' ? { start: range.start, end: range.end } : null
   }
 
   /** `Content-Type` for a registered MIME, or octet-stream (A24). */
@@ -342,13 +356,15 @@
           request.headers && typeof request.headers.get === 'function'
             ? request.headers.get('Range') || request.headers.get('range')
             : null
-        var range = rangeHeader ? parseRange(rangeHeader, total) : null
-        if (rangeHeader && !range) {
+        var asked = rangeHeader ? classifyRange(rangeHeader, total) : { kind: 'ignore' }
+        if (asked.kind === 'multi' || asked.kind === 'unsatisfiable') {
           return new Response(null, {
             status: 416,
             headers: responseHeaders({ status: 416, mime: entry.mime, total: total }),
           })
         }
+        // A malformed header is ignored (B9): the whole body, 200.
+        var range = asked.kind === 'range' ? asked : null
         var status = range ? 206 : 200
         var start = range ? range.start : 0
         var end = range ? range.end : total - 1
@@ -699,6 +715,7 @@
     streamIdFromPath: streamIdFromPath,
     shouldHandleStreamRequest: shouldHandleStreamRequest,
     parseRange: parseRange,
+    classifyRange: classifyRange,
     contentTypeFor: contentTypeFor,
     responseHeaders: responseHeaders,
     sha256Hex: sha256Hex,

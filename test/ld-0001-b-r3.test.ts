@@ -271,3 +271,38 @@ describe('LD-0001 r3 B7: the buffering copy names the part the player waits on',
     expect(statusCopy(state)).toBe('Buffering · downloading part 37 of 120')
   })
 })
+
+describe('LD-0001 r3 B9: multi-range is refused, a malformed Range is ignored', () => {
+  function servingRoute() {
+    const { relay } = relayWith()
+    registerFrom(relay, 'sid', 'tab-a')
+    return routeOver(relay)
+  }
+
+  test('a_multi_range_request_gets_416', async () => {
+    const route = servingRoute()
+    for (const range of ['bytes=0-1,5-6', 'bytes=10-19, 30-39']) {
+      const res = await respond(route(request('sid', range), 'tab-a'))
+      expect(res.status).toBe(416)
+      expect(res.headers.get('content-range')).toBe('bytes */100')
+    }
+  })
+
+  test('a_syntactically_malformed_range_is_ignored_and_served_whole', async () => {
+    const route = servingRoute()
+    for (const range of ['bytes=abc', 'items=0-9', 'bytes=', 'bytes=-', 'garbage', 'bytes=1-2-3']) {
+      const res = await respond(route(request('sid', range), 'tab-a'))
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-length')).toBe('100')
+      expect(res.headers.get('content-range')).toBeNull()
+    }
+  })
+
+  test('an_unsatisfiable_range_is_still_416', async () => {
+    const route = servingRoute()
+    for (const range of ['bytes=100-', 'bytes=100-109', 'bytes=-0', 'bytes=5-2']) {
+      const res = await respond(route(request('sid', range), 'tab-a'))
+      expect(res.status).toBe(416)
+    }
+  })
+})

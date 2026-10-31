@@ -148,9 +148,11 @@ describe('T19 range_header_parse_and_416 (A8)', () => {
     expect(logic.parseRange('bytes=5-5', 100)).toEqual({ start: 5, end: 5 })
   })
 
-  test('a multi-range header is served as its first range', () => {
-    expect(logic.parseRange('bytes=0-1,5-6', 100)).toEqual({ start: 0, end: 1 })
-    expect(logic.parseRange('bytes=10-19, 30-39', 100)).toEqual({ start: 10, end: 19 })
+  test('a multi-range header is refused, never served as its first range', () => {
+    // Round 3 (B9): a multi-range is a 416 (test/ld-0001-b-r3.test.ts B9).
+    expect(logic.parseRange('bytes=0-1,5-6', 100)).toBeNull()
+    expect(logic.parseRange('bytes=10-19, 30-39', 100)).toBeNull()
+    expect(logic.classifyRange('bytes=0-1,5-6', 100)).toEqual({ kind: 'multi' })
   })
 
   test('malformed or unsatisfiable ranges are refused', () => {
