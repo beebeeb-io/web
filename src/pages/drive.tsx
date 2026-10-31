@@ -3310,6 +3310,7 @@ export function Drive() {
           fileName={displayName(shareFile)}
           fileSize={shareFile.size_bytes}
           isFolder={shareFile.is_folder}
+          file={shareFile}
           onShareCreated={() => {
             // Advance onboarding context (first_share_done might now be true)
             void refreshOnboarding()

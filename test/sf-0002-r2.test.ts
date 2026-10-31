@@ -736,3 +736,44 @@ describe('W7: repaired content keys are zeroized', () => {
     expect(mirror.contentRepairKeys.every(allZero)).toBe(true)
   })
 })
+
+// ── W8: a share of a repaired row wraps the key that opens it ───────────────
+
+const { shareFileKey } = await import('../src/lib/share-file-key')
+const { wrapKeyForShare, unwrapKeyFromShare } = await import('../src/lib/crypto')
+
+describe('W8: share links and invites of a repaired row', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  test('the link wraps the repair key: the recipient opens the name and the content', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const file = row({ acted_via_share_id: null, uploaded_by: 'me' })
+    const key = await shareFileKey(V1.file_id, {
+      file,
+      // What the dialog used before: the plain lowercase derivation.
+      getFileKey: async () => loadWasm().derive_file_key(master, enc.encode(V1.file_id)),
+      getFileKeyForFile: (f) => resolveOwnerKeyForFile(master, f, 'me', null, async () => false),
+    })
+    expect(hex(key)).toBe(V1.expected_key_hex)
+
+    // The recipient: unwrap from the URL-fragment key, then open the row.
+    const clientKey = crypto.getRandomValues(new Uint8Array(32))
+    const opened = await unwrapKeyFromShare(clientKey, await wrapKeyForShare(clientKey, key))
+    const name = loadWasm().decrypt_name_metadata_with_key(opened, V1.name_encrypted) as { name: string }
+    expect(name.name).toBe('uppercase-repair.pdf')
+    const frame = hexToBytes(V1.content_frame_hex)
+    const content = loadWasm().decrypt_chunk(opened, frame.slice(0, 12), frame.slice(12))
+    expect(hex(content)).toBe(V1.content_plaintext_hex)
+  })
+
+  test('without a row (forwarding a received file) the dialog keeps its previous key', async () => {
+    const plain = new Uint8Array(32).fill(3)
+    const key = await shareFileKey(V1.file_id, {
+      getFileKey: async () => plain,
+      getFileKeyForFile: async () => {
+        throw new Error('not asked')
+      },
+    })
+    expect(key).toBe(plain)
+  })
+})

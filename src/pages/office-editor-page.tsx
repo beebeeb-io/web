@@ -255,6 +255,7 @@ export function OfficeEditorPage() {
         fileId={state.file.id}
         fileName={state.decryptedName}
         fileSize={state.file.size_bytes}
+        file={state.file}
         onShareCreated={() => setShareOpen(false)}
       />
     </>

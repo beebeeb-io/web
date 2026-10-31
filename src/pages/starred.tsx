@@ -266,6 +266,7 @@ export function Starred() {
           fileName={displayName(shareFile)}
           fileSize={shareFile.size_bytes}
           isFolder={shareFile.is_folder}
+          file={shareFile}
         />
       )}
 
