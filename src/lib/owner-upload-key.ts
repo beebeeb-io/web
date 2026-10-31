@@ -11,7 +11,7 @@
 import { ApiError, createFolder, getFile, publishSharedFolderKeys, updateFile, type DriveFile } from './api'
 import { collectAllChildItems, sealChildKey } from './folder-share-crypto'
 import { assertNoSeenCustodyAbove, folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
-import { deriveFileKey, readNameMetadata, zeroize } from './crypto'
+import { deriveFileKey, zeroize } from './crypto'
 import { sharedFoldersEnabled } from './use-feature-flag'
 import { withNetworkRetry } from './net-retry'
 
@@ -102,12 +102,12 @@ export async function createOwnerFolder(args: {
     // POST /files/folder is a plain INSERT: a retry whose first attempt DID
     // commit answers 500 (the primary key), and a connection that stayed down
     // leaves it unknown. After a dropped connection, then, the folder may be
-    // there already (SF-0001 round 4): if a row under this id exists and its
-    // name authenticates under this user's key, it IS this folder, and the
+    // there already (SF-0001 round 4): if the row under this id is exactly the
+    // folder this client sent (`folderThatLanded`), it IS this folder, and the
     // create goes on below, the name-key wrap included. Otherwise the error
     // stands.
     const maybeLanded = dropped && err instanceof ApiError && (err.status === 0 || err.status === 500)
-    const landed = maybeLanded ? await folderThatLanded(args.folderId, args.nameKey) : null
+    const landed = maybeLanded ? await folderThatLanded(args) : null
     if (!landed) throw err
     created = landed
   }
@@ -118,25 +118,28 @@ export async function createOwnerFolder(args: {
 }
 
 /**
- * The folder under `folderId`, if a row exists, is a live folder and its name
- * authenticates under `nameKey` (the key derived for that id): then it is the
- * one this client's earlier attempt created. Null for anything else, including
- * a lookup that fails (the create's own error is what the caller surfaces).
+ * The folder this client's earlier attempt created under `args.folderId`, if
+ * the row there is EXACTLY what it sent (SF-0001 round 5): byte for byte the
+ * sealed name it sent (core seals with a fresh nonce, so nobody else holds
+ * that string; a plaintext legacy name, or any other sealing, is not it), a
+ * live folder, under the parent it asked for. Needs no key. Null for
+ * anything else, including a lookup that fails: the create's own error is
+ * what the caller then surfaces.
  */
-async function folderThatLanded(folderId: string, nameKey: Uint8Array | undefined): Promise<DriveFile | null> {
-  if (!nameKey) return null
+async function folderThatLanded(args: {
+  nameEncrypted: string
+  parentId?: string
+  folderId: string
+}): Promise<DriveFile | null> {
   let row: DriveFile
   try {
-    row = await getFile(folderId)
+    row = await getFile(args.folderId)
   } catch {
     return null
   }
-  if (row.id !== folderId || !row.is_folder || row.is_trashed) return null
-  try {
-    await readNameMetadata(nameKey, row.name_encrypted)
-  } catch {
-    return null
-  }
+  if (row.id !== args.folderId || !row.is_folder || row.is_trashed) return null
+  if ((row.parent_id ?? undefined) !== args.parentId) return null
+  if (row.name_encrypted !== args.nameEncrypted) return null
   return row
 }
 

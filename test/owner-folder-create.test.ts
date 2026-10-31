@@ -201,19 +201,24 @@ describe('createOwnerFolder after a dropped connection: the folder may already b
     const b = wasm.encrypt_metadata(key, JSON.stringify({ name, mime_type: null })) as { nonce: Uint8Array; ciphertext: Uint8Array }
     return JSON.stringify({ cipher_suite: 'V1Aes256Gcm', nonce: Array.from(b.nonce), ciphertext: Array.from(b.ciphertext) })
   }
-  const folderRow = (name_encrypted: string) => ({
+  const folderRow = (name_encrypted: string, over: Record<string, unknown> = {}) => ({
     id: NEW_FOLDER, name_encrypted, is_folder: true, is_trashed: false, parent_id: ROOT, mime_type: null,
     size_bytes: 0, chunk_count: 0, created_at: '2026-10-31T00:00:00Z', updated_at: '2026-10-31T00:00:00Z',
+    ...over,
   })
-  const createArgs = () => ({
-    nameEncrypted: sealedName(nameKey(), 'Taxes'), parentId: ROOT, folderId: NEW_FOLDER, nameKey: nameKey(), masterKey: MASTER,
-  })
+  /** The name this client sealed and sent (core seals with a random nonce, so one string). */
+  let sent = ''
+  const createArgs = () => {
+    sent = sealedName(nameKey(), 'Taxes')
+    return { nameEncrypted: sent, parentId: ROOT, folderId: NEW_FOLDER, nameKey: nameKey(), masterKey: MASTER }
+  }
 
-  test('dropped, then 500; the row is there and its name authenticates: created, and the wrap is published', async () => {
+  test('dropped, then 500; the row is there with exactly the name sent: created, and the wrap is published', async () => {
     dropNextCreates = 1
     conflictAfterDrops = true
-    landedNewFolder = folderRow(sealedName(nameKey(), 'Taxes'))
-    const folder = await createOwnerFolder(createArgs())
+    const args = createArgs()
+    landedNewFolder = folderRow(sent)
+    const folder = await createOwnerFolder(args)
     expect(folder.id).toBe(NEW_FOLDER)
     expect(rowLookups).toContain(NEW_FOLDER)
     // The parent is a shared (custody) folder: its name-key wrap still goes out.
@@ -238,10 +243,34 @@ describe('createOwnerFolder after a dropped connection: the folder may already b
     expect(published).toEqual([])
   })
 
-  test('a 500 with no dropped connection before it is just an error: no lookup', async () => {
+  // Round 5 (F1, F3): only the folder THIS client sent is adopted: exactly
+  // the sealed name it sent, a live folder, under the parent it asked for.
+  for (const [why, row] of [
+    ['a plaintext legacy name', () => folderRow('Taxes')],
+    ['a different sealed name (even one that authenticates under this key)', () => folderRow(sealedName(nameKey(), 'Taxes'))],
+    ['under another parent', () => folderRow(sent, { parent_id: '33333333-3333-4333-8333-333333333333' })],
+    ['at the root instead of under the parent', () => folderRow(sent, { parent_id: null })],
+    ['not a folder', () => folderRow(sent, { is_folder: false })],
+    ['in the trash', () => folderRow(sent, { is_trashed: true })],
+  ] as const) {
+    test(`F1/F3: a landed row with ${why} is not adopted; the 500 surfaces and no wrap is published`, async () => {
+      dropNextCreates = 1
+      conflictAfterDrops = true
+      const args = createArgs()
+      landedNewFolder = row()
+      await expect(createOwnerFolder(args)).rejects.toMatchObject({ status: 500 })
+      expect(rowLookups).toContain(NEW_FOLDER)
+      expect(published).toEqual([])
+    })
+  }
+
+  test('F4: a caller with no name key (the folder suggestion: no parent) still adopts the folder it sent', async () => {
+    dropNextCreates = 1
     conflictAfterDrops = true
-    landedNewFolder = folderRow(sealedName(nameKey(), 'Taxes'))
-    await expect(createOwnerFolder(createArgs())).rejects.toMatchObject({ status: 500 })
-    expect(rowLookups).not.toContain(NEW_FOLDER)
+    sent = sealedName(nameKey(), 'Photos')
+    landedNewFolder = folderRow(sent, { parent_id: null })
+    const folder = await createOwnerFolder({ nameEncrypted: sent, folderId: NEW_FOLDER })
+    expect(folder.id).toBe(NEW_FOLDER)
+    expect(published).toEqual([])
   })
 })
