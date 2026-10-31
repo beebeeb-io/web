@@ -403,3 +403,35 @@ describe('LD-0001 r3 B7: the buffering pill names the real part', () => {
     expect(m.h.overlay).toBe('Buffering · downloading part 37 of 120')
   })
 })
+
+describe('LD-0001 r3 B8: element errors after metadata, and before any range', () => {
+  test('an_error_after_loadedmetadata_shows_the_unsupported_card', async () => {
+    const m = await mountStreaming(fakeSession(4))
+    m.port.postMessage({ type: 'open-range', reqId: 'r1', start: 0, end: 99 })
+    await tick()
+    m.media.fire('loadedmetadata')
+    m.media.error = { code: 4 }
+    m.media.fire('error')
+    await waitFor(() => m.h.path === 'unsupported', 'unsupported')
+    expect(m.h.src).toBeNull()
+    // A video does not reload whole-file behind the card.
+    expect(m.h.blockWholeFile).toBe(true)
+  })
+
+  test('audio_after_metadata_is_unsupported_but_may_load_whole_file_to_convert', async () => {
+    const m = await mountStreaming(fakeSession(4), fileRow('file-a'), 'audio')
+    m.media.fire('loadedmetadata')
+    m.media.error = { code: 4 }
+    m.media.fire('error')
+    await waitFor(() => m.h.path === 'unsupported', 'unsupported')
+    expect(m.h.blockWholeFile).toBe(false)
+  })
+
+  test('an_error_before_any_range_falls_back_at_once', async () => {
+    const m = await mountStreaming(fakeSession(4))
+    m.media.error = { code: 4 }
+    m.media.fire('error')
+    await tick()
+    expect(m.h.path).toBe('whole-file-fallback')
+  })
+})

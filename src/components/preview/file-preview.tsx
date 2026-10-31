@@ -640,8 +640,10 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     setBlobIsOriginal(false)
     setError(null)
     if (!isUnlocked) return
-    // LD-0001 PR-B: a file on the streaming path must NEVER load whole-file.
-    if (stream.streaming) {
+    // LD-0001 PR-B: a file on the streaming path must NEVER load whole-file,
+    // nor a video whose stream errored after metadata (round 3 B8: the
+    // unsupported card stays; a whole-file reload would hit the same codec).
+    if (stream.streaming || stream.blockWholeFile) {
       setVersionLoading(false)
       return
     }
@@ -781,7 +783,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       cancelled = true
     }
     // `versions` is intentionally NOT a dependency — see versionsRef above.
-  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, resolveFileKey, file, selectedVersionId, effectiveMime, name, stream.streaming])
+  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, resolveFileKey, file, selectedVersionId, effectiveMime, name, stream.streaming, stream.blockWholeFile])
 
   const handleRestore = useCallback(async () => {
     if (selectedVersionId === null) return

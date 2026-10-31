@@ -79,6 +79,12 @@ export interface MediaStreamHandle {
   infoLine: string | null
   /** True iff every distinct chunk opened in this session (§7). */
   tagsVerified: boolean
+  /**
+   * B8: a video whose stream errored after `loadedmetadata` shows the
+   * unsupported card; the preview must not reload it whole-file behind the
+   * card. (Audio keeps its convert path, which needs the whole file.)
+   */
+  blockWholeFile: boolean
   /** Attach the media element the hook must drive. */
   setElement: (el: HTMLMediaElement | null) => void
   /** "Try again" for the auth/network error states. */
@@ -124,6 +130,8 @@ interface PerFileState {
   fallbackUsed: boolean
   failed: StreamFailure | null
   generation: number
+  /** Row 7: the element errored after `loadedmetadata` (B8). */
+  unsupported: boolean
 }
 
 interface PerFileRefs {
@@ -133,7 +141,7 @@ interface PerFileRefs {
 }
 
 function freshPerFile(key: string): PerFileState {
-  return { key, rejected: false, fallbackUsed: false, failed: null, generation: 0 }
+  return { key, rejected: false, fallbackUsed: false, failed: null, generation: 0, unsupported: false }
 }
 
 export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
@@ -204,7 +212,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
     fallbackUsed: perFile.fallbackUsed,
     streamRejected: perFile.rejected,
     terminalError: perFile.failed?.kind ?? null,
-    elementErroredAfterMetadata: false,
+    elementErroredAfterMetadata: perFile.unsupported,
   })
 
   const streaming = path === 'streaming'
@@ -503,13 +511,24 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
         recoverNetwork()
         return
       }
+      // B8 (§3): an element error before any range was served fires the
+      // no-pull fallback at once (row 6), without waiting out its 5 s.
+      if (!rangesServedRef.current && !sawMetadataRef.current) {
+        watchdog.mediaError()
+        return
+      }
       const outcome = classifyElementError({
         sawLoadedMetadata: sawMetadataRef.current,
         rangesServed: rangesServedRef.current,
         canPlayType: canPlay,
       })
-      if (outcome === 'stream-rejected') fallBack()
-      else dispatch({ type: 'unsupported' })
+      if (outcome === 'stream-rejected') {
+        fallBack()
+        return
+      }
+      // Row 7: the unsupported card (the path follows the per-file flag).
+      dispatch({ type: 'unsupported' })
+      updatePerFile(() => ({ unsupported: true }))
     }
 
     el.addEventListener('loadstart', onLoadStart)
@@ -533,7 +552,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
       el.removeEventListener('loadedmetadata', onLoadedMetadata)
       el.removeEventListener('error', onError)
     }
-  }, [src, streaming, canPlay, dispatch, fallBack, recoverNetwork])
+  }, [src, streaming, canPlay, dispatch, fallBack, recoverNetwork, updatePerFile])
 
   // Tear the session down when the hook stops streaming (file switch, path
   // change, unmount) so nothing survives the preview (§6 M5, A11).
@@ -545,7 +564,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
 
   const retry = useCallback(() => {
     perFileRefs.current.rejected = false
-    updatePerFile(() => ({ failed: null, rejected: false, fallbackUsed: false }))
+    updatePerFile(() => ({ failed: null, rejected: false, fallbackUsed: false, unsupported: false }))
     setAttempt((n) => n + 1)
   }, [updatePerFile])
 
@@ -571,6 +590,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
     errorCopy,
     infoLine: mediaState ? streamingInfoLine(mediaState) : null,
     tagsVerified: mediaState ? isFullyVerified(mediaState) : false,
+    blockWholeFile: perFile.unsupported && mediaKind === 'video',
     setElement,
     retry,
   }
