@@ -231,8 +231,12 @@ async function proofRows(
   }
 }
 
-/** core's authentication failure ("decryption failed: ciphertext is invalid or key is wrong"). */
-function isAuthenticationFailure(e: unknown): boolean {
+/**
+ * core's authentication failure ("decryption failed: ciphertext is invalid or
+ * key is wrong"). Also the rule stored-row.ts uses: anything else (a crypto
+ * worker error, a recycle) is not an answer about the data.
+ */
+export function isAuthenticationFailure(e: unknown): boolean {
   return e instanceof Error && /decryption failed/i.test(e.message)
 }
 

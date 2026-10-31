@@ -36,6 +36,8 @@
  *      restarts as a NEW file under a fresh id, never as a version of the row
  *      its id names (that id may be the server's, or a row the user can write
  *      but does not own). Only an own-pin replace record restarts as a version.
+ * R4-4 only a real authentication failure makes a row "unverified"; a crypto
+ *      worker error propagates, and the paused upload's record is kept.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -648,5 +650,51 @@ describe('R4-1: an import always creates its own private folders, never reusing 
     expect(cap.createdFolders).toEqual([expect.objectContaining({ folderId: id, parentId: undefined })])
     // The import does not even look: no listing, so nothing it lists can be picked.
     expect(listings).toBe(0)
+  })
+})
+
+// ── R4-4: only an authentication failure is "unverified" ─────────────────────
+
+describe('R4-4: a crypto worker error is not "unverified": it propagates and the record is kept', () => {
+  const legacyVersion = {
+    fingerprint: 'fingerprint', fileId: 'row-4', fileName: 'a.txt', fileSize: 1, totalChunks: 1,
+    upload_session_id: 'legacy-session', object_version_id: 'ov-legacy', chunk_size_bytes: 4, chunk_count: 1,
+    chunk_format: 1, replace_pin: 0, replace_pin_file_id: 'row-4', parentId: 'parent-1', createdAt: 1,
+  }
+
+  test('lookupOwnRow: a worker error propagates; an authentication failure is "unverified"', async () => {
+    const { lookupOwnRow } = await import('../src/lib/stored-row')
+    echo.rows['row-4'] = { name_encrypted: 'worker-crash-name' }
+    expect(await caught(() => lookupOwnRow('row-4', FILE_KEY))).toMatchObject({ message: 'crypto worker was restarted' })
+    echo.rows['row-4'] = { name_encrypted: 'unreadable-name' }
+    expect(await lookupOwnRow('row-4', FILE_KEY)).toEqual({ state: 'unverified' })
+  })
+
+  test('uploadFile: the worker error surfaces, nothing is sent, and the paused upload\'s record is NOT deleted', async () => {
+    echo.stored = legacyVersion
+    echo.rows['row-4'] = { name_encrypted: 'worker-crash-name' }
+    const err = await caught(() => encryptedUpload(new File(['a'], 'a.txt'), 'row-4', FILE_KEY, MK, 'parent-1', undefined, 'row-4'))
+    expect(err).toMatchObject({ message: 'crypto worker was restarted' })
+    expect(cap.initCalls).toEqual([])
+    expect(cap.uploadedChunks).toEqual([])
+    expect(cap.removedStates).toEqual([])
+  })
+
+  test('the rule matches what core actually throws for a name sealed under another key', async () => {
+    const { loadWasm } = await import('./helpers/wasm-crypto-mirror')
+    const { createContentOps } = await import('../src/lib/content-crypto')
+    const { isAuthenticationFailure } = await import('../src/lib/folder-share-crypto')
+    const wasm = loadWasm()
+    const sealed = wasm.encrypt_metadata(new Uint8Array(32).fill(1), JSON.stringify({ name: 'x', mime_type: null })) as { nonce: Uint8Array; ciphertext: Uint8Array }
+    const name = JSON.stringify({ cipher_suite: 'V1Aes256Gcm', nonce: Array.from(sealed.nonce), ciphertext: Array.from(sealed.ciphertext) })
+    let thrown: unknown = null
+    try {
+      createContentOps(wasm).readFileMetadata(new Uint8Array(32).fill(2), name)
+    } catch (e) {
+      thrown = e
+    }
+    expect(thrown).not.toBeNull()
+    expect(isAuthenticationFailure(thrown)).toBe(true)
+    expect(isAuthenticationFailure(new Error('crypto worker was restarted'))).toBe(false)
   })
 })

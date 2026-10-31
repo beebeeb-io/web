@@ -171,10 +171,12 @@ export async function installMocks(): Promise<void> {
       try { name = (JSON.parse(text) as { name: string }).name } catch { /* a bare name */ }
       return { name, mimeType: null, pin: 0 }
     },
-    // A name containing "unreadable" does not authenticate under the key.
+    // A name containing "unreadable" does not authenticate under the key
+    // (core's own message); "worker-crash" is a crypto worker failure instead.
     readFileMetadata: async (_fileKey: Uint8Array, nameEncrypted: string) => {
       cap.metadataReads.push(nameEncrypted)
-      if (nameEncrypted.includes('unreadable')) throw new Error('metadata authentication failed')
+      if (nameEncrypted.includes('unreadable')) throw new Error('decryption failed: ciphertext is invalid or key is wrong')
+      if (nameEncrypted.includes('worker-crash')) throw new Error('crypto worker was restarted')
       return { name: 'listed.txt', mime_type: null, pin: 0 }
     },
   })
