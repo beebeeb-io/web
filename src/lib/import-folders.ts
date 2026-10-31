@@ -8,15 +8,22 @@
  * folder. A run-local `path -> minted id` map makes every file of one folder
  * land in the same folder.
  *
- * A failed create (the server answered with another id, refused, or could not
- * be reached) stops that folder and everything under it for the rest of the
- * run: each file under it fails with that error, before it is downloaded, and
- * nothing is uploaded under a parent this run did not create. There is no
- * fallback to a guessed parent id.
+ * A failed create (the server answered with another id, or refused) stops that
+ * folder and everything under it for the rest of the run: each file under it
+ * fails with that error, before it is downloaded, and nothing is uploaded
+ * under a parent this run did not create. There is no fallback to a guessed
+ * parent id.
+ *
+ * A TRANSIENT failure (no connection, 5xx, 429) is not kept for the run
+ * (SF-0001 round 3): that file fails with it, and the next file under the
+ * folder tries the create again, under the SAME id this run minted for it
+ * (no other client holds it). createOwnerFolder itself already retries a
+ * dropped connection under that id.
  */
 import { createOwnerFolder } from './owner-upload-key'
 import { deriveFileKey, encryptFilename, serializeEncryptedBlob, zeroize } from './crypto'
 import { encryptedUpload } from './encrypted-upload'
+import { errorRetryable } from './user-friendly-error'
 
 export interface ImportFolderTree {
   /**
@@ -43,15 +50,22 @@ export function createImportFolderTree(
   options: ImportFolderTreeOptions = {},
 ): ImportFolderTree {
   const mintId = options.mintId ?? (() => crypto.randomUUID())
-  // Keyed by the normalised path ('/A/B'). The promise is kept whatever it
-  // settles to: a rejected one keeps the subtree stopped for the whole run.
+  // Keyed by the normalised path ('/A/B'). The promise is kept unless it
+  // rejects with a transient error: any other rejection keeps the subtree
+  // stopped for the whole run.
   const byPath = new Map<string, Promise<string>>()
+  // Each folder's id, minted ONCE per run, so a retry proposes the same id.
+  const mintedFor = new Map<string, string>()
 
   async function create(key: string, parts: string[]): Promise<string> {
     // A parent that failed rejects here with its own error; it was reported
     // when IT failed, so this folder reports nothing of its own.
     const parentId = parts.length > 1 ? await ensure(parts.slice(0, -1).join('/')) : undefined
-    const folderId = mintId()
+    let folderId = mintedFor.get(key)
+    if (folderId === undefined) {
+      folderId = mintId()
+      mintedFor.set(key, folderId)
+    }
     try {
       const nameKey = await deriveFileKey(masterKey, folderId)
       try {
@@ -70,7 +84,8 @@ export function createImportFolderTree(
         zeroize(nameKey)
       }
     } catch (error) {
-      options.onFolderFailed?.(key, error)
+      // Transient: not a stopped folder (ensure() lets the next file retry).
+      if (!errorRetryable(error)) options.onFolderFailed?.(key, error)
       throw error
     }
   }
@@ -81,11 +96,15 @@ export function createImportFolderTree(
     const key = '/' + parts.join('/')
     let pending = byPath.get(key)
     if (!pending) {
-      pending = create(key, parts)
-      // Every caller still sees the rejection; this only keeps a folder no
-      // file asked for again from reporting an unhandled one.
-      pending.catch(() => {})
-      byPath.set(key, pending)
+      const attempt = create(key, parts)
+      pending = attempt
+      byPath.set(key, attempt)
+      // Every caller still sees the rejection. A transient one is forgotten,
+      // so the next file under this folder tries again (same minted id); any
+      // other rejection stays, and keeps the subtree stopped for the run.
+      attempt.catch((error: unknown) => {
+        if (errorRetryable(error) && byPath.get(key) === attempt) byPath.delete(key)
+      })
     }
     return pending
   }

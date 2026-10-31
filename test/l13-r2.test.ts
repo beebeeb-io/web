@@ -25,6 +25,9 @@
  *      authenticate, nothing is uploaded.
  * R3-2 a replace record from before task 1943 (no pin) whose row is a live
  *      row this user owns restarts as a version of it; only otherwise new.
+ * R3-3 a transient folder-create failure is not cached for the run: the next
+ *      attempt creates it under the SAME minted id (createOwnerFolder's own
+ *      same-id retry is in owner-folder-create.test.ts).
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -123,16 +126,19 @@ describe('E1: an import creates its folders under ids this run mints', () => {
     expectSubstitutionAbort(failed[0].error)
   })
 
-  test('any create error stops the subtree the same way; other folders still import', async () => {
+  // Round 3 (R3-3): a TRANSIENT failure no longer stops the subtree (see
+  // below); a refusal still does, like the changed-id abort.
+  test('a refused create (403) stops the subtree the same way; other folders still import', async () => {
     const { createImportFolderTree } = await import('../src/lib/import-folders')
+    const { ApiError } = await import('../src/lib/api')
     const folders = createImportFolderTree(MK)
     echo.createFolder = (requested) => {
-      if (cap.createdFolders.length === 1) throw new Error('Could not reach the server.')
+      if (cap.createdFolders.length === 1) throw new ApiError('Not allowed here.', 403)
       return requested ?? ''
     }
 
-    expect(await caught(() => importOne(folders, '/Photos'))).toMatchObject({ message: 'Could not reach the server.' })
-    expect(await caught(() => importOne(folders, '/Photos/2024'))).toMatchObject({ message: 'Could not reach the server.' })
+    expect(await caught(() => importOne(folders, '/Photos'))).toMatchObject({ status: 403 })
+    expect(await caught(() => importOne(folders, '/Photos/2024'))).toMatchObject({ status: 403 })
     expect(cap.initCalls).toEqual([])
 
     // An unrelated folder of the same run is unaffected and gets its own id.
@@ -570,5 +576,46 @@ describe('R3-2: an unmarked record whose row is a live row this user owns restar
     expect((cap.initCalls[0] as { name_encrypted: string }).name_encrypted).toBe('row-2-name')
     expect(cap.derivedKeyIds).toEqual([])
     expect(cap.uploadedChunks.map((c) => c.uploadSessionId)).toEqual(['upload-session-id'])
+  })
+})
+
+// ── R3-3: transient folder-create failures in an import ──────────────────────
+
+describe('R3-3: a transient folder-create failure is retried under the same id, never cached', () => {
+  async function importOne(folders: { ensure(path: string): Promise<string | undefined> }, parentPath: string, name: string) {
+    const { importFileInto } = await import('../src/lib/import-folders')
+    return importFileInto({
+      folders, parentPath, name, masterKey: MK,
+      download: async () => new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/jpeg' }),
+      signal: new AbortController().signal, onStatus: () => {}, onBytes: () => {},
+    })
+  }
+
+  test('status 0, then 200: the folder is created once, under one minted id, and its files import', async () => {
+    const { createImportFolderTree } = await import('../src/lib/import-folders')
+    const { ApiError } = await import('../src/lib/api')
+    const stopped: string[] = []
+    const folders = createImportFolderTree(MK, { onFolderFailed: (path) => stopped.push(path) })
+    const createdOnServer: string[] = []
+    echo.createFolder = (requested) => {
+      if (cap.createdFolders.length === 1) throw new ApiError('Could not reach the server. Check your connection and try again.', 0)
+      createdOnServer.push(requested ?? '')
+      return requested ?? ''
+    }
+
+    // The first file sees the dropped connection (after createOwnerFolder's
+    // own retries, which this suite's net-retry stub skips)...
+    expect(await caught(() => importOne(folders, '/Photos', 'a.jpg'))).toMatchObject({ status: 0 })
+    // ...and the next one creates the folder under the SAME id, then imports.
+    await importOne(folders, '/Photos', 'b.jpg')
+
+    const [first, second] = cap.createdFolders.map((f) => f.folderId)
+    expect(cap.createdFolders).toHaveLength(2)
+    expect(first).toMatch(V4)
+    expect(second).toBe(first)
+    expect(createdOnServer).toEqual([first])
+    expect(cap.initCalls.map((c) => (c as { parent_id: string }).parent_id)).toEqual([first])
+    // Not a stopped subtree: nothing was reported as such.
+    expect(stopped).toEqual([])
   })
 })

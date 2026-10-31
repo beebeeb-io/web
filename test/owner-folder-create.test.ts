@@ -33,6 +33,8 @@ const NEW_FOLDER = '22222222-2222-4222-8222-222222222222'
 const FOLDER_KEY = new Uint8Array(32).fill(0x5a)
 
 let custodyOn = true
+/** The next N folder creates fail as a dropped connection (ApiError status 0). */
+let dropNextCreates = 0
 const created: Array<{ parentId?: string; folderId?: string }> = []
 const published: Array<{ folderId: string; keys: { file_id: string; encrypted_file_key: string }[] }> = []
 
@@ -60,6 +62,11 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => ({
   getSentInvites: async () => [],
   createFolder: async (_name: string, parentId?: string, folderId?: string) => {
     created.push({ parentId, folderId })
+    if (dropNextCreates > 0) {
+      dropNextCreates--
+      const Dropped = r.ApiError as unknown as new (message: string, status: number) => Error
+      throw new Dropped('Could not reach the server. Check your connection and try again.', 0)
+    }
     return { id: folderId, parent_id: parentId ?? null, is_folder: true }
   },
   publishSharedFolderKeys: async (folderId: string, keys: { file_id: string; encrypted_file_key: string }[]) => {
@@ -75,6 +82,7 @@ const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 beforeEach(() => {
   resetCustodyMemoryForTests()
   custodyOn = true
+  dropNextCreates = 0
   created.length = 0
   published.length = 0
   clearSharedFolderLookups()
@@ -139,5 +147,17 @@ describe('every owner folder-create goes through createOwnerFolder', () => {
         })
     }
     expect(offenders).toEqual([])
+  })
+})
+
+// SF-0001 round 3, R3-3: a dropped connection is retried under the SAME id
+// (it was minted for this folder, so no other client holds it). Real
+// withNetworkRetry here: its first back-off is about a second.
+describe('createOwnerFolder retries a transient create failure under the same folder id', () => {
+  test('status 0, then the answer: one folder, both attempts under its id', async () => {
+    dropNextCreates = 1
+    const folder = await createOwnerFolder({ nameEncrypted: '{}', folderId: NEW_FOLDER })
+    expect(folder.id).toBe(NEW_FOLDER)
+    expect(created).toEqual([{ parentId: undefined, folderId: NEW_FOLDER }, { parentId: undefined, folderId: NEW_FOLDER }])
   })
 })

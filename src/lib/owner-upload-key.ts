@@ -13,6 +13,7 @@ import { collectAllChildItems, sealChildKey } from './folder-share-crypto'
 import { assertNoSeenCustodyAbove, folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
 import { deriveFileKey, zeroize } from './crypto'
 import { sharedFoldersEnabled } from './use-feature-flag'
+import { withNetworkRetry } from './net-retry'
 
 /**
  * Publish the wrap of an item the owner just added under its shared root: a
@@ -83,7 +84,10 @@ export async function createOwnerFolder(args: {
   // derived from the id THIS client chose. createFolder throws on an answer
   // with any other id — before a wrap is published here, and before the
   // caller indexes, moves items into, or navigates to the answer.
-  const created = await createFolder(args.nameEncrypted, args.parentId, args.folderId)
+  // A dropped connection is retried under the SAME id (SF-0001 round 3): it
+  // was minted for this folder, so no other client holds it. The changed-id
+  // abort and every HTTP error are not retried.
+  const created = await withNetworkRetry(() => createFolder(args.nameEncrypted, args.parentId, args.folderId))
   if (args.parentId && args.nameKey && args.masterKey) {
     await publishOwnerUploadKey(args.masterKey, args.parentId, created.id, args.nameKey, true)
   }
