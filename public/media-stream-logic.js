@@ -378,6 +378,259 @@
     }
   }
 
+  /**
+   * The worker side of the `/sw-stream/` relay: the registry of page-owned
+   * streams, the per-response bodies, the claim round-trip and the page's
+   * register/close/claim-reply messages. sw.js only wires it to `self`.
+   *
+   * deps: { clock, matchAll(): Promise<Array<{ id, postMessage(msg) }>> }
+   *   - `clock` is the injected clock (tests drive it; nothing reads Date);
+   *   - `matchAll` is `self.clients.matchAll({ type: 'window', includeUncontrolled: true })`.
+   */
+  function createStreamRelay(deps) {
+    var clock = deps.clock
+    var registry = deps.registry || createRegistry()
+    var claims = new Map()
+    var seq = 0
+
+    function bindPort(entry) {
+      entry.requests = entry.requests || new Map()
+      var port = entry.port
+      port.addEventListener('message', function (event) {
+        onPortMessage(entry.id, event.data)
+      })
+      if (typeof port.start === 'function') port.start()
+    }
+
+    function register(entry) {
+      bindPort(entry)
+      entry.lastActivityAt = clock.now()
+      registry.register(entry)
+    }
+
+    function finishRequest(entry, reqId, controller, error) {
+      var request = entry.requests && entry.requests.get(reqId)
+      if (request) {
+        request.timer.stop()
+        entry.requests.delete(reqId)
+        request.resolve = null
+        request.reject = null
+      }
+      try {
+        if (error) controller.error(error)
+      } catch (err) {
+        // The stream is already closed/errored.
+      }
+    }
+
+    function pullFromPage(entry, reqId, offset, max) {
+      return new Promise(function (resolve, reject) {
+        var request = entry.requests && entry.requests.get(reqId)
+        if (!request) {
+          reject(new Error('stream closed'))
+          return
+        }
+        request.resolve = resolve
+        request.reject = reject
+        entry.port.postMessage({ type: 'pull', reqId: reqId, offset: offset, max: max })
+      })
+    }
+
+    /** One open response. It owns its offset, its silence timer and no plaintext. */
+    function createBody(entry, start, end) {
+      var reqId = 's' + ++seq
+      var offset = start
+      var done = false
+
+      return new ReadableStream({
+        start: function (controller) {
+          var request = { controller: controller, resolve: null, reject: null, timer: null }
+          request.timer = createSilenceTimer(clock, function () {
+            // A10: 30 s without data/progress errors this response and drops it.
+            finishRequest(entry, reqId, controller, new Error('stream timed out'))
+          })
+          entry.requests.set(reqId, request)
+          entry.port.postMessage({ type: 'open-range', reqId: reqId, start: start, end: end })
+        },
+        pull: async function (controller) {
+          if (done || !entry.requests || !entry.requests.has(reqId)) return
+          if (offset > end) {
+            done = true
+            entry.requests.get(reqId).timer.stop()
+            entry.requests.delete(reqId)
+            controller.close()
+            return
+          }
+          var max = Math.min(MAX_MESSAGE_BYTES, end - offset + 1)
+          var expected = offset
+          var reply
+          try {
+            reply = await pullFromPage(entry, reqId, offset, max)
+          } catch (err) {
+            finishRequest(entry, reqId, controller, new Error('stream failed'))
+            return
+          }
+          if (done || !entry.requests || !entry.requests.has(reqId)) return
+          var bytes = reply && reply.bytes instanceof ArrayBuffer ? new Uint8Array(reply.bytes) : null
+          if (!reply || !bytes || !continuityOk(expected, reply.offset, bytes.byteLength)) {
+            // A19: a gap is an error, never a short 206.
+            finishRequest(entry, reqId, controller, new Error('stream offset gap'))
+            return
+          }
+          controller.enqueue(bytes)
+          offset += bytes.byteLength
+          if (offset > end) {
+            done = true
+            entry.requests.get(reqId).timer.stop()
+            entry.requests.delete(reqId)
+            controller.close()
+          }
+        },
+        cancel: function () {
+          done = true
+          entry.port.postMessage({ type: 'cancel', reqId: reqId })
+          var request = entry.requests && entry.requests.get(reqId)
+          if (request) {
+            request.timer.stop()
+            entry.requests.delete(reqId)
+          }
+        },
+      })
+    }
+
+    function onPortMessage(id, data) {
+      var entry = registry.get(id)
+      if (!entry || !data || typeof data !== 'object') return
+      var request = entry.requests && entry.requests.get(data.reqId)
+      if (data.type === 'progress') {
+        // A live download is alive: touch the silence timer without a byte (A10).
+        if (request) request.timer.touch()
+        return
+      }
+      if (!request) return
+      if (data.type === 'data') {
+        request.timer.touch()
+        var resolve = request.resolve
+        request.resolve = null
+        request.reject = null
+        if (resolve) resolve(data)
+        return
+      }
+      if (data.type === 'data-error') {
+        var reject = request.reject
+        request.resolve = null
+        request.reject = null
+        if (reject) reject(new Error('stream failed'))
+      }
+    }
+
+    function closeStream(id) {
+      var entry = registry.get(id)
+      if (!entry) return
+      if (entry.requests) {
+        entry.requests.forEach(function (request) {
+          request.timer.stop()
+          try {
+            request.controller.error(new Error('stream closed'))
+          } catch (err) {
+            // Already errored/closed.
+          }
+        })
+        entry.requests.clear()
+      }
+      registry.remove(id)
+      try {
+        entry.port.close()
+      } catch (err) {
+        // Already closed.
+      }
+    }
+
+    /** Ask the owning window to re-register. It must hash to `hash` (A27). */
+    async function claim(hash, clientId) {
+      var clients
+      try {
+        clients = await deps.matchAll()
+      } catch (err) {
+        return null
+      }
+      var targets = clients.filter(function (client) {
+        return !clientId || client.id === clientId
+      })
+      if (!targets.length) return null
+
+      var answer = new Promise(function (resolve) {
+        claims.set(hash, resolve)
+        clock.setTimeout(function () {
+          if (claims.has(hash)) {
+            claims.delete(hash)
+            resolve(null)
+          }
+        }, CLAIM_WAIT_MS)
+      })
+      targets.forEach(function (client) {
+        client.postMessage({ type: 'stream-claim', hash: hash })
+      })
+      return await answer
+    }
+
+    /**
+     * The page's messages for this relay. `sourceId` is `event.source.id`.
+     * Returns true when the message was a stream message (handled or dropped).
+     */
+    function onMessage(data, sourceId) {
+      if (!data || typeof data !== 'object') return false
+      if (data.type === 'register-stream') {
+        if (!data.id || !data.port) return true
+        register({
+          id: data.id,
+          mime: data.mime,
+          size: data.size,
+          port: data.port,
+          clientId: sourceId || '',
+          requests: new Map(),
+          lastActivityAt: clock.now(),
+        })
+        return true
+      }
+      if (data.type === 'close-stream') {
+        closeStream(data.id)
+        return true
+      }
+      if (data.type === 'stream-claim-reply') {
+        var waiter = claims.get(data.hash)
+        if (!waiter) return true
+        claims.delete(data.hash)
+        if (!data.port) {
+          waiter(null)
+          return true
+        }
+        var entry = {
+          id: data.id,
+          mime: data.mime,
+          size: data.size,
+          port: data.port,
+          clientId: sourceId || '',
+          requests: new Map(),
+          lastActivityAt: clock.now(),
+        }
+        bindPort(entry)
+        // The route applies claimAccepted() (hash + source.id) before it serves.
+        waiter(entry)
+        return true
+      }
+      return false
+    }
+
+    return {
+      registry: registry,
+      createBody: createBody,
+      claim: claim,
+      onMessage: onMessage,
+      closeStream: closeStream,
+    }
+  }
+
   var api = {
     STREAM_PATH_PREFIX: STREAM_PATH_PREFIX,
     SILENCE_TIMEOUT_MS: SILENCE_TIMEOUT_MS,
@@ -397,6 +650,7 @@
     createSilenceTimer: createSilenceTimer,
     createRegistry: createRegistry,
     createStreamRoute: createStreamRoute,
+    createStreamRelay: createStreamRelay,
   }
 
   if (typeof module !== 'undefined' && module.exports) {

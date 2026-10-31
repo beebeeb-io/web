@@ -56,6 +56,10 @@ export interface UseMediaStreamArgs {
   resolveFileKey: () => Promise<Uint8Array>
   /** Test seam; production resolves the API-backed source. */
   sourceFactory?: (fileId: string, objectVersionId: string) => ChunkFrameSource
+  /** Test seam; production opens the PR-A session (`openStreamSession`). */
+  openSession?: typeof openStreamSession
+  /** Test seam; production reads the authenticated metadata (`openFileMetadata`). */
+  openMetadata?: typeof openFileMetadata
 }
 
 export interface MediaStreamHandle {
@@ -275,11 +279,11 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
     const run = async (): Promise<void> => {
       try {
         const fileKey = await resolveFileKey()
-        const meta = await openFileMetadata(fileId, fileKey, file.name_encrypted)
+        const meta = await (args.openMetadata ?? openFileMetadata)(fileId, fileKey, file.name_encrypted)
         const source = args.sourceFactory
           ? args.sourceFactory(fileId, objectVersionId)
           : apiChunkSource(fileId, objectVersionId)
-        const opened = await openStreamSession({
+        const opened = await (args.openSession ?? openStreamSession)({
           fileId,
           fileKey,
           content: meta.content,
