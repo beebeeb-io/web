@@ -334,3 +334,61 @@ describe('LD-0001 r3 A5: a zero-length file', () => {
   })
 })
 
+// @@ A6
+function syntheticRow(chunkSize: number, chunkCount: number): StreamRow {
+  const plaintext = chunkSize * chunkCount
+  return {
+    chunk_count: chunkCount,
+    size_bytes: plaintext,
+    download_version: {
+      object_version_id: 'ov-1',
+      version_number: 1,
+      chunk_count: chunkCount,
+      chunk_size_bytes: chunkSize,
+      plaintext_size_bytes: plaintext,
+      ciphertext_size_bytes: chunkCount * (chunkSize + 28),
+      chunks: Array.from({ length: chunkCount }, (_, index) => ({ index, size_bytes: chunkSize + 28 })),
+    },
+  }
+}
+
+describe('LD-0001 r3 A6: a re-fetched tail', () => {
+  test('a_refetched_tail_must_match_the_setup_tail_size', async () => {
+    const S = MiB
+    const N = 100
+    const source = FakeChunkSource.lazy((index) => {
+      const frame = new Uint8Array(S + 28)
+      frame.fill(index + 1, 28)
+      return frame
+    }, N)
+    const wiped = new Set<number>()
+    const session = await openStreamSession({
+      fileId: 'tail-size',
+      fileKey: new Uint8Array(32),
+      content: { fileId: 'tail-size', pin: 0 },
+      row: syntheticRow(S, N),
+      source,
+      clock: new FakeClock(),
+      readerFactory: syntheticReaderFactory({ openAt: [] }),
+      observer: { onChunkWiped: (index) => wiped.add(index) },
+    })
+    const errors = errorsOf(session)
+    // Read forward until the budget evicts the tail cached at setup.
+    for (let i = 0; i < 64 && !wiped.has(N - 1); i++) {
+      await session.read('r', i * S, 16)
+      await settle(1)
+    }
+    expect(wiped.has(N - 1)).toBe(true)
+
+    const short = new Uint8Array(S / 2 + 28)
+    short.fill(N, 28)
+    source.overrides.set(N - 1, short)
+    await expect(session.read('r', (N - 1) * S, 16)).rejects.toMatchObject({
+      kind: 'auth',
+      index: N - 1,
+    })
+    expect(errors.map((e) => e.type === 'error' && e.kind)).toEqual(['auth'])
+    await session.close()
+  })
+})
+

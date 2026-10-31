@@ -278,6 +278,8 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
   let bounds: StreamBounds = streamBounds(MiB)
   let chunkSize = 0
   let retained = 0
+  /** The last chunk's plaintext size, fixed by setup; −1 until then. */
+  let tailSize = -1
 
   const listeners = new Set<(event: StreamEvent) => void>()
   const cache = new Map<number, Uint8Array>()
@@ -406,20 +408,24 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
    * §5.4: every non-last frame is exactly S + 28 bytes. A mismatch is retried
    * once, then it is an error. (The head defines S; the tail is last.)
    */
+  /** The plaintext size chunk `index` must open to: S, or the tail size setup fixed. */
+  function expectedPlaintextSize(index: number): number {
+    return index === N - 1 ? tailSize : chunkSize
+  }
+
   async function fetchChecked(
     index: number,
     signal: AbortSignal,
   ): Promise<{ frame: Uint8Array; chunkCount: number | null }> {
-    const mustCheck = index !== N - 1 && chunkSize > 0
+    // A re-fetched tail is held to the size setup opened (A6), like every
+    // other frame is held to S + 28.
+    const plaintextSize = expectedPlaintextSize(index)
+    const expected = plaintextSize >= 0 ? plaintextSize + CHUNK_OVERHEAD : -1
     for (let sizeAttempt = 0; ; sizeAttempt++) {
       const out = await fetchWithRetries(index, signal)
-      if (!mustCheck || out.frame.length === chunkSize + CHUNK_OVERHEAD) return out
+      if (expected < 0 || out.frame.length === expected) return out
       if (sizeAttempt >= 1) {
-        throw new StreamSessionError(
-          'auth',
-          `chunk ${index} is not ${chunkSize + CHUNK_OVERHEAD} bytes`,
-          index,
-        )
+        throw new StreamSessionError('auth', `chunk ${index} is not ${expected} bytes`, index)
       }
     }
   }
@@ -452,9 +458,13 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
     const fetched = await fetchChecked(index, signal)
     emit({ type: 'received', bytes: fetched.frame.length })
+    if (closed) throw closedError()
+    if (terminal) throw terminal
+    const reader = setupReader
+    if (!reader) throw closedError()
     let plaintext: Uint8Array
     try {
-      plaintext = await setupReader.openAt(
+      plaintext = await reader.openAt(
         index,
         index === N - 1,
         fetched.frame,
@@ -474,6 +484,10 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     if (terminal) {
       plaintext.fill(0)
       throw terminal
+    }
+    if (plaintext.length !== expectedPlaintextSize(index)) {
+      plaintext.fill(0)
+      throw new StreamSessionError('auth', `chunk ${index} opened to the wrong size`, index)
     }
     store(index, plaintext)
     if (!verified.has(index)) {
@@ -673,8 +687,10 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
       emit({ type: 'verified', index: N - 1 })
     }
 
-    // §5.3: total plaintext and the row's sizes.
-    totalSize = (N - 1) * chunkSize + (N > 1 ? tailPlaintext!.length : chunkSize)
+    // §5.3: total plaintext and the row's sizes. The tail size is fixed here;
+    // a later re-fetch of the tail must open to exactly this size.
+    tailSize = N > 1 ? tailPlaintext!.length : chunkSize
+    totalSize = (N - 1) * chunkSize + tailSize
     if (dv && dv.plaintext_size_bytes !== totalSize) {
       throw new StreamSessionError('auth', 'total plaintext disagrees with download_version', 0)
     }
