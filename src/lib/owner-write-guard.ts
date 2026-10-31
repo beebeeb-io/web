@@ -296,9 +296,14 @@ export async function assertCurrentVersionWritable(
 
 /**
  * SF-0002 round 2 (W4): restoring a kept version makes it current, which is a
- * new version of this row. Refused when the row itself is read-only (its mark
- * or its current content), AND when the version being restored resolves as
- * `upper_repair` (the row is then read-only: "ANY version"; it is marked).
+ * new version of this row. Refused when the row is read-only (its mark), when
+ * the version being restored resolves as `upper_repair` (the row is then
+ * read-only: "ANY version"; it is marked), and when the current version is
+ * DECIDED `upper_repair` (same rule).
+ *
+ * Round 3 (X6): the restore is decided by the version it restores. An
+ * UNDECIDED current version (a failed request, nothing authenticated) no
+ * longer blocks it; only the restored version's own check can then refuse.
  */
 export async function assertRestoreWritable(
   file: WriteTarget,
@@ -306,9 +311,14 @@ export async function assertRestoreWritable(
   masterKey: Uint8Array | undefined,
   opts: WriteCheckOptions = {},
 ): Promise<void> {
-  await assertCurrentVersionWritable(file, masterKey, opts)
+  if (isOwnerRepairReadOnly(file.id)) throw new Error(OWNER_REPAIR_READ_ONLY)
   if (file.is_folder || !isOwnerContentRow(file, opts.viewerId)) return
   if (!masterKey) throw needsUnlock()
+  try {
+    await assertCurrentVersionWritable(file, masterKey, opts)
+  } catch (err) {
+    if (!(err instanceof Error) || err.message !== OWNER_WRITE_CHECK_FAILED) throw err
+  }
   const versionKey = `${file.id}|ver:${version.id}`
   if (isKnownWritableVersion(versionKey)) return
   const verdict = await resolveVersion(

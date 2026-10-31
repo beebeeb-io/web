@@ -1036,3 +1036,49 @@ describe('X5: the prefix read follows the server chunk size', () => {
     })
   }
 })
+
+// ── X6: a restore is decided by the version it restores ─────────────────────
+
+describe('X6: an undecided current version does not block a restore', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  const version = { id: VERSION_ID, size_bytes: UPPER_PLAINTEXT_LEN, chunk_count: 1 }
+  // Nothing an owner key opens: the current version's check reaches no verdict.
+  const undecided = () => new Uint8Array(UPPER_PLAINTEXT_LEN + 28).fill(0x42)
+
+  test('undecided current + ordinary version: restored (one POST)', async () => {
+    const net = server(undecided(), ordinaryFrame())
+    try {
+      await restoreOwnerVersion({ file: contentOnlyUpperRow(), version, masterKey: hexToBytes(V1.master_key_hex), residentUserId: 'me' })
+      expect(net.writes().map((w) => w.method)).toEqual(['POST'])
+      expect(isOwnerRepairReadOnly(V1.file_id)).toBe(false)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('undecided current + upper_repair version: refused by that version (marked; nothing POSTed)', async () => {
+    const net = server(undecided(), UPPER_FRAME)
+    try {
+      await expect(
+        restoreOwnerVersion({ file: contentOnlyUpperRow(), version, masterKey: hexToBytes(V1.master_key_hex), residentUserId: 'me' }),
+      ).rejects.toThrow(OWNER_REPAIR_READ_ONLY)
+      expect(net.writes()).toHaveLength(0)
+      expect(isOwnerRepairReadOnly(V1.file_id)).toBe(true)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('undecided current + undecided version: refused with the retryable copy', async () => {
+    const net = server(undecided(), undecided())
+    try {
+      await expect(
+        restoreOwnerVersion({ file: contentOnlyUpperRow(), version, masterKey: hexToBytes(V1.master_key_hex), residentUserId: 'me' }),
+      ).rejects.toThrow(OWNER_WRITE_CHECK_FAILED)
+      expect(net.writes()).toHaveLength(0)
+    } finally {
+      net.restore()
+    }
+  })
+})
