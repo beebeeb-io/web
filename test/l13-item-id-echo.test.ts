@@ -256,11 +256,11 @@ describe('A7c: a persisted session is resumed only when this client minted its i
     expect(planResume(own, () => 'fresh-own-id')).toEqual({ resumeId: 'own-session-id', abandonId: null })
   })
 
-  test('prepareResume abandons the legacy id server-side (POST …/upload/abandon) and drops its record', async () => {
+  test('prepareResume drops the legacy record locally and never abandons its row file-wide (E4)', async () => {
     const { prepareResume } = await import('../src/lib/resume-under-own-id')
     const plan = await prepareResume(legacy, () => 'fresh-own-id')
     expect(plan).toMatchObject({ resumeId: 'fresh-own-id', abandonId: 'server-chosen-id', restarted: true })
-    expect(cap.abandons).toEqual(['server-chosen-id'])
+    expect(cap.abandons).toEqual([])
     expect(cap.removedStates).toEqual(['server-chosen-id'])
   })
 
@@ -280,7 +280,7 @@ describe('A7c: a persisted session is resumed only when this client minted its i
     expect(cap.uploadedChunks.map((c) => c.fileId)).toEqual(['fresh-own-id'])
     // The new record carries the marker, so the next resume keeps this id.
     expect(cap.savedStates.every((s) => (s as { selfMinted?: boolean }).selfMinted === true)).toBe(true)
-    expect(cap.abandons).toEqual(['server-chosen-id'])
+    expect(cap.abandons).toEqual([])
   })
 
   test('a new session always records the selfMinted marker', async () => {

@@ -25,7 +25,7 @@ import {
   UnverifiedFileMetadataError,
   type ContentPin,
 } from './crypto'
-import { abandonUpload, initUpload, uploadChunk, completeUpload, getUploadStatus } from './api'
+import { initUpload, uploadChunk, completeUpload, getUploadStatus } from './api'
 import { assertEchoedItemId } from './item-id-echo'
 import { withNetworkRetry } from './net-retry'
 import { fileStorageCountry } from './storage-regions'
@@ -352,11 +352,13 @@ async function uploadFile(
       }
     } else {
       if (existing && existing.fileId !== fileId) {
-        // L13: a stored session for another id is not this upload's. A record
-        // this client did not mint (no marker) may hold a server-chosen id, so
-        // abandon it through the endpoint rather than leave it on the server;
-        // then the upload continues under the id this client minted now.
-        if (existing.selfMinted !== true) await abandonUpload(existing.fileId).catch(() => {})
+        // A stored session for another id is not this upload's: only its local
+        // record goes. It is NOT abandoned server-side. The only abandon the
+        // server offers is file-wide (`POST /files/{id}/upload/abandon` takes
+        // no session id), so it would end whatever upload that row holds NOW,
+        // possibly another tab's or device's live one, on nothing more than a
+        // content-fingerprint match (same rule as restartInFreshSession,
+        // web#170). The server's lease sweep ends the stale session.
         await removeUploadState(existing.fileId)
       }
       // No prior upload — start fresh

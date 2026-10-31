@@ -1157,9 +1157,11 @@ export function Drive() {
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== match.fileId))
 
       // L13 (SF-0001): only a session this client minted may be resumed. A
-      // record from before the marker (its id may be the server's) is abandoned
-      // through the upload-abandon endpoint and restarted under a fresh id this
-      // client chooses now — never resumed, never left looping on the old id.
+      // record from before the marker (its id may be the server's) is dropped
+      // locally and restarted under a fresh id this client chooses now — never
+      // resumed, never left looping on the old id. Its row is not abandoned
+      // file-wide (that could end another device's live upload); the server's
+      // lease sweep ends the stale session.
       const plan = await prepareResume(match, () => crypto.randomUUID())
       if (plan.restarted) {
         showToast({

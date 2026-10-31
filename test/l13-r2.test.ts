@@ -4,6 +4,8 @@
  *
  * E1  the import mints its own folder ids (per folder, per run) and a failed
  *     create stops that subtree instead of falling back to a guessed id.
+ * E4  a stored session found by fingerprint is never abandoned file-wide (the
+ *     only abandon the server offers ends whatever upload the row holds now).
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
@@ -18,7 +20,10 @@ await mockModuleScoped('../src/lib/owner-adoption', import.meta.dir, {
 
 const { SERVER_CHANGED_ITEM_ID_MESSAGE, ServerChangedItemIdError } = await import('../src/lib/item-id-echo')
 
+const { encryptedUpload } = await import('../src/lib/encrypted-upload')
+
 const MK = new Uint8Array([9])
+const FILE_KEY = new Uint8Array([1])
 /** A canonical lowercase v4 UUID, the only shape a client-minted id may have. */
 const V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
@@ -116,5 +121,32 @@ describe('E1: an import creates its folders under ids this run mints', () => {
     expect(docs).toMatch(V4)
     expect(cap.initCalls).toHaveLength(1)
     expect((cap.initCalls[0] as { parent_id: string }).parent_id).toBe(docs)
+  })
+})
+
+// ── E4: no file-wide abandon from a fingerprint match ────────────────────────
+
+describe('E4: a stored session found by fingerprint is never abandoned file-wide', () => {
+  /** A record an older client wrote (no marker) for ANOTHER row, same content. */
+  const legacyOtherRow = {
+    fingerprint: 'fingerprint', fileId: 'other-row-id', fileName: 'a.txt', fileSize: 1, totalChunks: 1,
+    upload_session_id: 'other-session', object_version_id: 'ov-other', chunk_size_bytes: 4, chunk_count: 1,
+    parentId: null, createdAt: 1,
+  }
+
+  test('a matching legacy record for another row makes no abandon call; only its local record goes', async () => {
+    echo.stored = legacyOtherRow
+    const uploaded = await encryptedUpload(new File(['a'], 'a.txt'), 'own-id', FILE_KEY, MK)
+    expect(uploaded.id).toBe('own-id')
+    expect(cap.abandons).toEqual([])
+    expect(cap.removedStates).toContain('other-row-id')
+    expect(cap.initCalls.map((c) => (c as { file_id: string }).file_id)).toEqual(['own-id'])
+    expect(cap.uploadedChunks.map((c) => c.uploadSessionId)).toEqual(['upload-session-id'])
+  })
+
+  test('the resume banner restarting a legacy record makes no abandon call either', async () => {
+    const { prepareResume } = await import('../src/lib/resume-under-own-id')
+    await prepareResume({ fileId: 'other-row-id' }, () => 'fresh-own-id')
+    expect(cap.abandons).toEqual([])
   })
 })

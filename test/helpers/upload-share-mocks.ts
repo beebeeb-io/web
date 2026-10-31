@@ -45,6 +45,8 @@ export const echo = {
   createFolder: null as ((requested: string | undefined) => string) | null,
   /** When set, every chunk PUT waits on it (a test's admission hold). */
   chunkGate: null as Promise<void> | null,
+  /** The stored upload session `findByFingerprint` returns (IndexedDB), or none. */
+  stored: null as (Record<string, unknown> & { fileId: string }) | null,
 }
 export function resetEchoes(): void {
   echo.protocol = 'v2'
@@ -52,6 +54,7 @@ export function resetEchoes(): void {
   echo.complete = null
   echo.createFolder = null
   echo.chunkGate = null
+  echo.stored = null
 }
 
 export function resetCaptures(): void {
@@ -203,7 +206,7 @@ export async function installMocks(): Promise<void> {
 
   await mockModuleScoped('../../src/lib/upload-resume', here, {
     computeFingerprint: async () => 'fingerprint',
-    findByFingerprint: async () => null,
+    findByFingerprint: async () => echo.stored,
     saveUploadState: async (state: { fileId: string; upload_session_id?: string | null }) => {
       cap.savedStates.push(state)
     },
