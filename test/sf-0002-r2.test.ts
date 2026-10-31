@@ -979,3 +979,60 @@ describe("X4: the viewer decides whose row it is", () => {
     }
   })
 })
+
+// ── X5: with X-Chunk-Size, the probe reads only frame 0 ─────────────────────
+
+describe('X5: the prefix read follows the server chunk size', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  /** A body served in 512-byte pieces; `pulled()` says how many bytes left the server. */
+  function trickle(body: Uint8Array) {
+    let at = 0
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(c) {
+          if (at >= body.length) {
+            c.close()
+            return
+          }
+          const end = Math.min(at + 512, body.length)
+          c.enqueue(body.slice(at, end))
+          at = end
+        },
+      },
+      { highWaterMark: 0 },
+    )
+    return { stream, pulled: () => at }
+  }
+
+  for (const sealed of ['upper', 'ordinary'] as const) {
+    test(`an ${sealed} multi-chunk row: at most frame 0 (+ one piece) is read, and the verdict holds`, async () => {
+      const master = hexToBytes(V1.master_key_hex)
+      const key =
+        sealed === 'upper'
+          ? hexToBytes(V1.expected_key_hex)
+          : loadWasm().derive_file_key(master, enc.encode(V1.file_id))
+      const { body, sizeBytes, chunkCount } = multiChunkBody(key, 3000, 3, 100)
+      const t = trickle(body)
+      const target = row({ size_bytes: sizeBytes, chunk_count: chunkCount, uploaded_by: 'me', acted_via_share_id: null })
+      const net = installFetch((url) => {
+        if (url.endsWith(`/api/v1/files/${V1.file_id}`)) {
+          return new Response(JSON.stringify(target), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        return new Response(t.stream, {
+          status: 200,
+          headers: { 'X-Chunk-Size': '3000', 'X-Chunk-Count': String(chunkCount) },
+        })
+      })
+      try {
+        const run = assertCurrentVersionWritable(target, master, { viewerId: 'me' })
+        if (sealed === 'upper') await expect(run).rejects.toThrow(OWNER_REPAIR_READ_ONLY)
+        else await expect(run).resolves.toBeUndefined()
+        expect(t.pulled()).toBeLessThanOrEqual(3028 + 512)
+        expect(body.length).toBeGreaterThan(9000)
+      } finally {
+        net.restore()
+      }
+    })
+  }
+})

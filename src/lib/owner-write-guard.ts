@@ -123,19 +123,24 @@ function isOwnerContentRow(file: WriteTarget, viewerId: string | null | undefine
   return owner === 'owner'
 }
 
-/** Candidate wire-frame lengths for chunk 0, most likely first (none longer than `have`). */
+/**
+ * Candidate wire-frame lengths for chunk 0, most likely first, never past one
+ * frame. The ONE list both the read length and the tries come from (round 3,
+ * X5). A single-chunk version's frame is the whole body.
+ */
 export function chunk0Candidates(
-  have: number,
   sizeBytes: number,
   chunkCount: number,
   chunkSize: number | null,
+  contentLength: number | null,
 ): number[] {
   const out: number[] = []
   const push = (v: number) => {
-    if (Number.isInteger(v) && v > 0 && v <= have && !out.includes(v)) out.push(v)
+    const len = Math.min(v, MAX_FRAME)
+    if (Number.isInteger(len) && len > 0 && !out.includes(len)) out.push(len)
   }
   if (chunkCount <= 1) {
-    push(have)
+    push(contentLength ?? sizeBytes + NONCE_AND_TAG)
     return out
   }
   if (chunkSize) push(chunkSize + NONCE_AND_TAG)
@@ -145,16 +150,14 @@ export function chunk0Candidates(
   return out
 }
 
-/** How many bytes the check reads: enough for the longest candidate frame 0, never past one frame. */
-function prefixLength(sizeBytes: number, chunkCount: number, chunkSize: number | null, contentLength: number | null): number {
-  if (chunkCount <= 1) return Math.max(1, Math.min(contentLength ?? sizeBytes + NONCE_AND_TAG, MAX_FRAME))
-  const longest = Math.max(
-    chunkSize ? chunkSize + NONCE_AND_TAG : 0,
-    DEFAULT_CHUNK + NONCE_AND_TAG,
-    FILE_PROVIDER_CHUNK + NONCE_AND_TAG,
-    sizeBytes > 0 ? Math.floor((sizeBytes + NONCE_AND_TAG * chunkCount) / chunkCount) : 0,
-  )
-  return Math.min(longest, MAX_FRAME)
+/**
+ * How many bytes the check reads, from the candidate list: with the server's
+ * chunk size, frame 0 is that long and only it is read (candidates that fit in
+ * it are still tried); without it, enough for the longest candidate.
+ */
+function prefixLength(candidates: number[], chunkCount: number, chunkSize: number | null): number {
+  if (chunkCount > 1 && chunkSize) return candidates[0]
+  return Math.max(1, ...candidates)
 }
 
 /** Read at most `want` bytes of a response body, then stop the transfer. */
@@ -217,7 +220,8 @@ async function resolveVersion(
   }
   const chunkCount = Math.max(1, parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? rowChunkCount)
   const chunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size'))
-  const want = prefixLength(sizeBytes, chunkCount, chunkSize, parseHeaderInt(res.headers.get('Content-Length')))
+  const candidates = chunk0Candidates(sizeBytes, chunkCount, chunkSize, parseHeaderInt(res.headers.get('Content-Length')))
+  const want = prefixLength(candidates, chunkCount, chunkSize)
   let bytes: Uint8Array
   try {
     bytes = await readPrefix(res, want)
@@ -225,7 +229,10 @@ async function resolveVersion(
     if (isAbort(err)) throw err
     throw checkFailed(err)
   }
-  for (const len of chunk0Candidates(bytes.length, sizeBytes, chunkCount, chunkSize)) {
+  // A single chunk is the whole body (a legacy row's body may end before the
+  // size the row implies); otherwise each candidate that was read in full.
+  const tries = chunkCount <= 1 ? (bytes.length > 0 ? [bytes.length] : []) : candidates.filter((len) => len <= bytes.length)
+  for (const len of tries) {
     let repair: { key: Uint8Array; convention: string } | null = null
     try {
       // A copy of just this candidate: a view would clone the whole prefix
