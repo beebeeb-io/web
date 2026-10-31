@@ -408,11 +408,21 @@
       registry.register(entry)
     }
 
+    /** Disarm a request's silence timer (it runs only while a pull waits). */
+    function stopTimer(request) {
+      if (request && request.timer) {
+        request.timer.stop()
+        request.timer = null
+      }
+    }
+
     function finishRequest(entry, reqId, controller, error) {
       var request = entry.requests && entry.requests.get(reqId)
+      var pending = null
       if (request) {
-        request.timer.stop()
+        stopTimer(request)
         entry.requests.delete(reqId)
+        pending = request.reject
         request.resolve = null
         request.reject = null
       }
@@ -421,6 +431,8 @@
       } catch (err) {
         // The stream is already closed/errored.
       }
+      // A pull still waiting on the page settles now instead of hanging.
+      if (pending) pending(error || new Error('stream closed'))
     }
 
     function pullFromPage(entry, reqId, offset, max) {
@@ -432,6 +444,14 @@
         }
         request.resolve = resolve
         request.reject = reject
+        // B1: the 30 s silence timer runs ONLY while this pull waits on the
+        // page. A paused player with a full buffer sends no pull, so it is
+        // never timed out; `progress` touches the timer, the reply disarms it.
+        stopTimer(request)
+        request.timer = createSilenceTimer(clock, function () {
+          // A10: 30 s without data/progress errors this response and drops it.
+          finishRequest(entry, reqId, request.controller, new Error('stream timed out'))
+        })
         entry.port.postMessage({ type: 'pull', reqId: reqId, offset: offset, max: max })
       })
     }
@@ -444,11 +464,8 @@
 
       return new ReadableStream({
         start: function (controller) {
+          // No timer yet: it is armed per pull (pullFromPage), never while idle.
           var request = { controller: controller, resolve: null, reject: null, timer: null }
-          request.timer = createSilenceTimer(clock, function () {
-            // A10: 30 s without data/progress errors this response and drops it.
-            finishRequest(entry, reqId, controller, new Error('stream timed out'))
-          })
           entry.requests.set(reqId, request)
           entry.port.postMessage({ type: 'open-range', reqId: reqId, start: start, end: end })
         },
@@ -456,7 +473,7 @@
           if (done || !entry.requests || !entry.requests.has(reqId)) return
           if (offset > end) {
             done = true
-            entry.requests.get(reqId).timer.stop()
+            stopTimer(entry.requests.get(reqId))
             entry.requests.delete(reqId)
             controller.close()
             return
@@ -481,7 +498,7 @@
           offset += bytes.byteLength
           if (offset > end) {
             done = true
-            entry.requests.get(reqId).timer.stop()
+            stopTimer(entry.requests.get(reqId))
             entry.requests.delete(reqId)
             controller.close()
           }
@@ -491,7 +508,7 @@
           entry.port.postMessage({ type: 'cancel', reqId: reqId })
           var request = entry.requests && entry.requests.get(reqId)
           if (request) {
-            request.timer.stop()
+            stopTimer(request)
             entry.requests.delete(reqId)
           }
         },
@@ -504,12 +521,13 @@
       var request = entry.requests && entry.requests.get(data.reqId)
       if (data.type === 'progress') {
         // A live download is alive: touch the silence timer without a byte (A10).
-        if (request) request.timer.touch()
+        if (request && request.timer) request.timer.touch()
         return
       }
       if (!request) return
       if (data.type === 'data') {
-        request.timer.touch()
+        // The reply disarms the timer until the next pull.
+        stopTimer(request)
         var resolve = request.resolve
         request.resolve = null
         request.reject = null
@@ -517,6 +535,7 @@
         return
       }
       if (data.type === 'data-error') {
+        stopTimer(request)
         var reject = request.reject
         request.resolve = null
         request.reject = null
@@ -529,7 +548,7 @@
       if (!entry) return
       if (entry.requests) {
         entry.requests.forEach(function (request) {
-          request.timer.stop()
+          stopTimer(request)
           try {
             request.controller.error(new Error('stream closed'))
           } catch (err) {
