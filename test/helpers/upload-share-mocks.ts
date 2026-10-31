@@ -69,6 +69,7 @@ export function resetEchoes(): void {
   echo.chunkGate = null
   echo.stored = null
   echo.rows = {}
+  setListPage(EMPTY_PAGE)
 }
 
 export function resetCaptures(): void {
@@ -90,9 +91,11 @@ export function resetCaptures(): void {
 }
 
 // Listing pager (the folder-share suite drives this).
-type Child = { id: string; is_folder: boolean }
+type Child = { id: string; is_folder: boolean; name_encrypted?: string; is_trashed?: boolean; created_at?: string }
+const EMPTY_PAGE = () => ({ files: [] as Child[], next_cursor: null })
+/** Reset to an empty listing before every test (resetEchoes), like the echo. */
 let pageImpl: (opts: { parentId?: string; cursor?: string }) => { files: Child[]; next_cursor: string | null } =
-  () => ({ files: [], next_cursor: null })
+  EMPTY_PAGE
 export function setListPage(fn: typeof pageImpl): void { pageImpl = fn }
 
 const stubStream = (masterKey: Uint8Array) => ({
@@ -158,6 +161,16 @@ export async function installMocks(): Promise<void> {
     },
     // A replace (`replaceOf`) reads the listed row's pin first; every row here
     // records pin 0 (core's write format).
+    // A name authenticates only under the key whose first byte its nonce
+    // carries (the stub encryptFilename/serializeEncryptedBlob above).
+    readNameMetadata: async (fileKey: Uint8Array, nameEncrypted: string) => {
+      const blob = JSON.parse(nameEncrypted) as { nonce: number[]; ciphertext: number[] }
+      if (blob.nonce[0] !== fileKey[0]) throw new Error('metadata authentication failed')
+      const text = new TextDecoder().decode(Uint8Array.from(blob.ciphertext))
+      let name = text
+      try { name = (JSON.parse(text) as { name: string }).name } catch { /* a bare name */ }
+      return { name, mimeType: null, pin: 0 }
+    },
     // A name containing "unreadable" does not authenticate under the key.
     readFileMetadata: async (_fileKey: Uint8Array, nameEncrypted: string) => {
       cap.metadataReads.push(nameEncrypted)

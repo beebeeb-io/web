@@ -28,12 +28,15 @@
  * R3-3 a transient folder-create failure is not cached for the run: the next
  *      attempt creates it under the SAME minted id (createOwnerFolder's own
  *      same-id retry is in owner-folder-create.test.ts).
+ * R3-4 re-running an import reuses an existing folder of the same name under
+ *      the same parent (its name authenticated under this user's key) instead
+ *      of creating a second one; it mints only when none exists.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
-import { installMocks, cap, echo, resetCaptures } from './helpers/upload-share-mocks'
+import { installMocks, cap, echo, resetCaptures, setListPage } from './helpers/upload-share-mocks'
 
 await installMocks()
 await mockModuleScoped('../src/lib/owner-adoption', import.meta.dir, {
@@ -617,5 +620,77 @@ describe('R3-3: a transient folder-create failure is retried under the same id, 
     expect(cap.initCalls.map((c) => (c as { parent_id: string }).parent_id)).toEqual([first])
     // Not a stopped subtree: nothing was reported as such.
     expect(stopped).toEqual([])
+  })
+})
+
+// ── R3-4: a re-run reuses the folders it (or anyone) already made ───────────
+
+describe('R3-4: an import reuses an existing same-named folder under the same parent', () => {
+  /** A folder row whose name is sealed the way the stubs seal it: under its own id's key (0xd0 here). */
+  const folderRow = (id: string, name: string, over: Record<string, unknown> = {}) => ({
+    id, is_folder: true, is_trashed: false, created_at: '2026-10-01T00:00:00Z',
+    name_encrypted: JSON.stringify({ nonce: [0xd0], ciphertext: Array.from(new TextEncoder().encode(name)) }),
+    ...over,
+  })
+  async function importOne(folders: { ensure(path: string): Promise<string | undefined> }, parentPath: string, name: string) {
+    const { importFileInto } = await import('../src/lib/import-folders')
+    return importFileInto({
+      folders, parentPath, name, masterKey: MK,
+      download: async () => new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/jpeg' }),
+      signal: new AbortController().signal, onStatus: () => {}, onBytes: () => {},
+    })
+  }
+
+  test('an existing "Photos" at the root is reused: no second folder, its subtree and files land in it', async () => {
+    const { createImportFolderTree } = await import('../src/lib/import-folders')
+    const listed: Array<string | undefined> = []
+    setListPage(({ parentId }) => {
+      listed.push(parentId)
+      return { files: parentId === undefined ? [folderRow('existing-photos', 'Photos')] : [], next_cursor: null }
+    })
+    const folders = createImportFolderTree(MK)
+    expect(await folders.ensure('/Photos')).toBe('existing-photos')
+    await importOne(folders, '/Photos/2024', 'a.jpg')
+
+    // Only the missing child is created, under the existing parent.
+    expect(cap.createdFolders).toHaveLength(1)
+    expect(cap.createdFolders[0].parentId).toBe('existing-photos')
+    expect(cap.createdFolders[0].folderId).toMatch(V4)
+    expect(cap.initCalls.map((c) => (c as { parent_id: string }).parent_id)).toEqual([cap.createdFolders[0].folderId])
+    // One listing per parent per run.
+    expect(listed).toEqual([undefined, 'existing-photos'])
+  })
+
+  test('only a live folder whose name authenticates and matches exactly counts; otherwise a new id is minted', async () => {
+    const { createImportFolderTree } = await import('../src/lib/import-folders')
+    setListPage(() => ({
+      files: [
+        folderRow('a-file-named-photos', 'Photos', { is_folder: false }),
+        folderRow('trashed-photos', 'Photos', { is_trashed: true }),
+        folderRow('other-case', 'photos'),
+        // Sealed under another key: not this user's folder, whatever its name says.
+        folderRow('foreign-photos', 'Photos', { name_encrypted: JSON.stringify({ nonce: [7], ciphertext: Array.from(new TextEncoder().encode('Photos')) }) }),
+        // A plaintext legacy name is not authenticated either.
+        folderRow('plain-photos', 'Photos', { name_encrypted: 'Photos' }),
+      ],
+      next_cursor: null,
+    }))
+    const folders = createImportFolderTree(MK)
+    const id = await folders.ensure('/Photos')
+    expect(cap.createdFolders).toHaveLength(1)
+    expect(id).toBe(cap.createdFolders[0].folderId)
+    expect(id).toMatch(V4)
+  })
+
+  test('two siblings under one parent: the parent is listed once, and the second reuses nothing it should not', async () => {
+    const { createImportFolderTree } = await import('../src/lib/import-folders')
+    let listings = 0
+    setListPage(() => { listings++; return { files: [], next_cursor: null } })
+    const folders = createImportFolderTree(MK)
+    const a = await folders.ensure('/A')
+    const b = await folders.ensure('/B')
+    expect(listings).toBe(1)
+    expect(a).not.toBe(b)
+    expect(cap.createdFolders.map((f) => f.folderId)).toEqual([a, b])
   })
 })
