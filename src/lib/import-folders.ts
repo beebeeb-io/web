@@ -14,12 +14,11 @@
  * under a parent this run did not create. There is no fallback to a guessed
  * parent id.
  *
- * Re-running an import does not create a second folder of the same name
- * (SF-0001 round 3): before minting, the parent's existing child folders are
- * read once per run, and a live folder whose name AUTHENTICATES under this
- * user's key for its id and equals the provider name exactly is reused (the
- * oldest, if there are several). A plaintext legacy name, a name sealed under
- * another key, a trashed folder or a file of that name is never reused.
+ * An import never reuses an existing folder, not even one of the same name
+ * (SF-0001 round 4, reverting round 3's reuse): a same-named folder may be
+ * shared through invites or a public link, and imported files would land
+ * where its recipients can see them. Every import folder is a new, private
+ * one. (A re-import therefore makes a second same-named folder; accepted.)
  *
  * A TRANSIENT failure (no connection, 5xx, 429) is not kept for the run
  * (SF-0001 round 3): that file fails with it, and the next file under the
@@ -28,8 +27,7 @@
  * dropped connection under that id.
  */
 import { createOwnerFolder } from './owner-upload-key'
-import { deriveFileKey, encryptFilename, readNameMetadata, serializeEncryptedBlob, zeroize } from './crypto'
-import { listAllFiles } from './api'
+import { deriveFileKey, encryptFilename, serializeEncryptedBlob, zeroize } from './crypto'
 import { encryptedUpload } from './encrypted-upload'
 import { errorRetryable } from './user-friendly-error'
 
@@ -64,43 +62,6 @@ export function createImportFolderTree(
   const byPath = new Map<string, Promise<string>>()
   // Each folder's id, minted ONCE per run, so a retry proposes the same id.
   const mintedFor = new Map<string, string>()
-  // Per parent ('' = the root): this run's view of its child folders, by
-  // authenticated name. Read once; folders this run creates are added to it.
-  const childFolders = new Map<string, Promise<Map<string, string>>>()
-
-  function childrenOf(parentId: string | undefined): Promise<Map<string, string>> {
-    const parentKey = parentId ?? ''
-    let pending = childFolders.get(parentKey)
-    if (!pending) {
-      const reading = readChildFolders(parentId)
-      pending = reading
-      childFolders.set(parentKey, reading)
-      // A failed listing is read again next time.
-      reading.catch(() => {
-        if (childFolders.get(parentKey) === reading) childFolders.delete(parentKey)
-      })
-    }
-    return pending
-  }
-
-  async function readChildFolders(parentId: string | undefined): Promise<Map<string, string>> {
-    const byName = new Map<string, string>()
-    const folders = (await listAllFiles(parentId))
-      .filter((row) => row.is_folder && !row.is_trashed && row.name_encrypted.startsWith('{'))
-      .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
-    for (const row of folders) {
-      const nameKey = await deriveFileKey(masterKey, row.id)
-      try {
-        const { name } = await readNameMetadata(nameKey, row.name_encrypted)
-        if (!byName.has(name)) byName.set(name, row.id)
-      } catch {
-        // Not sealed under this user's key for its id: never reused.
-      } finally {
-        zeroize(nameKey)
-      }
-    }
-    return byName
-  }
 
   async function create(key: string, parts: string[]): Promise<string> {
     // A parent that failed rejects here with its own error; it was reported
@@ -108,11 +69,6 @@ export function createImportFolderTree(
     const parentId = parts.length > 1 ? await ensure(parts.slice(0, -1).join('/')) : undefined
     const name = parts[parts.length - 1]
     try {
-      // A folder of this name already under this parent: reuse it.
-      const siblings = await childrenOf(parentId)
-      const existing = siblings.get(name)
-      if (existing !== undefined) return existing
-
       let folderId = mintedFor.get(key)
       if (folderId === undefined) {
         folderId = mintId()
@@ -130,20 +86,13 @@ export function createImportFolderTree(
           nameKey,
           masterKey,
         })
-        siblings.set(name, folder.id)
         return folder.id
       } finally {
         zeroize(nameKey)
       }
     } catch (error) {
-      if (errorRetryable(error)) {
-        // Transient: not a stopped folder (ensure() lets the next file retry).
-        // Read the parent again then: the lost attempt may have landed, and
-        // the retry should find it rather than collide with it.
-        childFolders.delete(parentId ?? '')
-      } else {
-        options.onFolderFailed?.(key, error)
-      }
+      // Transient: not a stopped folder (ensure() lets the next file retry).
+      if (!errorRetryable(error)) options.onFolderFailed?.(key, error)
       throw error
     }
   }
