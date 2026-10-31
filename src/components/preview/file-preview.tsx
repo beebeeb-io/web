@@ -778,7 +778,10 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         if (attempt > 1) {
           // Each attempt starts from a clean transfer state (item 10): a retry
-          // must not show the previous attempt's bytes/parts.
+          // must not show the previous attempt's bytes/parts. C7: the throttle
+          // starts fresh too, so the new attempt's first event is not held
+          // behind the previous attempt's 150 ms window.
+          throttle.reset()
           if (!cancelled) setTransfer(null)
         }
         try {

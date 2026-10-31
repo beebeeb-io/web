@@ -17,6 +17,11 @@ export interface TransferThrottle {
   flush(): void
   /** Drop a deferred event and its timer (effect cleanup). */
   cancel(): void
+  /**
+   * Forget everything (C7): the next event is treated as the first of a new
+   * transfer and emits at once. Call it when a retry attempt starts.
+   */
+  reset(): void
 }
 
 export function createTransferThrottle(
@@ -68,6 +73,12 @@ export function createTransferThrottle(
     cancel() {
       clear()
       pending = null
+    },
+    reset() {
+      clear()
+      pending = null
+      lastEmit = Number.NEGATIVE_INFINITY
+      lastPhase = null
     },
   }
 }

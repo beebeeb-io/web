@@ -345,3 +345,30 @@ describe('LD-0001 r3 C6: the load effect does not restart when the name resolves
     }
   })
 })
+
+describe('LD-0001 r3 C7: the progress throttle starts fresh per attempt', () => {
+  const event = (over: Partial<TransferProgress>): TransferProgress => ({
+    phase: 'downloading', receivedBytes: 0, totalBytes: 100, decryptedChunks: 0, totalChunks: 1, ...over,
+  })
+
+  test('reset_lets_the_next_attempt_emit_at_once', () => {
+    const updates: TransferProgress[] = []
+    let clock = 0
+    const cancelled: number[] = []
+    let nextTimer = 1
+    const t = createTransferThrottle(
+      (p) => updates.push(p),
+      () => clock,
+      () => nextTimer++ as never,
+      (id) => { cancelled.push(id as unknown as number) },
+    )
+    t.push(event({ receivedBytes: 10 }))
+    clock = 20
+    t.push(event({ receivedBytes: 20 })) // deferred behind the 150 ms window
+    t.reset()
+    expect(cancelled).toEqual([1]) // the deferred timer is dropped
+    clock = 40
+    t.push(event({ receivedBytes: 1 })) // the next attempt's first event
+    expect(updates.map((u) => u.receivedBytes)).toEqual([10, 1])
+  })
+})
