@@ -179,6 +179,29 @@ export function streamErrorCopy(kind: ErrorKind, index: number): string {
   return `The download stopped at part ${index + 1}. Check your connection and try again.`
 }
 
+/**
+ * B6: what a failed streaming SETUP shows. Only an authentication failure the
+ * PR-A session itself reports (`StreamSessionError` kind 'auth': a chunk that
+ * did not open, or a count or size that disagrees with the metadata) may say
+ * a part "couldn't be verified". A key or metadata fetch failure, a network
+ * error, or anything else is a network error with "Try again" — never a
+ * claim about the file.
+ */
+export function classifySetupFailure(err: unknown): {
+  kind: 'auth' | 'changed' | 'network'
+  index: number
+} {
+  const candidate = err as { name?: unknown; kind?: unknown; index?: unknown } | null
+  if (candidate && typeof candidate === 'object' && candidate.name === 'StreamSessionError') {
+    const index = typeof candidate.index === 'number' ? candidate.index : 0
+    if (candidate.kind === 'auth' || candidate.kind === 'changed') {
+      return { kind: candidate.kind, index }
+    }
+    return { kind: 'network', index }
+  }
+  return { kind: 'network', index: 0 }
+}
+
 /** Row 9: the pinned version is gone. Never shown as an authentication error. */
 export const CHANGED_COPY =
   'This file changed while it was playing. Reopen it to play the new version.'

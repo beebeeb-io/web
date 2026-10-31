@@ -69,8 +69,8 @@ export interface PathFacts {
   fallbackUsed: boolean
   /** The streaming setup failed, or the element errored before metadata. */
   streamRejected: boolean
-  /** Row 8/9: a terminal failure from the session. */
-  terminalError: 'auth' | 'changed' | null
+  /** Row 8/9: a terminal failure from the session; 'network' = a setup that could not start (B6). */
+  terminalError: 'auth' | 'changed' | 'network' | null
   /** Row 7: the element errored after `loadedmetadata`. */
   elementErroredAfterMetadata: boolean
 }
@@ -94,7 +94,7 @@ function streamingEligible(facts: PathFacts): boolean {
  * never stream; a whole-file media load over the cap is the download card.
  */
 export function choosePreviewPath(facts: PathFacts): PreviewPath {
-  if (facts.terminalError === 'auth') return 'error'
+  if (facts.terminalError === 'auth' || facts.terminalError === 'network') return 'error'
   if (facts.terminalError === 'changed') return 'changed'
   if (!facts.media) return 'whole-file'
   if (facts.sharedLink) return 'whole-file'

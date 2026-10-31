@@ -27,6 +27,7 @@ import {
 } from './path'
 import {
   classifyElementError,
+  classifySetupFailure,
   createMediaState,
   createNoPullWatchdog,
   isFullyVerified,
@@ -114,7 +115,7 @@ function streamIdFor(fileId: string): string {
   return `s-${fileId.replace(/[^A-Za-z0-9._:-]/g, '_')}-${hex}`
 }
 
-type StreamFailure = { kind: 'auth' | 'changed'; index: number }
+type StreamFailure = { kind: 'auth' | 'changed' | 'network'; index: number }
 
 /** What belongs to ONE file of the preview (B5): reset on Next/Prev. */
 interface PerFileState {
@@ -341,6 +342,9 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
     const key = fileKey
     let cancelled = false
     let session: StreamSession | null = null
+    // A7: an abandoned open (file switch, unmount, retry) is aborted, so the
+    // worker reader and its key copy never outlive this effect.
+    const opening = new AbortController()
     // A new session starts with no media state of its own (a retry too).
     setMediaState(null)
 
@@ -361,6 +365,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
             download_version: row,
           },
           source,
+          signal: opening.signal,
         })
         if (cancelled) {
           await opened.close()
@@ -404,14 +409,20 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
         }
         streamIdRef.current = id
         setStreamSlot({ key, id })
-      } catch {
-        if (!cancelled) updatePerFile(() => ({ failed: { kind: 'auth', index: 0 } }))
+      } catch (err) {
+        if (cancelled || opening.signal.aborted) return
+        // B6: only the session's own authentication failure claims anything
+        // about the file; a key, metadata or network failure is a network
+        // error with "Try again".
+        const failure = classifySetupFailure(err)
+        updatePerFile(() => ({ failed: failure }))
       }
     }
     void run()
 
     return () => {
       cancelled = true
+      opening.abort()
       bridgeRef.current?.close()
       bridgeRef.current = null
       sessionRef.current = null
@@ -536,7 +547,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
   const errorCopy = failed
     ? failed.kind === 'changed'
       ? CHANGED_COPY
-      : streamErrorCopy('auth', failed.index)
+      : streamErrorCopy(failed.kind, failed.index)
     : mediaState && mediaState.transport === 'error'
       ? statusCopy(mediaState)
       : null

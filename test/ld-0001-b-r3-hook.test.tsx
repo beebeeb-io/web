@@ -318,3 +318,73 @@ describe('LD-0001 r3 B5: per-file state resets on Next/Prev', () => {
     expect(m.h.path).toBe('streaming')
   })
 })
+
+describe('LD-0001 r3 B6: only a chunk authentication failure claims verification', () => {
+  const cases: Array<{ name: string; overrides: Partial<UseMediaStreamArgs>; copy: string }> = [
+    {
+      name: 'key fetch failure',
+      overrides: { resolveFileKey: async () => { throw new Error('key fetch failed') } },
+      copy: NETWORK(1),
+    },
+    {
+      name: 'metadata fetch failure',
+      overrides: { openMetadata: (async () => { throw new TypeError('Failed to fetch') }) as unknown as OpenMetadata },
+      copy: NETWORK(1),
+    },
+    {
+      name: 'network error during setup',
+      overrides: { openSession: async () => { throw new StreamSessionError('network', 'chunk 0 failed after 3 attempts', 0) } },
+      copy: NETWORK(1),
+    },
+    {
+      name: 'a real chunk authentication failure',
+      overrides: { openSession: async () => { throw new StreamSessionError('auth', 'chunk 3 could not be authenticated', 3) } },
+      copy: AUTH(4),
+    },
+  ]
+  for (const c of cases) {
+    test(`setup_failure_copy: ${c.name}`, async () => {
+      const m = await mount(argsFor(fileRow('file-a'), c.overrides))
+      await waitFor(() => m.h.errorCopy !== null, 'error copy')
+      expect(m.h.errorCopy).toBe(c.copy)
+      expect(m.h.path).toBe('error')
+    })
+  }
+
+  test('a_network_setup_failure_retries', async () => {
+    let opens = 0
+    const m = await mount(
+      argsFor(fileRow('file-a'), {
+        openSession: async () => {
+          opens++
+          if (opens === 1) throw new StreamSessionError('network', 'chunk 0 failed after 3 attempts', 0)
+          return new Promise<StreamSession>(() => {})
+        },
+      }),
+    )
+    await waitFor(() => m.h.errorCopy === NETWORK(1), 'network copy')
+    m.h.retry()
+    await waitFor(() => opens === 2, 'a second open')
+    expect(m.h.errorCopy).toBeNull()
+    expect(m.h.path).toBe('streaming')
+  })
+
+  test('next_while_opening_aborts_the_open_and_shows_no_error', async () => {
+    const signals: AbortSignal[] = []
+    const m = await mount(
+      argsFor(fileRow('file-a'), {
+        openSession: (opts) => {
+          if (opts.signal) signals.push(opts.signal)
+          return new Promise<StreamSession>((_resolve, reject) => {
+            opts.signal?.addEventListener('abort', () => reject(opts.signal!.reason))
+          })
+        },
+      }),
+    )
+    await waitFor(() => signals.length === 1, 'the open')
+    await m.rerender(argsFor(fileRow('file-b')))
+    expect(signals[0].aborted).toBe(true)
+    expect(m.h.errorCopy).toBeNull()
+    expect(m.h.path).toBe('streaming')
+  })
+})

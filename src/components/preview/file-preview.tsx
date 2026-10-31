@@ -1167,7 +1167,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       }
     >
       {/* Loading state */}
-      {!blob && !error && !streamRenderer && stream.path !== 'download-card' && stream.path !== 'unsupported' && (
+      {!blob && !error && !streamRenderer && !stream.errorCopy && stream.path !== 'download-card' && stream.path !== 'unsupported' && (
         <div className="flex flex-col items-center gap-3">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-amber" />
           <span className="text-sm text-ink-3">Decrypting...</span>
