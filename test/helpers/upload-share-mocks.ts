@@ -12,6 +12,7 @@
  *
  * Call `await installMocks()` at the top level of the test file.
  */
+import { beforeEach } from 'bun:test'
 import { mockModuleScoped } from './scoped-module-mock'
 
 // ── Shared state ─────────────────────────────────────────────────────────────
@@ -83,6 +84,20 @@ const stubStream = (masterKey: Uint8Array) => ({
 
 export async function installMocks(): Promise<void> {
   const here = import.meta.dir
+
+  // `cap` and `echo` live in THIS module, which bun caches once for the whole
+  // process: every file that installs these mocks shares them. A substituted
+  // echo one file left set (`echo.complete`, set by the v2-contract suite) made
+  // the NEXT file's honest upload abort, so `bun run test:order` went red in
+  // reverse order only (CI run 41034649908, 2133-folder-key-id). Every file
+  // therefore starts from a clean state, and every test from the honest echo
+  // (also under `--randomize`, which shuffles the tests inside a file).
+  // Registered before the first await, so the hook belongs to the calling file.
+  resetCaptures()
+  resetEchoes()
+  beforeEach(() => {
+    resetEchoes()
+  })
 
   // ./crypto — the streaming primitive + a capturing encryptFilename for the
   // upload contract. Every other export is the real one.
