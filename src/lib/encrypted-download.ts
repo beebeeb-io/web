@@ -213,6 +213,15 @@ export type DownloadProgress = (bytesWritten: number, totalBytes: number | null)
 export interface EncryptedDownloadOptions {
   onProgress?: DownloadProgress
   signal?: AbortSignal
+  /** Download this past version instead of the live file (round 3, C1). */
+  versionId?: string
+}
+
+/** The whole-body download URL of the live file, or of one past version. */
+export function downloadUrlFor(fileId: string, versionId: string | null): string {
+  return versionId
+    ? `${getApiUrl()}/api/v1/files/${fileId}/versions/${versionId}/download`
+    : `${getApiUrl()}/api/v1/files/${fileId}/download`
 }
 
 /** True when we believe the streaming path is safe to use. */
@@ -623,7 +632,7 @@ export async function encryptedDownload(
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, {
+  const res = await fetch(downloadUrlFor(fileId, opts?.versionId ?? null), {
     headers,
     signal: opts?.signal,
     credentials: 'include',
@@ -755,6 +764,8 @@ export async function streamOverCapDownload(
     args.mimeType,
     args.chunkCount,
     args.sizeBytes,
+    // C1: a past version streams from its own endpoint, never buffered.
+    { versionId: args.versionId ?? undefined },
   )
 }
 

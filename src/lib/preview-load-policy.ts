@@ -126,15 +126,25 @@ export function chooseDownloadAction(facts: {
   file: { chunk_count: number; size_bytes: number }
   version: DownloadVersionFacts | null
 }): DownloadAction {
-  if (downloadRoute(facts.hasOriginalBlob, facts.overCap) === 'blob' && facts.hasOriginalBlob) {
-    return { kind: 'save-blob' }
-  }
-  if (facts.overCap && facts.selectedVersionId === null) {
+  const route = downloadRoute(facts.hasOriginalBlob, facts.overCap)
+  if (route === 'blob' && facts.hasOriginalBlob) return { kind: 'save-blob' }
+  if (route === 'stream') {
+    // C1: the over-cap card NEVER buffers the whole file, for the live file
+    // AND for a past version: both stream to disk.
+    if (facts.selectedVersionId === null) {
+      return {
+        kind: 'stream-to-disk',
+        versionId: null,
+        chunkCount: facts.file.chunk_count,
+        sizeBytes: facts.file.size_bytes,
+      }
+    }
+    if (!facts.version) return { kind: 'version-not-found' }
     return {
       kind: 'stream-to-disk',
-      versionId: null,
-      chunkCount: facts.file.chunk_count,
-      sizeBytes: facts.file.size_bytes,
+      versionId: facts.version.id,
+      chunkCount: facts.version.chunk_count,
+      sizeBytes: facts.version.size_bytes,
     }
   }
   if (facts.selectedVersionId === null) return { kind: 'decrypt-live' }
