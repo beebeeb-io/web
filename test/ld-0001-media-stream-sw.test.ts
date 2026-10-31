@@ -265,8 +265,9 @@ describe('T22 the stream route never answers a navigation (A21, A23)', () => {
     expect(ok.status).toBe(206)
   })
 
-  test('a non-empty clientId is required to match the registrant', () => {
-    expect(logic.shouldHandleStreamRequest(request(), '', entry())).toBe(true)
+  test('the clientId is required and must match the registrant', () => {
+    // Round 3 (B3): an empty clientId is refused, never a skipped check.
+    expect(logic.shouldHandleStreamRequest(request(), '', entry())).toBe(false)
     expect(logic.shouldHandleStreamRequest(request(), 'client-1', entry())).toBe(true)
     expect(logic.shouldHandleStreamRequest(request(), 'client-2', entry())).toBe(false)
     expect(

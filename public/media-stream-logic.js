@@ -39,16 +39,16 @@
 
   /**
    * §2.1 request filter. A navigation is NEVER handled; the destination must
-   * be video or audio; a non-empty clientId must equal the registrant's id.
-   * `entry` is the registered (or claimed) stream, or null.
+   * be video or audio; the requesting client must BE the registrant. An empty
+   * client id is refused (B3): it never skips the owner check. `entry` is the
+   * registered (or claimed) stream, or null.
    */
   function shouldHandleStreamRequest(request, clientId, entry) {
     if (!request) return false
     if (request.mode === 'navigate') return false
     if (request.destination !== 'video' && request.destination !== 'audio') return false
-    if (clientId) {
-      if (!entry || entry.clientId !== clientId) return false
-    }
+    if (!clientId) return false
+    if (!entry || !entry.clientId || entry.clientId !== clientId) return false
     return true
   }
 
@@ -320,6 +320,9 @@
 
     function respond(id, request, clientId) {
       return (async function () {
+        // B3: no client id, no stream: refused before any registry lookup or
+        // claim broadcast.
+        if (!clientId) return notFound()
         var entry = registry.get(id)
         if (!entry) {
           if (typeof deps.claim !== 'function') return notFound()
@@ -361,7 +364,12 @@
       })()
     }
 
-    return function route(request, clientId) {
+    /**
+     * `clientId` is FetchEvent.clientId. `resultingClientId` is consulted only
+     * when clientId is empty, and the request is then served only if THAT id
+     * is the registrant (it is empty for every subresource request per spec).
+     */
+    return function route(request, clientId, resultingClientId) {
       var pathname
       try {
         pathname = new URL(request.url).pathname
@@ -374,7 +382,7 @@
       // first (§2.1, A23). The request falls through to the existing network
       // navigation handler.
       if (request.mode === 'navigate') return null
-      return { response: respond(id, request, clientId || '') }
+      return { response: respond(id, request, clientId || resultingClientId || '') }
     }
   }
 
@@ -601,6 +609,8 @@
       if (!data || typeof data !== 'object') return false
       if (data.type === 'register-stream') {
         if (!data.id || !data.port) return true
+        // B3: never an entry with clientId '' (it could never be owner-checked).
+        if (!sourceId) return true
         // B2: a stream belongs to the tab that registered it. Another tab
         // (same origin, same file) can never replace it.
         var existing = registry.get(data.id)
@@ -626,7 +636,7 @@
         var waiter = claims.get(data.hash)
         if (!waiter) return true
         claims.delete(data.hash)
-        if (!data.port) {
+        if (!data.port || !sourceId) {
           waiter(null)
           return true
         }

@@ -194,3 +194,32 @@ describe('LD-0001 r3 B2: a stream belongs to the tab that registered it', () => 
     expect(relay.registry.get('sid').port).toBe(fresh)
   })
 })
+
+describe('LD-0001 r3 B3: an empty clientId never skips the owner check', () => {
+  test('an_empty_client_id_request_gets_404', async () => {
+    const { relay, posted } = relayWith()
+    registerFrom(relay, 'sid', 'tab-a')
+    const route = routeOver(relay)
+    expect((await respond(route(request('sid', 'bytes=0-9'), ''))).status).toBe(404)
+    // A registry miss with no client id never broadcasts a claim either.
+    expect((await respond(route(request('missing'), ''))).status).toBe(404)
+    await settle(2)
+    expect(posted.filter((p) => p.message.type === 'stream-claim')).toEqual([])
+  })
+
+  test('a_request_whose_resulting_client_id_is_the_owner_is_served', async () => {
+    const { relay } = relayWith()
+    registerFrom(relay, 'sid', 'tab-a')
+    const route = routeOver(relay)
+    expect((await respond(route(request('sid', 'bytes=0-9'), '', 'tab-a'))).status).toBe(206)
+    expect((await respond(route(request('sid', 'bytes=0-9'), '', 'tab-b'))).status).toBe(404)
+    expect((await respond(route(request('sid', 'bytes=0-9'), 'tab-a'))).status).toBe(206)
+  })
+
+  test('an_entry_is_never_registered_with_an_empty_client_id', () => {
+    const { relay } = relayWith()
+    registerFrom(relay, 'sid', '')
+    expect(relay.registry.has('sid')).toBe(false)
+    expect(logic.shouldHandleStreamRequest(request(), '', { clientId: '' })).toBe(false)
+  })
+})

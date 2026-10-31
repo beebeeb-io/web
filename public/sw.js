@@ -203,7 +203,7 @@ self.addEventListener('fetch', e => {
   // route() is synchronous: for a navigation (or a non-stream path) it returns
   // null, so no respondWith happens and no registry lookup either — the
   // request falls through to the navigation handler at the bottom.
-  const stream = streamRoute(e.request, e.clientId)
+  const stream = streamRoute(e.request, e.clientId, e.resultingClientId)
   if (stream) {
     e.respondWith(
       stream.response.catch(() =>
