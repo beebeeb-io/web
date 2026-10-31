@@ -161,7 +161,8 @@ type ContentDecryptor = Awaited<ReturnType<typeof startDecryptStream>>
  * `pushFrame` transfers its frame to the crypto worker (Comlink.transfer), so
  * the caller's copy is detached afterwards: a copy of chunk 0 is kept for the
  * repair whenever a master key is held (round 2: without it the repair read an
- * empty frame and never opened anything in a browser).
+ * empty frame and never opened anything in a browser). The repaired key is
+ * wiped as soon as it has seeded the new decryptor (round 2, W7).
  *
  * Returns the decryptor to keep reading with (a new one after a repair; the
  * old one is disposed) and chunk 0's plaintext.
@@ -180,7 +181,12 @@ export async function pushHeadWithRepair(
     const repaired = head ? await contentKeyFromFrame(masterKey, fileKey, content, head) : null
     if (!head || !repaired) throw err
     await decryptor.dispose()
-    const next = await startDecryptStream(repaired, content.fileId, content.pin)
+    let next: ContentDecryptor
+    try {
+      next = await startDecryptStream(repaired, content.fileId, content.pin)
+    } finally {
+      repaired.fill(0)
+    }
     try {
       return { decryptor: next, plaintext: await next.pushFrame(head) }
     } catch (retryErr) {

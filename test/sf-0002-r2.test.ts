@@ -685,3 +685,54 @@ describe('W6: the content fallback follows the owner key the caller resolved', (
     expect(isOwnerRepairReadOnly(V1.file_id)).toBe(false)
   })
 })
+
+// ── W7: the repaired content key is wiped once it seeds the decryptor ───────
+
+describe('W7: repaired content keys are zeroized', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  const allZero = (k: Uint8Array) => k.length === 32 && k.every((b) => b === 0)
+
+  test('buffered read (decryptEncryptedBytes)', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const derived = loadWasm().derive_file_key(master, enc.encode(V1.file_id))
+    mirror.contentRepairKeys.length = 0
+    const plaintext = await decryptEncryptedBytes(
+      derived,
+      { fileId: V1.file_id, pin: PIN_UNRECORDED },
+      hexToBytes(V1.content_frame_hex),
+      1,
+      UPPER_PLAINTEXT_LEN,
+      undefined,
+      master,
+    )
+    expect(hex(plaintext)).toBe(V1.content_plaintext_hex)
+    expect(mirror.contentRepairKeys.length).toBeGreaterThan(0)
+    expect(mirror.contentRepairKeys.every(allZero)).toBe(true)
+  })
+
+  test('streamed read (pipeDecryptedChunks)', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const derived = loadWasm().derive_file_key(master, enc.encode(V1.file_id))
+    const frame = hexToBytes(V1.content_frame_hex)
+    mirror.contentRepairKeys.length = 0
+    const out: Uint8Array[] = []
+    await pipeDecryptedChunks(
+      streamOf(frame),
+      derived,
+      { fileId: V1.file_id, pin: PIN_UNRECORDED },
+      1,
+      UPPER_PLAINTEXT_LEN,
+      frame.length - 28,
+      undefined,
+      async (chunk) => {
+        out.push(new Uint8Array(chunk))
+      },
+      undefined,
+      master,
+    )
+    expect(hex(out[0])).toBe(V1.content_plaintext_hex)
+    expect(mirror.contentRepairKeys.length).toBeGreaterThan(0)
+    expect(mirror.contentRepairKeys.every(allZero)).toBe(true)
+  })
+})
