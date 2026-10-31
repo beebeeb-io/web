@@ -468,3 +468,76 @@ describe('LD-0001 r3 A7: an open can be abandoned', () => {
   })
 })
 
+// @@ A8
+/** Wrap a factory so a test can hold chunk opens at a gate (per index and call number). */
+function gatedFactory(
+  ops: ContentOps,
+  gate: (index: number, call: number) => Promise<void> | null,
+): { factory: StreamReaderFactory; calls: Map<number, number> } {
+  const base = inProcessReaderFactory(ops)
+  const calls = new Map<number, number>()
+  const factory: StreamReaderFactory = async (args) => {
+    const out = await base(args)
+    const inner = out.reader
+    return {
+      ...out,
+      reader: {
+        openAt: async (index, isLast, frame) => {
+          const call = (calls.get(index) ?? 0) + 1
+          calls.set(index, call)
+          const wait = gate(index, call)
+          if (wait) await wait
+          return inner.openAt(index, isLast, frame)
+        },
+        close: () => inner.close(),
+      },
+    }
+  }
+  return { factory, calls }
+}
+
+describe('LD-0001 r3 A8: racing opens of one index', () => {
+  test('two_opens_racing_for_one_index_return_identical_non_zero_bytes', async () => {
+    const S = 32
+    const N = 48
+    const fx = encryptFixture({ pin: 2, chunkSize: S, plaintext: patternBytes(S * N) })
+    const source = new FakeChunkSource(fx.frames)
+    let releaseFirst!: () => void
+    let releaseSecond!: () => void
+    const first = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const second = new Promise<void>((resolve) => {
+      releaseSecond = resolve
+    })
+    const { factory, calls } = gatedFactory(createContentOps(wasm), (index, call) =>
+      index === 7 ? (call === 1 ? first : second) : null,
+    )
+    const session = await open(fx, { source, readerFactory: factory })
+    const errors = errorsOf(session)
+
+    // The read-ahead for 6..13 starts; chunk 7's open waits at the first gate.
+    await session.read('a', 5 * S, 4)
+    for (let i = 0; i < 20 && (calls.get(7) ?? 0) < 1; i++) await settle(1)
+    expect(calls.get(7)).toBe(1)
+
+    // A far seek supersedes chunk 7's read-ahead while its open is still running;
+    // the seek back starts a second open of chunk 7.
+    const far = session.read('b', 40 * S, 4)
+    const back = session.read('c', 7 * S, 4)
+    for (let i = 0; i < 40 && (calls.get(7) ?? 0) < 2; i++) await settle(1)
+    expect(calls.get(7)).toBe(2)
+
+    // The superseded open stores chunk 7 first; the second open finds it cached.
+    releaseFirst()
+    await settle(4)
+    releaseSecond()
+    const bytes = await back
+    expect(bytes).toEqual(fx.plaintext.slice(7 * S, 7 * S + 4))
+    expect(allZero(bytes)).toBe(false)
+    expect(await session.read('d', 7 * S, 4)).toEqual(bytes)
+    expect(await far).toEqual(fx.plaintext.slice(40 * S, 40 * S + 4))
+    expect(errors).toEqual([])
+    await session.close()
+  })
+})

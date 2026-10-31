@@ -366,17 +366,23 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     }
   }
 
-  const store = (index: number, plaintext: Uint8Array): void => {
+  /**
+   * Cache `plaintext` for `index` and return the buffer readers must use. When
+   * a racing open of the same index (a superseded read-ahead that finished
+   * after a fresh fetch started) already cached it, the duplicate is wiped and
+   * the CACHED buffer is returned — never the zeroed duplicate.
+   */
+  const store = (index: number, plaintext: Uint8Array): Uint8Array => {
     const existing = cache.get(index)
     if (existing) {
-      // Already cached (a racing prefetch): drop the duplicate.
       plaintext.fill(0)
-      return
+      return existing
     }
     cache.set(index, plaintext)
     retained += plaintext.length
     opts.observer?.onChunkCached?.(index, plaintext)
     evict()
+    return plaintext
   }
 
   // ── Fetching ───────────────────────────────────────────────────────────────
@@ -462,7 +468,11 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     }
   }
 
-  async function openAndStore(index: number, signal: AbortSignal): Promise<Uint8Array> {
+  async function openAndStore(
+    index: number,
+    signal: AbortSignal,
+    entry: PendingFetch,
+  ): Promise<Uint8Array> {
     if (closed) throw closedError()
     if (terminal) throw terminal
     if (!setupReader) throw closedError()
@@ -500,12 +510,15 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
       plaintext.fill(0)
       throw new StreamSessionError('auth', `chunk ${index} opened to the wrong size`, index)
     }
-    store(index, plaintext)
+    // Settled: drop this open's pending entry BEFORE the store can evict, so
+    // no later read joins a promise whose buffer an eviction already wiped.
+    dropPending(index, entry)
+    const cached = store(index, plaintext)
     if (!verified.has(index)) {
       verified.add(index)
       emit({ type: 'verified', index })
     }
-    return plaintext
+    return cached
   }
 
   function ensureChunk(index: number): Promise<Uint8Array> {
@@ -524,7 +537,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     const controller = new AbortController()
     controllers.add(controller)
     const entry: PendingFetch = { controller, promise: Promise.resolve(new Uint8Array(0)) }
-    entry.promise = withSlot(() => openAndStore(index, controller.signal)).finally(() => {
+    entry.promise = withSlot(() => openAndStore(index, controller.signal, entry)).finally(() => {
       controllers.delete(controller)
       dropPending(index, entry)
     })
@@ -543,7 +556,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     const entry: PendingFetch = { controller, promise: Promise.resolve(new Uint8Array(0)) }
     entry.promise = withSlot(() => {
       if (terminal || closed) throw closedError()
-      return openAndStore(index, controller.signal)
+      return openAndStore(index, controller.signal, entry)
     })
     pendingFetches.set(index, entry)
     void entry.promise
