@@ -42,6 +42,8 @@ export const cap = {
   metadataReads: [] as string[],
   /** Every row the code looked up (`getFile`). */
   rowLookups: [] as string[],
+  /** Every plaintext the stub sealer sealed (`encryptFilename`). */
+  sealedPlaintexts: [] as string[],
 }
 /**
  * L13 (contract 2275, SF-0001): by default the mocked server ECHOES the id the
@@ -88,6 +90,7 @@ export function resetCaptures(): void {
   cap.appliedPins.length = 0
   cap.metadataReads.length = 0
   cap.rowLookups.length = 0
+  cap.sealedPlaintexts.length = 0
 }
 
 // Listing pager (the folder-share suite drives this).
@@ -139,6 +142,7 @@ export async function installMocks(): Promise<void> {
     startEncryptedStreamWithChunkSize: async (masterKey: Uint8Array) => stubStream(masterKey),
     encryptFilename: async (fileKey: Uint8Array, plaintext: string) => {
       cap.encryptedMetadataKeys.push(fileKey[0])
+      cap.sealedPlaintexts.push(plaintext)
       return { nonce: new Uint8Array([fileKey[0]]), ciphertext: new TextEncoder().encode(plaintext) }
     },
     // Task 2133: the folder key id and the child-key wrap, stubbed (the WASM

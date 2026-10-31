@@ -41,6 +41,11 @@
  * R4-5 when the row check cannot answer (401 / 403 / 410, no connection, a
  *      worker error), the Drive banner says so honestly and keeps the record
  *      on the paused banner, where Dismiss removes it: no silent loop.
+ *
+ * Round 5:
+ * F2   a folder that committed while every try of one import call failed is
+ *      adopted by the next call: same minted id, same sealed name, and the
+ *      exact-folder check (owner-folder-create.test.ts) runs on any failure.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -733,5 +738,45 @@ describe('R4-5: the Drive banner says why a row check failed and keeps the recor
     expect(handler).toContain('setPausedUploads(')
     // The record is not deleted on a check that could not answer.
     expect(handler).not.toContain('removeUploadState')
+  })
+})
+
+// ── F2: the next import call adopts a folder an earlier call committed ───────
+
+describe('F2: a folder committed while every try of one call failed is adopted by the next call', () => {
+  async function importOne(folders: { ensure(path: string): Promise<string | undefined> }, parentPath: string, name: string) {
+    const { importFileInto } = await import('../src/lib/import-folders')
+    return importFileInto({
+      folders, parentPath, name, masterKey: MK,
+      download: async () => new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/jpeg' }),
+      signal: new AbortController().signal, onStatus: () => {}, onBytes: () => {},
+    })
+  }
+
+  test('call 1: the create committed but its answer was lost; call 2: 500 on the key -> adopted, and its files import', async () => {
+    const { createImportFolderTree } = await import('../src/lib/import-folders')
+    const { ApiError } = await import('../src/lib/api')
+    const folders = createImportFolderTree(MK)
+    echo.createFolder = () => {
+      if (cap.createdFolders.length === 1) throw new ApiError('Could not reach the server. Check your connection and try again.', 0)
+      throw new ApiError('Internal server error', 500)
+    }
+
+    // Call 1: the row is not readable yet (the connection is still down), so
+    // nothing is adopted and the dropped connection surfaces for that file.
+    expect(await caught(() => importOne(folders, '/Photos', 'a.jpg'))).toMatchObject({ status: 0 })
+    const first = cap.createdFolders[0]
+    // ...the INSERT had committed:
+    echo.rows[first.folderId!] = { is_folder: true, name_encrypted: first.nameEncrypted, parent_id: null }
+
+    // Call 2: same minted id, same sealed name; its 500 is the primary key,
+    // and the row is exactly the folder sent, so it is adopted.
+    await importOne(folders, '/Photos', 'b.jpg')
+    expect(cap.createdFolders).toHaveLength(2)
+    expect(cap.createdFolders[1].folderId).toBe(first.folderId)
+    expect(cap.createdFolders[1].nameEncrypted).toBe(first.nameEncrypted)
+    // The folder name was sealed once for the run, not once per call.
+    expect(cap.sealedPlaintexts.filter((p) => p === 'Photos')).toHaveLength(1)
+    expect(cap.initCalls.map((c) => (c as { parent_id: string }).parent_id)).toEqual([first.folderId])
   })
 })

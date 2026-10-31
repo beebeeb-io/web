@@ -243,6 +243,27 @@ describe('createOwnerFolder after a dropped connection: the folder may already b
     expect(published).toEqual([])
   })
 
+  // Round 5 (F2): the check runs on ANY create failure for a client-minted id,
+  // not only after a drop within this call (the import's next call meets the
+  // primary key of the folder an earlier call committed). These replace R4-3's
+  // "a lone 500 is just an error: no lookup" control, removed in 51e233f.
+  test('F2: a lone 500 (no dropped connection in this call) with exactly the folder sent: adopted', async () => {
+    conflictAfterDrops = true
+    const args = createArgs()
+    landedNewFolder = folderRow(sent)
+    const folder = await createOwnerFolder(args)
+    expect(folder.id).toBe(NEW_FOLDER)
+    expect(rowLookups).toContain(NEW_FOLDER)
+    expect(published).toHaveLength(1)
+  })
+
+  test('F2: a lone 500 and no such row: the 500 surfaces', async () => {
+    conflictAfterDrops = true
+    await expect(createOwnerFolder(createArgs())).rejects.toMatchObject({ status: 500 })
+    expect(rowLookups).toContain(NEW_FOLDER)
+    expect(published).toEqual([])
+  })
+
   // Round 5 (F1, F3): only the folder THIS client sent is adopted: exactly
   // the sealed name it sent, a live folder, under the parent it asked for.
   for (const [why, row] of [

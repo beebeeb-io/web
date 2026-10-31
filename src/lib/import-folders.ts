@@ -60,8 +60,10 @@ export function createImportFolderTree(
   // rejects with a transient error: any other rejection keeps the subtree
   // stopped for the whole run.
   const byPath = new Map<string, Promise<string>>()
-  // Each folder's id, minted ONCE per run, so a retry proposes the same id.
-  const mintedFor = new Map<string, string>()
+  // Each folder's id, minted ONCE per run, and the name sealed ONCE for it: a
+  // retry sends the very same request, so a create an earlier call committed
+  // is recognised byte for byte (createOwnerFolder's landed check).
+  const mintedFor = new Map<string, { folderId: string; nameEncrypted: string }>()
 
   async function create(key: string, parts: string[]): Promise<string> {
     // A parent that failed rejects here with its own error; it was reported
@@ -69,18 +71,20 @@ export function createImportFolderTree(
     const parentId = parts.length > 1 ? await ensure(parts.slice(0, -1).join('/')) : undefined
     const name = parts[parts.length - 1]
     try {
-      let folderId = mintedFor.get(key)
-      if (folderId === undefined) {
-        folderId = mintId()
-        mintedFor.set(key, folderId)
-      }
+      const minted = mintedFor.get(key)
+      const folderId = minted?.folderId ?? mintId()
       const nameKey = await deriveFileKey(masterKey, folderId)
       try {
-        const sealed = await encryptFilename(nameKey, name)
+        let nameEncrypted = minted?.nameEncrypted
+        if (nameEncrypted === undefined) {
+          const sealed = await encryptFilename(nameKey, name)
+          nameEncrypted = serializeEncryptedBlob(sealed.nonce, sealed.ciphertext)
+          mintedFor.set(key, { folderId, nameEncrypted })
+        }
         // Inside a shared folder its name-key wrap is published too.
         // It aborts unless the answer names `folderId` (L13 echo check).
         const folder = await createOwnerFolder({
-          nameEncrypted: serializeEncryptedBlob(sealed.nonce, sealed.ciphertext),
+          nameEncrypted,
           parentId,
           folderId,
           nameKey,

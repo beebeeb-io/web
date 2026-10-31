@@ -87,26 +87,20 @@ export async function createOwnerFolder(args: {
   // A dropped connection is retried under the SAME id (SF-0001 round 3): it
   // was minted for this folder, so no other client holds it. The changed-id
   // abort and every HTTP error are not retried.
-  let dropped = false
   let created: DriveFile
   try {
-    created = await withNetworkRetry(async () => {
-      try {
-        return await createFolder(args.nameEncrypted, args.parentId, args.folderId)
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 0) dropped = true
-        throw err
-      }
-    })
+    created = await withNetworkRetry(() => createFolder(args.nameEncrypted, args.parentId, args.folderId))
   } catch (err) {
-    // POST /files/folder is a plain INSERT: a retry whose first attempt DID
-    // commit answers 500 (the primary key), and a connection that stayed down
-    // leaves it unknown. After a dropped connection, then, the folder may be
-    // there already (SF-0001 round 4): if the row under this id is exactly the
-    // folder this client sent (`folderThatLanded`), it IS this folder, and the
-    // create goes on below, the name-key wrap included. Otherwise the error
-    // stands.
-    const maybeLanded = dropped && err instanceof ApiError && (err.status === 0 || err.status === 500)
+    // POST /files/folder is a plain INSERT: a create whose earlier attempt
+    // (in this call, or in an earlier call with the same minted id, as the
+    // import makes) DID commit answers 500 or 409 on the primary key, and a
+    // connection that stayed down leaves it unknown. On any such failure the
+    // row under this client-minted id is looked up (SF-0001 rounds 4-5): if it
+    // is exactly the folder this client sent (`folderThatLanded`: the same
+    // sealed name byte for byte, a live folder, the same parent), it IS this
+    // folder, and the create goes on below, the name-key wrap included.
+    // Otherwise the error stands.
+    const maybeLanded = err instanceof ApiError && (err.status === 0 || err.status === 409 || err.status >= 500)
     const landed = maybeLanded ? await folderThatLanded(args) : null
     if (!landed) throw err
     created = landed
