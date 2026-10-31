@@ -188,6 +188,19 @@ function isTerminal(err: unknown): err is StreamSessionError {
   return err instanceof StreamSessionError
 }
 
+function isAbortError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { name?: unknown }).name === 'AbortError'
+}
+
+/** A read joins a superseded fetch at most this often before it gives up (without failing the session). */
+const MAX_SUPERSEDED_REREADS = 3
+
+/** One in-flight chunk open: its promise and the controller that can abort it. */
+interface PendingFetch {
+  controller: AbortController
+  promise: Promise<Uint8Array>
+}
+
 /** Map a source/worker/HTTP failure to a terminal class, or `null` when it is transient. */
 function classify(err: unknown, index: number): StreamSessionError | null {
   if (isTerminal(err)) return err
@@ -242,7 +255,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
   const listeners = new Set<(event: StreamEvent) => void>()
   const cache = new Map<number, Uint8Array>()
   const refs = new Map<number, number>()
-  const pendingFetches = new Map<number, Promise<Uint8Array>>()
+  const pendingFetches = new Map<number, PendingFetch>()
   const controllers = new Set<AbortController>()
   const prefetchControllers = new Map<number, AbortController>()
   const verified = new Set<number>()
@@ -278,6 +291,11 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     wipeCache()
     emit({ type: 'error', kind: err.kind, index: err.index ?? 0 })
     if (setupReader) void setupReader.close().catch(() => {})
+  }
+
+  /** Drop `entry` from the map only if it is still the current one for `index`. */
+  const dropPending = (index: number, entry: PendingFetch): void => {
+    if (pendingFetches.get(index) === entry) pendingFetches.delete(index)
   }
 
   const acquire = (index: number): void => {
@@ -446,39 +464,45 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
       cache.set(index, cached)
       return Promise.resolve(cached)
     }
+    // A superseded read-ahead leaves the map the moment it is aborted (notePull);
+    // the aborted check is the second line of defence. A read never joins an
+    // aborted fetch: it starts a fresh one.
     const pending = pendingFetches.get(index)
-    if (pending) return pending
-    const p = withSlot(() => {
-      const controller = new AbortController()
-      controllers.add(controller)
-      return openAndStore(index, controller.signal).finally(() => {
-        controllers.delete(controller)
-      })
+    if (pending && !pending.controller.signal.aborted) return pending.promise
+    const controller = new AbortController()
+    controllers.add(controller)
+    const entry: PendingFetch = { controller, promise: Promise.resolve(new Uint8Array(0)) }
+    entry.promise = withSlot(() => openAndStore(index, controller.signal)).finally(() => {
+      controllers.delete(controller)
+      dropPending(index, entry)
     })
-    pendingFetches.set(index, p)
-    void p.catch(() => {}).finally(() => pendingFetches.delete(index))
-    return p
+    pendingFetches.set(index, entry)
+    void entry.promise.catch(() => {})
+    return entry.promise
   }
 
   function startPrefetch(index: number): void {
-    if (cache.has(index) || pendingFetches.has(index) || index < 0 || index >= N) return
+    if (index < 0 || index >= N || cache.has(index)) return
+    const existing = pendingFetches.get(index)
+    if (existing && !existing.controller.signal.aborted) return
     const controller = new AbortController()
     prefetchControllers.set(index, controller)
     controllers.add(controller)
-    const p = withSlot(() => {
+    const entry: PendingFetch = { controller, promise: Promise.resolve(new Uint8Array(0)) }
+    entry.promise = withSlot(() => {
       if (terminal || closed) throw closedError()
       return openAndStore(index, controller.signal)
     })
-    pendingFetches.set(index, p)
-    void p
+    pendingFetches.set(index, entry)
+    void entry.promise
       .catch((err) => {
-        if (terminal) return
+        if (terminal || closed) return
         if (err instanceof StreamSessionError && err.kind !== 'network') fail(err)
       })
       .finally(() => {
         controllers.delete(controller)
-        prefetchControllers.delete(index)
-        pendingFetches.delete(index)
+        if (prefetchControllers.get(index) === controller) prefetchControllers.delete(index)
+        dropPending(index, entry)
       })
   }
 
@@ -495,6 +519,10 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
       if (prefetchIndex < from || prefetchIndex > to) {
         controller.abort(new DOMException('superseded pull', 'AbortError'))
         prefetchControllers.delete(prefetchIndex)
+        // Drop the aborted promise now, so a read of this index (a seek back)
+        // starts a fresh fetch instead of joining one that will reject.
+        const entry = pendingFetches.get(prefetchIndex)
+        if (entry?.controller === controller) pendingFetches.delete(prefetchIndex)
       }
     }
     for (let i = from; i <= to; i++) startPrefetch(i)
@@ -637,21 +665,31 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     const loc = chunkForOffset(offset, chunkSize, N, totalSize)
     const length = Math.min(max, MAX_MESSAGE_BYTES, loc.available)
     acquire(loc.index)
-    // Start the requested chunk BEFORE read-ahead so a player pull never queues
-    // behind its own speculative window.
-    const pending = ensureChunk(loc.index)
-    notePull(reqId, loc.index)
     try {
-      const chunk = await pending
-      if (terminal) throw terminal
-      if (closed) throw closedError()
-      return chunk.slice(loc.offsetInChunk, loc.offsetInChunk + length)
-    } catch (err) {
-      if (terminal) throw terminal
-      if (closed) throw closedError()
-      const mapped = classify(err, loc.index) ?? new StreamSessionError('network', 'read failed', loc.index)
-      fail(mapped)
-      throw mapped
+      for (let attempt = 1; ; attempt++) {
+        // Start the requested chunk BEFORE read-ahead so a player pull never
+        // queues behind its own speculative window.
+        const pending = ensureChunk(loc.index)
+        if (attempt === 1) notePull(reqId, loc.index)
+        try {
+          const chunk = await pending
+          if (terminal) throw terminal
+          if (closed) throw closedError()
+          return chunk.slice(loc.offsetInChunk, loc.offsetInChunk + length)
+        } catch (err) {
+          if (terminal) throw terminal
+          if (closed) throw closedError()
+          // A superseded read-ahead's abort is never a session failure: open
+          // the chunk again. Only a real failure ends the session.
+          if (isAbortError(err)) {
+            if (attempt < MAX_SUPERSEDED_REREADS) continue
+            throw new StreamSessionError('network', `chunk ${loc.index} read was superseded`, loc.index)
+          }
+          const mapped = classify(err, loc.index) ?? new StreamSessionError('network', 'read failed', loc.index)
+          fail(mapped)
+          throw mapped
+        }
+      }
     } finally {
       release(loc.index)
     }

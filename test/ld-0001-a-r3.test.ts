@@ -124,3 +124,32 @@ describe('LD-0001 r3 A1: a single-chunk file declares its upload stride', () => 
   })
 })
 
+// @@ A2
+describe('LD-0001 r3 A2: a superseded read-ahead never ends the session', () => {
+  test('seek_back_into_an_aborted_read_ahead_serves_bytes', async () => {
+    const S = 32
+    const N = 48
+    const fx = encryptFixture({ pin: 2, chunkSize: S, plaintext: patternBytes(S * N) })
+    const source = new FakeChunkSource(fx.frames)
+    for (let i = 6; i <= 13; i++) source.deferred.add(i)
+    const session = await open(fx, { source })
+    const errors = errorsOf(session)
+
+    expect(await session.read('a', 5 * S, 4)).toEqual(fx.plaintext.slice(5 * S, 5 * S + 4))
+    await settle(4)
+    expect(source.calls).toEqual(expect.arrayContaining([6, 7, 8, 9]))
+
+    // Seek far ahead: the 6..13 read-ahead is superseded and aborted.
+    const far = session.read('b', 40 * S, 4)
+    expect(source.aborted).toEqual(expect.arrayContaining([6, 7, 8, 9]))
+    for (let i = 6; i <= 13; i++) source.deferred.delete(i)
+
+    // Seek back into the aborted window.
+    const back = await session.read('c', 7 * S, 4)
+    expect(back).toEqual(fx.plaintext.slice(7 * S, 7 * S + 4))
+    expect(await far).toEqual(fx.plaintext.slice(40 * S, 40 * S + 4))
+    expect(errors).toEqual([])
+    await session.close()
+  })
+})
+
