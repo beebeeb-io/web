@@ -727,6 +727,37 @@ export async function encryptedDownload(
   dispatchDecrypted(fileId)
 }
 
+/** What the over-cap card's Download streams to disk. */
+export interface OverCapDownloadArgs {
+  fileId: string
+  fileKey: Uint8Array
+  nameEncrypted: string
+  mimeType: string | null | undefined
+  /** null = the live version. */
+  versionId: string | null
+  chunkCount: number
+  sizeBytes: number
+}
+
+/**
+ * The over-cap card's Download: stream the plaintext to disk through the
+ * service worker. `download` is injectable for tests.
+ */
+export async function streamOverCapDownload(
+  args: OverCapDownloadArgs,
+  _opts: { signal?: AbortSignal; onProgress?: DownloadProgress } = {},
+  download: typeof encryptedDownload = encryptedDownload,
+): Promise<void> {
+  await download(
+    args.fileId,
+    args.fileKey,
+    args.nameEncrypted,
+    args.mimeType,
+    args.chunkCount,
+    args.sizeBytes,
+  )
+}
+
 /**
  * The whole-file media cap, decided on AUTHENTICATED metadata only (round-2
  * review, item 6): the caller's row (`file.mime_type`, UI filename) is

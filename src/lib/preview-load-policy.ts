@@ -99,3 +99,50 @@ export function downloadRoute(hasOriginalBlob: boolean, overCap: boolean): 'blob
   if (hasOriginalBlob) return 'blob'
   return overCap ? 'stream' : 'blob'
 }
+
+/** The parts of a version row the Download decision needs. */
+export interface DownloadVersionFacts {
+  id: string
+  chunk_count: number
+  size_bytes: number
+}
+
+/** What the preview's Download button does (file-preview.tsx only executes it). */
+export type DownloadAction =
+  | { kind: 'save-blob' }
+  | { kind: 'stream-to-disk'; versionId: string | null; chunkCount: number; sizeBytes: number }
+  | { kind: 'decrypt-live' }
+  | { kind: 'decrypt-version'; versionId: string; chunkCount: number; sizeBytes: number }
+  | { kind: 'version-not-found' }
+
+/**
+ * The Download decision, pure, so the branch the preview really takes is the
+ * one under test.
+ */
+export function chooseDownloadAction(facts: {
+  hasOriginalBlob: boolean
+  overCap: boolean
+  selectedVersionId: string | null
+  file: { chunk_count: number; size_bytes: number }
+  version: DownloadVersionFacts | null
+}): DownloadAction {
+  if (downloadRoute(facts.hasOriginalBlob, facts.overCap) === 'blob' && facts.hasOriginalBlob) {
+    return { kind: 'save-blob' }
+  }
+  if (facts.overCap && facts.selectedVersionId === null) {
+    return {
+      kind: 'stream-to-disk',
+      versionId: null,
+      chunkCount: facts.file.chunk_count,
+      sizeBytes: facts.file.size_bytes,
+    }
+  }
+  if (facts.selectedVersionId === null) return { kind: 'decrypt-live' }
+  if (!facts.version) return { kind: 'version-not-found' }
+  return {
+    kind: 'decrypt-version',
+    versionId: facts.version.id,
+    chunkCount: facts.version.chunk_count,
+    sizeBytes: facts.version.size_bytes,
+  }
+}

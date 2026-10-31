@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listVersions, restoreVersion, type DriveFile, type FileVersion } from '../../lib/api'
-import { decryptToBlob, decryptVersionToBlob, encryptedDownload, type TransferProgress } from '../../lib/encrypted-download'
+import { decryptToBlob, decryptVersionToBlob, streamOverCapDownload, type TransferProgress } from '../../lib/encrypted-download'
 import { progressCopy } from '../../lib/transfer-progress-copy'
 import {
   AUDIO_EXTENSIONS_SET,
   TooLargeToPreviewError,
   VIDEO_EXTENSIONS_SET,
   WHOLE_FILE_MEDIA_CAP_BYTES,
-  downloadRoute,
+  chooseDownloadAction,
   getExtension,
 } from '../../lib/preview-load-policy'
 import { formatSize } from '../../lib/format-size'
@@ -983,34 +983,44 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // rather than silently saving a downscaled WebP.
   async function handleDownload() {
     if (downloading) return
-    const overCap = capCopy !== null
-    if (
-      downloadRoute(!!blob && blobIsOriginal, overCap) === 'blob' &&
-      blob && blobIsOriginal
-    ) {
-      saveBlob(blob)
+    // The decision is pure (preview-load-policy.ts): the branch taken here is
+    // the branch under test.
+    const action = chooseDownloadAction({
+      hasOriginalBlob: !!blob && blobIsOriginal,
+      overCap: capCopy !== null,
+      selectedVersionId,
+      file,
+      version:
+        selectedVersionId === null
+          ? null
+          : versions?.find((x) => x.id === selectedVersionId) ?? null,
+    })
+    if (action.kind === 'save-blob') {
+      if (blob) saveBlob(blob)
       return
     }
     try {
       setDownloading(true)
       const fileKey = await resolveFileKey()
-      if (overCap && selectedVersionId === null) {
+      if (action.kind === 'stream-to-disk') {
         // The over-cap card has no Blob and must NEVER load the whole file into
         // memory: stream the plaintext to disk through the service worker, the
         // same path the toolbar Download uses (item 2). `downloading` disables
         // the button for the duration.
-        await encryptedDownload(
-          file.id,
+        await streamOverCapDownload({
+          fileId: file.id,
           fileKey,
-          file.name_encrypted,
-          effectiveMime ?? undefined,
-          file.chunk_count,
-          file.size_bytes,
-        )
+          nameEncrypted: file.name_encrypted,
+          mimeType: effectiveMime ?? undefined,
+          versionId: action.versionId,
+          chunkCount: action.chunkCount,
+          sizeBytes: action.sizeBytes,
+        })
         return
       }
+      if (action.kind === 'version-not-found') throw new Error('Version not found')
       let original: Blob
-      if (selectedVersionId === null) {
+      if (action.kind === 'decrypt-live') {
         const res = await decryptToBlob(
           file.id,
           fileKey,
@@ -1021,16 +1031,14 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         )
         original = res.plaintext
       } else {
-        const v = versions?.find((x) => x.id === selectedVersionId)
-        if (!v) throw new Error('Version not found')
         original = await decryptVersionToBlob(
           file.id,
-          v.id,
+          action.versionId,
           fileKey,
           file.name_encrypted,
           effectiveMime ?? undefined,
-          v.chunk_count,
-          v.size_bytes,
+          action.chunkCount,
+          action.sizeBytes,
         )
       }
       saveBlob(original)
