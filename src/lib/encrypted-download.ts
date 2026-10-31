@@ -215,6 +215,21 @@ export interface EncryptedDownloadOptions {
   signal?: AbortSignal
   /** Download this past version instead of the live file (round 3, C1). */
   versionId?: string
+  /**
+   * Refuse rather than buffer (round 3, C2): when the browser cannot stream
+   * the save to disk (no service-worker controller, no transferable
+   * streams), throw TooLargeToDownloadHereError instead of reading the whole
+   * body into memory. The over-cap card always sets it.
+   */
+  neverBuffer?: boolean
+}
+
+/** The over-cap Download could not stream to disk in this browser window (C2). */
+export class TooLargeToDownloadHereError extends Error {
+  constructor() {
+    super('This file is too large to download in this browser window. Reload the page and try again.')
+    this.name = 'TooLargeToDownloadHereError'
+  }
 }
 
 /** The whole-body download URL of the live file, or of one past version. */
@@ -627,6 +642,14 @@ export async function encryptedDownload(
   // Prefer explicit mimeType arg (legacy files) over encrypted metadata
   const effectiveMime = mimeType || meta.mimeType || 'application/octet-stream'
 
+  // C2: a caller that must never buffer learns BEFORE any fetch whether this
+  // window can stream the save to disk; if not, nothing is downloaded.
+  let knownController: ServiceWorker | null | undefined
+  if (opts?.neverBuffer) {
+    knownController = canStreamToDisk() ? await awaitController() : null
+    if (!knownController) throw new TooLargeToDownloadHereError()
+  }
+
   // 2. Download the encrypted blob from the API
   const token = getToken()
   const headers: Record<string, string> = {}
@@ -650,7 +673,12 @@ export async function encryptedDownload(
   const contentLengthHeader = parseHeaderInt(res.headers.get('Content-Length'))
   const effectivePlaintextSize = plaintextSizeFor(sizeBytes, contentLengthHeader, effectiveChunkCount)
 
-  const controller = canStreamToDisk() ? await awaitController() : null
+  const controller =
+    knownController !== undefined
+      ? knownController
+      : canStreamToDisk()
+        ? await awaitController()
+        : null
 
   // ─── Streaming path ──────────────────────────────
   if (controller && res.body) {
@@ -698,6 +726,15 @@ export async function encryptedDownload(
   }
 
   // ─── Fallback (Blob) path ────────────────────────
+  if (opts?.neverBuffer) {
+    // C2: never fall back to arrayBuffer() on the over-cap path.
+    try {
+      await res.body?.cancel()
+    } catch {
+      // Already closed.
+    }
+    throw new TooLargeToDownloadHereError()
+  }
   if (effectivePlaintextSize > 200 * 1024 * 1024) {
     // Surface a console warning so we can debug user reports; we cannot avoid
     // the in-memory buffer here without SW support.
@@ -764,8 +801,8 @@ export async function streamOverCapDownload(
     args.mimeType,
     args.chunkCount,
     args.sizeBytes,
-    // C1: a past version streams from its own endpoint, never buffered.
-    { versionId: args.versionId ?? undefined },
+    // C1: a past version streams from its own endpoint; C2: never buffered.
+    { versionId: args.versionId ?? undefined, neverBuffer: true },
   )
 }
 

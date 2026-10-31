@@ -179,3 +179,45 @@ describe('LD-0001 r3 C1: an over-cap past version never buffers', () => {
     expect(dl.downloadUrlFor('f-1', null)).toBe('http://api.test/api/v1/files/f-1/download')
   })
 })
+
+describe('LD-0001 r3 C2: the over-cap path refuses instead of buffering', () => {
+  test('no_service_worker_means_an_honest_refusal_and_no_fetch', async () => {
+    const f = buildFixture({ name: 'big.mp4', mime: 'video/mp4' })
+    serve(f)
+    // bun has no navigator.serviceWorker: the streaming save is unavailable.
+    const err = await expectRejection(
+      dl.encryptedDownload(f.fileId, f.fileKey, f.name, null, f.chunkCount, 3 * GiB, { neverBuffer: true }),
+    )
+    expect((err as Error).message).toBe(
+      'This file is too large to download in this browser window. Reload the page and try again.',
+    )
+    expect(fetchCalls).toBe(0)
+  })
+
+  test('the_over_cap_stream_asks_never_to_buffer', async () => {
+    const calls: unknown[][] = []
+    await dl.streamOverCapDownload(overCapArgs(), {}, (async (...args: unknown[]) => {
+      calls.push(args)
+    }) as typeof dl.encryptedDownload)
+    expect((calls[0][6] as Record<string, unknown> | undefined)?.neverBuffer).toBe(true)
+  })
+
+  test('the_card_routing_follows_downloadRoute', () => {
+    for (const hasOriginalBlob of [true, false]) {
+      for (const overCap of [true, false]) {
+        for (const selectedVersionId of [null, 'v1']) {
+          const action = policy.chooseDownloadAction({
+            hasOriginalBlob,
+            overCap,
+            selectedVersionId,
+            file: { chunk_count: 1, size_bytes: 10 },
+            version: selectedVersionId ? { id: 'v1', chunk_count: 1, size_bytes: 10 } : null,
+          })
+          const route = policy.downloadRoute(hasOriginalBlob, overCap)
+          if (route === 'stream') expect(action.kind).toBe('stream-to-disk')
+          else expect(action.kind).not.toBe('stream-to-disk')
+        }
+      }
+    }
+  })
+})
