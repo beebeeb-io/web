@@ -102,8 +102,16 @@ function canPlayTypeFor(mediaKind: MediaKind, mime: string | null): string {
   }
 }
 
+/**
+ * B2: one id per SESSION, `s-<fileId>-<128-bit random>`. Two tabs (or two
+ * sessions of one file) never share an id, so neither can reach the other's
+ * registry entry; the SW also checks the owner on register and close.
+ */
 function streamIdFor(fileId: string): string {
-  return `s-${fileId.replace(/[^A-Za-z0-9._:-]/g, '_')}`
+  const token = new Uint8Array(16)
+  crypto.getRandomValues(token)
+  const hex = Array.from(token, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `s-${fileId.replace(/[^A-Za-z0-9._:-]/g, '_')}-${hex}`
 }
 
 export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
@@ -118,6 +126,8 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
   const [generation, setGeneration] = useState(0)
   const [ready, setReady] = useState(false)
   const [mediaState, setMediaState] = useState<MediaState | null>(null)
+  const [streamId, setStreamId] = useState<string | null>(null)
+  const streamIdRef = useRef<string | null>(null)
 
   const canPlay = useMemo(
     () => (mediaKind ? canPlayTypeFor(mediaKind, mime) : ''),
@@ -143,8 +153,10 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
   })
 
   const streaming = path === 'streaming'
-  const id = streamIdFor(file.id)
-  const src = streaming && ready ? `/sw-stream/${id}${generation ? `?g=${generation}` : ''}` : null
+  const src =
+    streaming && ready && streamId
+      ? `/sw-stream/${streamId}${generation ? `?g=${generation}` : ''}`
+      : null
 
   const sessionRef = useRef<StreamSession | null>(null)
   const bridgeRef = useRef<StreamBridge | null>(null)
@@ -220,7 +232,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
   }, [])
 
   const openBridge = useCallback(
-    (session: StreamSession): boolean => {
+    (session: StreamSession, id: string): boolean => {
       const env = makeEnv()
       if (!env) return false
       bridgeRef.current?.close()
@@ -241,7 +253,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
       })
       return true
     },
-    [id, makeEnv, mime],
+    [makeEnv, mime],
   )
 
   const mediaStateRef = useRef<MediaState | null>(null)
@@ -253,7 +265,8 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
   const recoverNetwork = useCallback(() => {
     const session = sessionRef.current
     const el = elementRef.current
-    if (!session) return
+    const id = streamIdRef.current
+    if (!session || !id) return
     const now = Date.now()
     if (!canRecoverNetworkError(recoveryRef.current, now)) {
       dispatch({
@@ -265,7 +278,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
     }
     recoveryRef.current = noteNetworkRecovery(recoveryRef.current, now)
     pendingRestoreRef.current = { time: el?.currentTime ?? 0, paused: el?.paused ?? true }
-    if (!openBridge(session)) return
+    if (!openBridge(session, id)) return
     setGeneration((g) => g + 1)
   }, [dispatch, openBridge])
 
@@ -329,10 +342,13 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
             if (event.kind === 'changed') setFailed({ kind: 'changed', index: event.index })
           }
         })
-        if (!openBridge(opened)) {
+        const id = streamIdFor(fileId)
+        if (!openBridge(opened, id)) {
           await opened.close()
           return
         }
+        streamIdRef.current = id
+        setStreamId(id)
         setReady(true)
       } catch {
         if (!cancelled) setFailed({ kind: 'auth', index: 0 })
@@ -345,6 +361,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
       bridgeRef.current?.close()
       bridgeRef.current = null
       sessionRef.current = null
+      streamIdRef.current = null
       setReady(false)
       if (session) void session.close()
     }

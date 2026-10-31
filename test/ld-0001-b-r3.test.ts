@@ -169,3 +169,28 @@ describe('LD-0001 r3 B1: the silence timer runs only while a pull waits', () => 
     expect(read.state).toBe('resolved')
   })
 })
+
+describe('LD-0001 r3 B2: a stream belongs to the tab that registered it', () => {
+  test('another_tab_registering_or_closing_the_same_id_does_not_touch_the_owner', async () => {
+    const { relay } = relayWith(['tab-a', 'tab-b'])
+    const portA = registerFrom(relay, 'sid', 'tab-a')
+    registerFrom(relay, 'sid', 'tab-b')
+    expect(relay.registry.get('sid').clientId).toBe('tab-a')
+    expect(relay.registry.get('sid').port).toBe(portA)
+
+    relay.onMessage({ type: 'close-stream', id: 'sid' }, 'tab-b')
+    expect(relay.registry.has('sid')).toBe(true)
+    expect(portA.closed).toBe(false)
+
+    relay.onMessage({ type: 'close-stream', id: 'sid' }, 'tab-a')
+    expect(relay.registry.has('sid')).toBe(false)
+    expect(portA.closed).toBe(true)
+  })
+
+  test('the_owner_may_re_register_its_own_id', () => {
+    const { relay } = relayWith()
+    registerFrom(relay, 'sid', 'tab-a')
+    const fresh = registerFrom(relay, 'sid', 'tab-a')
+    expect(relay.registry.get('sid').port).toBe(fresh)
+  })
+})

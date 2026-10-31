@@ -601,6 +601,10 @@
       if (!data || typeof data !== 'object') return false
       if (data.type === 'register-stream') {
         if (!data.id || !data.port) return true
+        // B2: a stream belongs to the tab that registered it. Another tab
+        // (same origin, same file) can never replace it.
+        var existing = registry.get(data.id)
+        if (existing && existing.clientId !== (sourceId || '')) return true
         register({
           id: data.id,
           mime: data.mime,
@@ -613,7 +617,9 @@
         return true
       }
       if (data.type === 'close-stream') {
-        closeStream(data.id)
+        // B2: only the owning tab may close its stream.
+        var owned = registry.get(data.id)
+        if (owned && owned.clientId === (sourceId || '')) closeStream(data.id)
         return true
       }
       if (data.type === 'stream-claim-reply') {
