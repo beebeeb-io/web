@@ -130,6 +130,13 @@ export interface OpenStreamOptions {
   /** SF-0002 chunk-0 repair, tried only for setup's chunk 0. */
   repair?: (frame: Uint8Array) => Promise<Uint8Array | null>
   observer?: StreamObserver
+  /**
+   * Abandons the open. During setup, an abort cancels the head and tail
+   * fetches, closes a reader the worker already created (its key is wiped),
+   * wipes any decrypted chunk, and rejects with the abort reason. After the
+   * open resolved, it closes the session.
+   */
+  signal?: AbortSignal
 }
 
 export interface StreamSession {
@@ -257,7 +264,11 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
   const N = opts.row.chunk_count
   const fileId = opts.content.fileId
   const pin = opts.content.pin
+  const signal = opts.signal
+  const abortReason = (): unknown =>
+    signal?.reason ?? new DOMException('stream open aborted', 'AbortError')
 
+  if (signal?.aborted) throw abortReason()
   if (!Number.isInteger(N) || N < 1) {
     throw new StreamSessionError('auth', `invalid chunk count ${N}`)
   }
@@ -573,29 +584,36 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
   }
 
   // ── Setup (§5.1-5.4) ───────────────────────────────────────────────────────
-  const headController = new AbortController()
-  const tailController = new AbortController()
-  controllers.add(headController)
-  controllers.add(tailController)
+  // One controller for both setup fetches: the caller's abort cancels both,
+  // and when one fetch fails the other is abandoned at once.
+  const setupController = new AbortController()
+  const onOpenAbort = (): void => setupController.abort(abortReason())
+  signal?.addEventListener('abort', onOpenAbort, { once: true })
+  const abandonSetup = (err: unknown): never => {
+    setupController.abort(new DOMException('the other setup fetch failed', 'AbortError'))
+    throw err
+  }
   let head: { frame: Uint8Array; chunkCount: number | null }
   let tail: { frame: Uint8Array; chunkCount: number | null } | null = null
   try {
     const results = await Promise.all([
-      fetchWithRetries(0, headController.signal),
-      N > 1 ? fetchWithRetries(N - 1, tailController.signal) : Promise.resolve(null),
+      fetchWithRetries(0, setupController.signal).catch(abandonSetup),
+      N > 1
+        ? fetchWithRetries(N - 1, setupController.signal).catch(abandonSetup)
+        : Promise.resolve(null),
     ])
     head = results[0]
     tail = results[1]
     emit({ type: 'received', bytes: head.frame.length })
     if (tail) emit({ type: 'received', bytes: tail.frame.length })
   } catch (err) {
+    if (signal?.aborted) throw abortReason()
     const mapped = isTerminal(err)
       ? err
       : classify(err, 0) ?? new StreamSessionError('network', 'setup failed', 0)
     throw mapped
   } finally {
-    controllers.delete(headController)
-    controllers.delete(tailController)
+    signal?.removeEventListener('abort', onOpenAbort)
   }
 
   // Read before the factory: pushing the frame to the worker transfers (and
@@ -635,6 +653,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     )
   }
 
+  if (signal?.aborted) throw abortReason()
   let setupHead: StreamReaderSetup
   try {
     setupHead = await factory({
@@ -645,6 +664,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
       repair: opts.repair,
     })
   } catch (err) {
+    if (signal?.aborted) throw abortReason()
     if (isTerminal(err)) throw err
     throw new StreamSessionError('auth', 'chunk 0 could not be authenticated', 0, { cause: err })
   }
@@ -659,6 +679,9 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
   let tailStored = false
   let totalSize = 0
   try {
+    // An open abandoned while the worker built the reader closes that reader
+    // here (the catch below), so no reader or key copy outlives the open.
+    if (signal?.aborted) throw abortReason()
     if (setupHead.headPlaintext.length !== chunkSize) {
       throw new StreamSessionError('auth', 'chunk 0 decrypted to the wrong size', 0)
     }
@@ -706,6 +729,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     if (expectedFromRow !== totalSize) {
       throw new StreamSessionError('auth', 'total plaintext disagrees with size_bytes', 0)
     }
+    if (signal?.aborted) throw abortReason()
   } catch (err) {
     if (!headStored) setupHead.headPlaintext.fill(0)
     if (tailPlaintext && !tailStored) tailPlaintext.fill(0)
@@ -784,6 +808,10 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
       }
     }
   }
+
+  // An abort that lands after the open resolved (the caller moved on while the
+  // promise was settling) closes the session instead of leaking it.
+  signal?.addEventListener('abort', () => void close(), { once: true })
 
   return {
     totalSize,

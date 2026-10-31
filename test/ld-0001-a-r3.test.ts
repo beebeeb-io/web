@@ -392,3 +392,79 @@ describe('LD-0001 r3 A6: a re-fetched tail', () => {
   })
 })
 
+// @@ A7
+describe('LD-0001 r3 A7: an open can be abandoned', () => {
+  test('a_failed_head_aborts_the_tail_fetch', async () => {
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const source = FakeChunkSource.lazy(
+      (index) => (index === 0 ? undefined : fx.frames[index]) as Uint8Array,
+      3,
+    )
+    source.stalls.add(2)
+    await expect(open(fx, { source })).rejects.toMatchObject({ kind: 'auth', index: 0 })
+    await settle(2)
+    expect(source.aborted).toEqual([2])
+  })
+
+  test('abort_while_fetching_rejects_and_aborts_both_fetches', async () => {
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const source = new FakeChunkSource(fx.frames)
+    source.stalls.add(0)
+    source.stalls.add(2)
+    const controller = new AbortController()
+    const pending = open(fx, { source, signal: controller.signal }).then(
+      () => 'opened',
+      (err: unknown) => err,
+    )
+    await settle(2)
+    controller.abort()
+    const result = await pending
+    expect((result as { name?: string }).name).toBe('AbortError')
+    expect([...source.aborted].sort((a, b) => a - b)).toEqual([0, 2])
+  })
+
+  test('an_abandoned_open_closes_the_worker_reader', async () => {
+    const ops = createContentOps(wasm)
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const base = inProcessReaderFactory(ops)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const factory: StreamReaderFactory = async (args) => {
+      const out = await base(args)
+      await gate
+      return out
+    }
+    const controller = new AbortController()
+    const pending = open(fx, { readerFactory: factory, signal: controller.signal }).then(
+      () => 'opened',
+      (err: unknown) => err,
+    )
+    await settle(4)
+    expect(ops.liveReaderCount()).toBe(1)
+    controller.abort()
+    release()
+    const result = await pending
+    expect((result as { name?: string }).name).toBe('AbortError')
+    expect(ops.liveReaderCount()).toBe(0)
+    expect(ops.liveDecryptorCount()).toBe(0)
+  })
+
+  test('aborting_after_open_closes_the_session', async () => {
+    const ops = createContentOps(wasm)
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const controller = new AbortController()
+    const session = await open(fx, {
+      readerFactory: inProcessReaderFactory(ops),
+      signal: controller.signal,
+    })
+    expect(ops.liveReaderCount()).toBe(1)
+    controller.abort()
+    await settle(2)
+    expect(ops.liveReaderCount()).toBe(0)
+    expect(session.retainedBytes()).toBe(0)
+    await expect(session.read('r', 0, 1)).rejects.toMatchObject({ kind: 'network' })
+  })
+})
+
