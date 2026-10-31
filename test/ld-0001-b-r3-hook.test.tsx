@@ -291,3 +291,30 @@ describe('LD-0001 r3 B2: the stream id carries a per-session token', () => {
     expect(second).not.toBe(first)
   })
 })
+
+describe('LD-0001 r3 B5: per-file state resets on Next/Prev', () => {
+  test('an_auth_error_on_A_then_next_to_B_streams_B', async () => {
+    const m = await mount(
+      argsFor(fileRow('file-a'), {
+        openSession: async () => {
+          throw new StreamSessionError('auth', 'chunk 2 could not be authenticated', 2)
+        },
+      }),
+    )
+    await waitFor(() => m.h.path === 'error', 'A errors')
+    await m.rerender(argsFor(fileRow('file-b')))
+    expect(m.h.path).toBe('streaming')
+    expect(m.h.errorCopy).toBeNull()
+  })
+
+  test('a_stream_rejection_on_A_does_not_carry_over_to_B', async () => {
+    const m = await mountStreaming(fakeSession(4))
+    m.port.postMessage({ type: 'open-range', reqId: 'r1', start: 0, end: 99 })
+    await tick()
+    m.media.error = { code: 4 }
+    m.media.fire('error')
+    await waitFor(() => m.h.path === 'whole-file-fallback', 'A falls back')
+    await m.rerender(argsFor(fileRow('file-b')))
+    expect(m.h.path).toBe('streaming')
+  })
+})

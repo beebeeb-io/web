@@ -114,20 +114,74 @@ function streamIdFor(fileId: string): string {
   return `s-${fileId.replace(/[^A-Za-z0-9._:-]/g, '_')}-${hex}`
 }
 
+type StreamFailure = { kind: 'auth' | 'changed'; index: number }
+
+/** What belongs to ONE file of the preview (B5): reset on Next/Prev. */
+interface PerFileState {
+  key: string
+  rejected: boolean
+  fallbackUsed: boolean
+  failed: StreamFailure | null
+  generation: number
+}
+
+interface PerFileRefs {
+  key: string
+  rejected: boolean
+  recovery: number[]
+}
+
+function freshPerFile(key: string): PerFileState {
+  return { key, rejected: false, fallbackUsed: false, failed: null, generation: 0 }
+}
+
 export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
   const { file, mediaKind, selectedVersionId, isUnlocked, mime, resolveFileKey } = args
   const row = file.download_version ?? null
   const objectVersionId = row?.object_version_id ?? null
 
-  const [rejected, setRejected] = useState(false)
-  const [fallbackUsed, setFallbackUsed] = useState(false)
-  const [failed, setFailed] = useState<{ kind: 'auth' | 'changed'; index: number } | null>(null)
+  // B5: everything that belongs to ONE file is keyed by (file.id, version), so
+  // Next/Prev starts the new file clean: no inherited failure, rejection,
+  // fallback, recovery budget, generation, media state or stream id.
+  const fileKey = `${file.id}\u0000${selectedVersionId ?? ''}`
+  const fileKeyRef = useRef(fileKey)
+  fileKeyRef.current = fileKey
+  const [perFileRaw, setPerFileRaw] = useState<PerFileState>(() => freshPerFile(fileKey))
+  const perFile = perFileRaw.key === fileKey ? perFileRaw : freshPerFile(fileKey)
   const [attempt, setAttempt] = useState(0)
-  const [generation, setGeneration] = useState(0)
-  const [ready, setReady] = useState(false)
-  const [mediaState, setMediaState] = useState<MediaState | null>(null)
-  const [streamId, setStreamId] = useState<string | null>(null)
+  const [mediaSlot, setMediaSlot] = useState<{ key: string; state: MediaState } | null>(null)
+  const mediaState = mediaSlot && mediaSlot.key === fileKey ? mediaSlot.state : null
+  /** The live session's stream id once its bridge is registered (= ready). */
+  const [streamSlot, setStreamSlot] = useState<{ key: string; id: string } | null>(null)
+  const streamId = streamSlot && streamSlot.key === fileKey ? streamSlot.id : null
   const streamIdRef = useRef<string | null>(null)
+  const perFileRefs = useRef<PerFileRefs>({ key: fileKey, rejected: false, recovery: [] })
+  if (perFileRefs.current.key !== fileKey) {
+    perFileRefs.current = { key: fileKey, rejected: false, recovery: [] }
+  }
+
+  const updatePerFile = useCallback(
+    (patch: (state: PerFileState) => Partial<PerFileState>) => {
+      const key = fileKeyRef.current
+      setPerFileRaw((prev) => {
+        const base = prev.key === key ? prev : freshPerFile(key)
+        return { ...base, ...patch(base) }
+      })
+    },
+    [],
+  )
+
+  const setMediaState = useCallback(
+    (next: MediaState | null | ((prev: MediaState | null) => MediaState | null)) => {
+      const key = fileKeyRef.current
+      setMediaSlot((prev) => {
+        const base = prev && prev.key === key ? prev.state : null
+        const value = typeof next === 'function' ? next(base) : next
+        return value ? { key, state: value } : null
+      })
+    },
+    [],
+  )
 
   const canPlay = useMemo(
     () => (mediaKind ? canPlayTypeFor(mediaKind, mime) : ''),
@@ -146,16 +200,16 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
     killSwitch:
       typeof localStorage === 'undefined' ? false : mediaStreamKillSwitch(localStorage),
     canPlayType: canPlay,
-    fallbackUsed,
-    streamRejected: rejected,
-    terminalError: failed?.kind ?? null,
+    fallbackUsed: perFile.fallbackUsed,
+    streamRejected: perFile.rejected,
+    terminalError: perFile.failed?.kind ?? null,
     elementErroredAfterMetadata: false,
   })
 
   const streaming = path === 'streaming'
   const src =
-    streaming && ready && streamId
-      ? `/sw-stream/${streamId}${generation ? `?g=${generation}` : ''}`
+    streaming && streamId
+      ? `/sw-stream/${streamId}${perFile.generation ? `?g=${perFile.generation}` : ''}`
       : null
 
   const sessionRef = useRef<StreamSession | null>(null)
@@ -164,8 +218,6 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
   const elementRef = useRef<HTMLMediaElement | null>(null)
   const sawMetadataRef = useRef(false)
   const rangesServedRef = useRef(false)
-  const rejectedRef = useRef(false)
-  const recoveryRef = useRef<number[]>([])
   const pendingRestoreRef = useRef<{ time: number; paused: boolean } | null>(null)
 
   const setElement = useCallback((el: HTMLMediaElement | null) => {
@@ -178,7 +230,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
         reduceMediaState(prev ?? createMediaState(file.chunk_count), event),
       )
     },
-    [file.chunk_count],
+    [file.chunk_count, setMediaState],
   )
 
   const teardown = useCallback(() => {
@@ -187,19 +239,19 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
     const session = sessionRef.current
     sessionRef.current = null
     if (session) void session.close()
-    setReady(false)
+    setStreamSlot(null)
   }, [])
 
   /** Row 6: close, wipe, hand the preview to the whole-file load — ONCE. */
   const fallBack = useCallback(() => {
-    if (rejectedRef.current) {
-      setFallbackUsed(true)
+    if (perFileRefs.current.rejected) {
+      updatePerFile(() => ({ fallbackUsed: true }))
       return
     }
-    rejectedRef.current = true
+    perFileRefs.current.rejected = true
     teardown()
-    setRejected(true)
-  }, [teardown])
+    updatePerFile(() => ({ rejected: true }))
+  }, [teardown, updatePerFile])
 
   const makeEnv = useCallback((): BridgeEnv | null => {
     const sw = typeof navigator !== 'undefined' ? navigator.serviceWorker : undefined
@@ -247,13 +299,13 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
           watchdogRef.current?.openRange()
         },
         onFatal: (code, index) => {
-          if (code === 'auth') setFailed({ kind: 'auth', index })
-          if (code === 'changed') setFailed({ kind: 'changed', index })
+          if (code === 'auth') updatePerFile(() => ({ failed: { kind: 'auth', index } }))
+          if (code === 'changed') updatePerFile(() => ({ failed: { kind: 'changed', index } }))
         },
       })
       return true
     },
-    [makeEnv, mime],
+    [makeEnv, mime, updatePerFile],
   )
 
   const mediaStateRef = useRef<MediaState | null>(null)
@@ -268,7 +320,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
     const id = streamIdRef.current
     if (!session || !id) return
     const now = Date.now()
-    if (!canRecoverNetworkError(recoveryRef.current, now)) {
+    if (!canRecoverNetworkError(perFileRefs.current.recovery, now)) {
       dispatch({
         type: 'error',
         kind: 'network',
@@ -276,18 +328,21 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
       })
       return
     }
-    recoveryRef.current = noteNetworkRecovery(recoveryRef.current, now)
+    perFileRefs.current.recovery = noteNetworkRecovery(perFileRefs.current.recovery, now)
     pendingRestoreRef.current = { time: el?.currentTime ?? 0, paused: el?.paused ?? true }
     if (!openBridge(session, id)) return
-    setGeneration((g) => g + 1)
-  }, [dispatch, openBridge])
+    updatePerFile((state) => ({ generation: state.generation + 1 }))
+  }, [dispatch, openBridge, updatePerFile])
 
   // ── Open the session once per (file.id, selectedVersionId, attempt) ────────
   useEffect(() => {
     if (!isUnlocked || !streaming || !mediaKind || !objectVersionId) return
     const fileId = file.id
+    const key = fileKey
     let cancelled = false
     let session: StreamSession | null = null
+    // A new session starts with no media state of its own (a retry too).
+    setMediaState(null)
 
     const run = async (): Promise<void> => {
       try {
@@ -338,8 +393,8 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
             return base
           })
           if (event.type === 'error') {
-            if (event.kind === 'auth') setFailed({ kind: 'auth', index: event.index })
-            if (event.kind === 'changed') setFailed({ kind: 'changed', index: event.index })
+            if (event.kind === 'auth') updatePerFile(() => ({ failed: { kind: 'auth', index: event.index } }))
+            if (event.kind === 'changed') updatePerFile(() => ({ failed: { kind: 'changed', index: event.index } }))
           }
         })
         const id = streamIdFor(fileId)
@@ -348,10 +403,9 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
           return
         }
         streamIdRef.current = id
-        setStreamId(id)
-        setReady(true)
+        setStreamSlot({ key, id })
       } catch {
-        if (!cancelled) setFailed({ kind: 'auth', index: 0 })
+        if (!cancelled) updatePerFile(() => ({ failed: { kind: 'auth', index: 0 } }))
       }
     }
     void run()
@@ -362,7 +416,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
       bridgeRef.current = null
       sessionRef.current = null
       streamIdRef.current = null
-      setReady(false)
+      setStreamSlot(null)
       if (session) void session.close()
     }
     // `row` and the file object are read through the ids only: a parent
@@ -469,17 +523,16 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
   }, [streaming, teardown])
 
   const retry = useCallback(() => {
-    setFailed(null)
-    rejectedRef.current = false
-    setRejected(false)
-    setFallbackUsed(false)
+    perFileRefs.current.rejected = false
+    updatePerFile(() => ({ failed: null, rejected: false, fallbackUsed: false }))
     setAttempt((n) => n + 1)
-  }, [])
+  }, [updatePerFile])
 
   const overlayCopy =
     mediaState && (mediaState.transport === 'buffering' || mediaState.transport === 'stalled')
       ? statusCopy(mediaState)
       : null
+  const failed = perFile.failed
   const errorCopy = failed
     ? failed.kind === 'changed'
       ? CHANGED_COPY
