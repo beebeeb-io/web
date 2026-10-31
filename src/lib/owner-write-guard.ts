@@ -36,6 +36,9 @@ import {
 /** Shown when the check itself could not reach a verdict (network, server, or no frame authenticated). Retryable. */
 export const OWNER_WRITE_CHECK_FAILED = "Couldn't check this file before changing it. Try again."
 
+/** Shown when the check needs the vault (its key, or the account it belongs to) and does not have it. */
+export const OWNER_WRITE_NEEDS_UNLOCK = 'Unlock the vault before changing this file.'
+
 const NONCE_AND_TAG = 28
 /** The older iOS File Provider's chunk size. */
 const FILE_PROVIDER_CHUNK = 1024 * 1024
@@ -80,6 +83,11 @@ function isAbort(err: unknown): boolean {
 function currentVersionKey(file: WriteTarget): string {
   const version = file.version_number != null ? `v${file.version_number}` : `t${file.updated_at ?? ''}`
   return `${file.id}|${version}|${file.size_bytes ?? 0}|${file.chunk_count ?? 0}`
+}
+
+/** The check needs the vault and does not have it (round 3, X2 and X4). */
+function needsUnlock(): Error {
+  return new Error(OWNER_WRITE_NEEDS_UNLOCK)
 }
 
 /** The write was refused because no verdict was reached; retrying may succeed. */
@@ -227,9 +235,10 @@ async function resolveVersion(
 /**
  * Refuse a replace, rename, note or new version of an owner row whose current
  * version is sealed under the read-only uppercase repair convention. Throws
- * the exact copy the person sees: OWNER_REPAIR_READ_ONLY (permanent) or
- * OWNER_WRITE_CHECK_FAILED (no verdict; retryable). A no-op for a folder, a
- * row not sealed under an owner convention, or when no master key is held.
+ * the exact copy the person sees: OWNER_REPAIR_READ_ONLY (permanent),
+ * OWNER_WRITE_CHECK_FAILED (no verdict; retryable) or OWNER_WRITE_NEEDS_UNLOCK
+ * (no master key: a locked vault decides nothing, round 3 X2). A no-op for a
+ * folder or a row not sealed under an owner convention.
  */
 export async function assertCurrentVersionWritable(
   file: WriteTarget,
@@ -241,8 +250,10 @@ export async function assertCurrentVersionWritable(
   // answers 4xx. Its NAME is covered by the mark above (the name resolver
   // marks an upper_repair name), so nothing is fetched for it.
   if (file.is_folder) return
-  if (!masterKey) return
   if (!isOwnerContentRow(file, opts.viewerId)) return
+  // Round 3 (X2): a write that needs no key (a restore, a note clear) must not
+  // pass unchecked because the vault is locked.
+  if (!masterKey) throw needsUnlock()
   const versionKey = currentVersionKey(file)
   if (isKnownWritableVersion(versionKey)) return
   // The check only reports which owner convention authenticates chunk 0 and
@@ -275,7 +286,8 @@ export async function assertRestoreWritable(
   opts: WriteCheckOptions = {},
 ): Promise<void> {
   await assertCurrentVersionWritable(file, masterKey, opts)
-  if (file.is_folder || !masterKey || !isOwnerContentRow(file, opts.viewerId)) return
+  if (file.is_folder || !isOwnerContentRow(file, opts.viewerId)) return
+  if (!masterKey) throw needsUnlock()
   const versionKey = `${file.id}|ver:${version.id}`
   if (isKnownWritableVersion(versionKey)) return
   const verdict = await resolveVersion(
@@ -308,5 +320,9 @@ export async function restoreOwnerVersion(args: {
 /** The message to show for a refused owner write, or null when `err` is some other failure. */
 export function ownerWriteRefusal(err: unknown): string | null {
   if (!(err instanceof Error)) return null
-  return err.message === OWNER_REPAIR_READ_ONLY || err.message === OWNER_WRITE_CHECK_FAILED ? err.message : null
+  return err.message === OWNER_REPAIR_READ_ONLY ||
+    err.message === OWNER_WRITE_CHECK_FAILED ||
+    err.message === OWNER_WRITE_NEEDS_UNLOCK
+    ? err.message
+    : null
 }

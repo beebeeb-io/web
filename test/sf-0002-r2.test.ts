@@ -283,7 +283,7 @@ describe('W3: shared-folders flag off keeps the derived key (rv-web198d R1)', ()
 
 const { renameOwnerRow } = await import('../src/lib/owner-rename')
 const { writeFileNote } = await import('../src/lib/file-note')
-const { restoreOwnerVersion } = await import('../src/lib/owner-write-guard')
+const { restoreOwnerVersion, OWNER_WRITE_NEEDS_UNLOCK } = await import('../src/lib/owner-write-guard')
 
 const UPPER_FRAME = hexToBytes(V1.content_frame_hex)
 const UPPER_PLAINTEXT_LEN = V1.content_plaintext_hex.length / 2
@@ -835,6 +835,69 @@ describe('X1: renameOwnerRow without the listed row', () => {
         },
       })
       expect(seen).toEqual([V1.file_id])
+      expect(net.writes().map((w) => w.method)).toEqual(['PATCH'])
+    } finally {
+      net.restore()
+    }
+  })
+})
+
+// ── X2: no master key is a refusal, not a pass ──────────────────────────────
+
+describe('X2: writes that need no key are refused while the vault is locked', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  test('a version restore while locked is refused; nothing is POSTed', async () => {
+    const net = server(UPPER_FRAME)
+    try {
+      await expect(
+        restoreOwnerVersion({
+          file: contentOnlyUpperRow(),
+          version: { id: VERSION_ID, size_bytes: UPPER_PLAINTEXT_LEN, chunk_count: 1 },
+          masterKey: undefined,
+          residentUserId: 'me',
+        }),
+      ).rejects.toThrow(OWNER_WRITE_NEEDS_UNLOCK)
+      expect(net.writes()).toHaveLength(0)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('a note clear while locked is refused; nothing is PATCHed', async () => {
+    const file = contentOnlyUpperRow()
+    const net = server(UPPER_FRAME)
+    try {
+      await expect(
+        writeFileNote({
+          target: file,
+          text: '',
+          owner: { nameEncrypted: file.name_encrypted },
+          masterKey: undefined,
+          residentUserId: 'me',
+          getFileKey: async () => {
+            throw new Error('locked')
+          },
+        }),
+      ).rejects.toThrow(OWNER_WRITE_NEEDS_UNLOCK)
+      expect(net.writes()).toHaveLength(0)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('a folder note clear while locked still goes through (a folder has no content version)', async () => {
+    const folder = row({ is_folder: true, chunk_count: 0, uploaded_by: 'me' })
+    const net = server(UPPER_FRAME)
+    try {
+      await writeFileNote({
+        target: folder,
+        text: '',
+        owner: { nameEncrypted: folder.name_encrypted },
+        masterKey: undefined,
+        residentUserId: 'me',
+        getFileKey: async () => new Uint8Array(32),
+      })
       expect(net.writes().map((w) => w.method)).toEqual(['PATCH'])
     } finally {
       net.restore()
