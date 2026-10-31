@@ -21,9 +21,10 @@ export const SERVER_CHANGED_ITEM_ID_MESSAGE =
 
 /**
  * The sentence for a COMPLETION that answers another item. The bytes already
- * went up under this client's own id, so the file may exist; the resume record
- * is kept so the next run of this file continues that id instead of uploading
- * a second copy.
+ * went up under this client's own id, so the file may exist. The resume record
+ * is kept, so the Drive resume banner can offer the file again under that same
+ * id; nothing else reuses it, which is why the sentence tells the user to
+ * check their files before uploading again.
  */
 export const SERVER_CHANGED_ITEM_ID_AFTER_UPLOAD_MESSAGE =
   'The server answered with a different item after the upload. ' +

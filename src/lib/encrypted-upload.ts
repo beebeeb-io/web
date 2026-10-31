@@ -695,11 +695,12 @@ async function uploadFileWith(
 
     // L13: completeUpload throws ServerChangedItemIdError (stage `complete`)
     // when the answer names any id but this upload's. That happens before the
-    // resume record is dropped or any key is published: the record is KEPT,
-    // because the bytes went up under this upload's own id and the file may
-    // exist, so the next run of this file continues that id instead of
-    // uploading a second copy. Nothing is abandoned (the upload may have
-    // committed).
+    // resume record is dropped or any key is published. The record is KEPT
+    // (the bytes went up under this upload's own id, and the file may exist):
+    // what that does is that the Drive resume banner offers this file again,
+    // under that same id. Nothing else uses it: a Retry of the card or a new
+    // upload of the same file starts under a fresh id (and drops the record as
+    // another id's). Nothing is abandoned (the upload may have committed).
     return completeUpload(serverFileId, uploadSessionId)
   }
 
