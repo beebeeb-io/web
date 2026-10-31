@@ -29,6 +29,7 @@ import {
 } from './crypto'
 import { abandonUpload, initUpload, uploadChunk, completeUpload, getUploadStatus } from './api'
 import { isServerChangedItemIdError } from './item-id-echo'
+import { lookupOwnRow } from './stored-row'
 import { withNetworkRetry } from './net-retry'
 import { fileStorageCountry } from './storage-regions'
 import type { DriveFile } from './api'
@@ -39,6 +40,7 @@ import {
   removeUploadState,
   recordedCountry,
   planResume,
+  PausedVersionRefusedError,
   type ResumePlan,
   type UploadState,
 } from './upload-resume'
@@ -195,9 +197,12 @@ async function uploadFileWith(
   // against it, so it cannot change under the pin). A pin is resumed only from
   // a record that names that id (`adoptRecordedReplacePin`).
   let replacePin: ContentPin | null = null
-  if (options.replaceOf) {
+  if (options.replaceOf) replacePin = await readReplacedPin(options.replaceOf.nameEncrypted)
+
+  /** The pin a replaced row's own stored name records; refused if it does not authenticate. */
+  async function readReplacedPin(rowName: string): Promise<ContentPin> {
     try {
-      replacePin = (await readFileMetadata(fileKey, options.replaceOf.nameEncrypted)).pin
+      return (await readFileMetadata(fileKey, rowName)).pin
     } catch (err) {
       throw new UnverifiedFileMetadataError(UNVERIFIED_REPLACE_COPY, { cause: err })
     }
@@ -342,7 +347,7 @@ async function uploadFileWith(
     fingerprint = await computeFingerprint(file)
     const existing = await findByFingerprint(fingerprint)
     const record = existing?.fileId === resumeFileId ? existing : null
-    const plan = record ? planResume(record, mintFileId) : null
+    const plan = record ? await planStoredSession(record) : null
     if (record && plan && plan.kind !== 'resume') {
       await restartStoredSession(record, plan)
       await persistResumeState()
@@ -386,7 +391,7 @@ async function uploadFileWith(
       existing.fileId === fileId &&
       existing.fileSize === file.size
     ) {
-      const plan = planResume(existing, mintFileId)
+      const plan = await planStoredSession(existing)
       if (plan.kind !== 'resume') {
         await restartStoredSession(existing, plan)
       } else {
@@ -435,26 +440,49 @@ async function uploadFileWith(
   }
 
   /**
+   * The plan for a stored session that names this upload's id. A caller that
+   * targets that id as a listed row it is replacing already passed the row's
+   * own stored name (`replaceOf`, read and pinned above): an unmarked record
+   * then restarts as a version of it, with no second lookup. Otherwise the
+   * one rule decides (`planResume`), looking the row up when it needs to.
+   */
+  async function planStoredSession(record: UploadState): Promise<ResumePlan> {
+    if (record.selfMinted !== true && options.replaceOf) {
+      return { kind: 'restart-version', fileId, resumeFileId: fileId, replaceOf: options.replaceOf }
+    }
+    return planResume(record, { mintId: mintFileId, lookupRow: (id) => lookupOwnRow(id, fileKey) })
+  }
+
+  /**
    * L13: a stored session this client did not mark as its own (written before
    * the marker existed) is never adopted: no stored frame, chunk status or
    * session of it is reused, and it is not abandoned (see above). The upload
    * starts over in a fresh init, recorded with the marker by the caller.
    *
-   * - `restart-version`: a replace of a listed row. It stays a new version of
-   *   that row: the same id, the pin it recorded. Its record is kept until the
-   *   fresh init succeeded (the new record then replaces it), so a refused
+   * - `restart-version`: a new version of that same row. It sends the row's
+   *   OWN stored name, byte for byte, and writes in the format that name's pin
+   *   records (SF-0001 round 3): a freshly sealed name carries no pin, and if
+   *   the row were gone the server would insert it. Its record is kept until
+   *   the fresh init succeeded (the new record then replaces it), so a refused
    *   init (a live lease: 409) leaves it on offer.
+   * - `refuse`: the row is gone, trashed or does not authenticate. Nothing is
+   *   sent; the record goes (it can never restart) and the error says why.
    * - `restart-new`: a create record's id may be the server's, so it is never
    *   proposed again: the upload moves to a fresh id minted here, with its own
-   *   key and name. The one exception is a caller that targets that id as a
-   *   listed row it is replacing (`replaceOf`), which L13 allows for a version.
+   *   key and name.
    */
   async function restartStoredSession(record: UploadState, plan: ResumePlan): Promise<void> {
     if (plan.kind === 'restart-version') {
-      adoptRecordedReplacePin(record, record.fileId)
+      if (!options.replaceOf) {
+        replacePin = await readReplacedPin(plan.replaceOf.nameEncrypted)
+        nameEncrypted = plan.replaceOf.nameEncrypted
+      }
+    } else if (plan.kind === 'refuse') {
+      await removeUploadState(record.fileId)
+      throw new PausedVersionRefusedError(plan.reason)
     } else {
       await removeUploadState(record.fileId)
-      if (!options.replaceOf) await writeUnderOwnId(plan.fileId)
+      await writeUnderOwnId(plan.fileId)
     }
     await startUpload(serverFileId)
   }

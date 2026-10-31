@@ -38,6 +38,10 @@ export const cap = {
   derivedKeyIds: [] as string[],
   /** Every recorded pin an encryptor was told to apply (a replace / version). */
   appliedPins: [] as number[],
+  /** Every stored name a replace read its pin from (`readFileMetadata`). */
+  metadataReads: [] as string[],
+  /** Every row the code looked up (`getFile`). */
+  rowLookups: [] as string[],
 }
 /**
  * L13 (contract 2275, SF-0001): by default the mocked server ECHOES the id the
@@ -54,6 +58,8 @@ export const echo = {
   chunkGate: null as Promise<void> | null,
   /** The stored upload session `findByFingerprint` returns (IndexedDB), or none. */
   stored: null as (Record<string, unknown> & { fileId: string }) | null,
+  /** Rows `getFile` answers (merged over a live file row); any other id is a 404. */
+  rows: {} as Record<string, Record<string, unknown>>,
 }
 export function resetEchoes(): void {
   echo.protocol = 'v2'
@@ -62,6 +68,7 @@ export function resetEchoes(): void {
   echo.createFolder = null
   echo.chunkGate = null
   echo.stored = null
+  echo.rows = {}
 }
 
 export function resetCaptures(): void {
@@ -78,6 +85,8 @@ export function resetCaptures(): void {
   cap.abandons.length = 0
   cap.derivedKeyIds.length = 0
   cap.appliedPins.length = 0
+  cap.metadataReads.length = 0
+  cap.rowLookups.length = 0
 }
 
 // Listing pager (the folder-share suite drives this).
@@ -149,7 +158,12 @@ export async function installMocks(): Promise<void> {
     },
     // A replace (`replaceOf`) reads the listed row's pin first; every row here
     // records pin 0 (core's write format).
-    readFileMetadata: async () => ({ name: 'listed.txt', mime_type: null, pin: 0 }),
+    // A name containing "unreadable" does not authenticate under the key.
+    readFileMetadata: async (_fileKey: Uint8Array, nameEncrypted: string) => {
+      cap.metadataReads.push(nameEncrypted)
+      if (nameEncrypted.includes('unreadable')) throw new Error('metadata authentication failed')
+      return { name: 'listed.txt', mime_type: null, pin: 0 }
+    },
   })
 
   // shared_folders_v1 ON: the owner-upload publish under test is a flag-on path.
@@ -166,7 +180,20 @@ export async function installMocks(): Promise<void> {
   // ./api — the capturing upload surface (contract) + listFilesPage driven by
   // the shared pager (folder-share). ApiError, API_URL, FILE_LIST_HARD_CAP and
   // everything else are the real exports.
-  await mockModuleScoped('../../src/lib/api', here, {
+  await mockModuleScoped('../../src/lib/api', here, (real) => ({
+    getFile: async (id: string) => {
+      cap.rowLookups.push(id)
+      const row = echo.rows[id]
+      if (!row) {
+        const NotFound = real.ApiError as unknown as new (message: string, status: number) => Error
+        throw new NotFound('Not found.', 404)
+      }
+      return {
+        id, name_encrypted: 'row-name', mime_type: null, size_bytes: 4, chunk_count: 1, is_folder: false,
+        is_trashed: false, parent_id: null, created_at: '2026-05-08T00:00:00.000Z', updated_at: '2026-05-08T00:00:00.000Z',
+        ...row,
+      }
+    },
     listFilesPage: async (opts: { parentId?: string; cursor?: string }) => pageImpl(opts),
     initUpload: async (metadata: unknown) => {
       cap.initCalls.push(metadata)
@@ -225,7 +252,7 @@ export async function installMocks(): Promise<void> {
       else cap.updatedFiles.push({ fileId, nameEncrypted: updates.name_encrypted ?? '' })
       return { id: fileId }
     },
-  })
+  }))
 
   await mockModuleScoped('../../src/lib/upload-resume', here, {
     computeFingerprint: async () => 'fingerprint',

@@ -94,9 +94,11 @@ import {
   getActiveUploads,
   findByFingerprint,
   planResume,
+  PausedVersionRefusedError,
   removeUploadState,
   type UploadState,
 } from '../lib/upload-resume'
+import { lookupOwnRow } from '../lib/stored-row'
 import { encryptFilename, encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata, readFileMetadata } from '../lib/crypto'
 import { renameKeyFor } from '../lib/owner-rename'
 import { useSearchIndex } from '../hooks/use-search-index'
@@ -1158,23 +1160,35 @@ export function Drive() {
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== match.fileId))
 
       // L13 (SF-0001): only a session this client minted may be resumed. A
-      // record from before the marker (its id may be the server's) restarts
-      // under a fresh id this client chooses now — never resumed, never left
-      // looping on the old id. `planResume` is the same rule encryptedUpload
-      // applies; its row is not abandoned file-wide (that could end another
-      // device's live upload), the server's lease sweep ends the stale session.
-      const plan = planResume(match, () => crypto.randomUUID())
-      if (plan.kind !== 'resume') {
-        showToast({
-          icon: 'upload',
-          title: 'Upload restarted',
-          description: plan.kind === 'restart-version'
-            ? `${file.name} was started by an older version, so it uploads again from the start as a new version of the same file.`
-            : `${file.name} was started by an older version, so it uploads again as a new file.`,
-        })
-      }
-      const fileKey = await getFileKey(plan.fileId)
+      // record from before the marker (its id may be the server's) restarts —
+      // never resumed, never left looping on the old id. `planResume` is the
+      // same rule encryptedUpload applies: a paused new version of a live row
+      // restarts as a version of it with that row's own stored name; one whose
+      // row is gone is refused (nothing uploaded); anything else restarts under
+      // a fresh id. Its row is not abandoned file-wide (that could end another
+      // device's live upload); the server's lease sweep ends the stale session.
       try {
+        const recordKey = await getFileKey(match.fileId)
+        const plan = await planResume(match, {
+          mintId: () => crypto.randomUUID(),
+          lookupRow: (id) => lookupOwnRow(id, recordKey),
+        })
+        if (plan.kind === 'refuse') {
+          await removeUploadState(match.fileId)
+          setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+          showToast({ icon: 'upload', title: 'Upload not restarted', description: userFriendlyError(new PausedVersionRefusedError(plan.reason)), danger: true })
+          continue
+        }
+        if (plan.kind !== 'resume') {
+          showToast({
+            icon: 'upload',
+            title: 'Upload restarted',
+            description: plan.kind === 'restart-version'
+              ? `${file.name} was started by an older version, so it uploads again from the start as a new version of the same file.`
+              : `${file.name} was started by an older version, so it uploads again as a new file.`,
+          })
+        }
+        const fileKey = plan.fileId === match.fileId ? recordKey : await getFileKey(plan.fileId)
         let resumeStartedAt: number | undefined
         await encryptedUpload(
           file,
@@ -1211,6 +1225,8 @@ export function Drive() {
           plan.resumeFileId,
           undefined,
           undefined,
+          // A version restart sends the row's own stored name, byte for byte.
+          plan.kind === 'restart-version' ? { replaceOf: plan.replaceOf } : undefined,
         )
         setUploads((prev) => prev.filter((u) => u.id !== uploadId))
         showToast({ icon: 'check', title: plan.kind === 'resume' ? 'Upload resumed' : 'Uploaded', description: file.name })
@@ -1227,6 +1243,13 @@ export function Drive() {
             description: `${file.name}: ${userFriendlyError(err)}`,
             danger: true,
           })
+          setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+          continue
+        }
+        // Refused inside encryptedUpload (its own row check): the record is
+        // already gone, so drop the row too and say why.
+        if (err instanceof PausedVersionRefusedError) {
+          showToast({ icon: 'upload', title: 'Upload not restarted', description: userFriendlyError(err), danger: true })
           setUploads((prev) => prev.filter((u) => u.id !== uploadId))
           continue
         }

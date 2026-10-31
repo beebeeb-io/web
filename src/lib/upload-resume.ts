@@ -104,51 +104,94 @@ export interface UploadState {
 }
 
 /**
+ * The record's row as THIS user sees it now (lookupOwnRow, stored-row.ts):
+ * - `live`: a file row, not in the trash, whose stored name authenticates under
+ *   this user's key for its id. `nameEncrypted` is that name, as stored.
+ * - `gone`: no such row for this user (404), in the trash, or not a file.
+ * - `unverified`: reachable, but its name does not authenticate under this
+ *   user's key (not a row this user owns).
+ */
+export type StoredRow =
+  | { state: 'live'; nameEncrypted: string }
+  | { state: 'gone' }
+  | { state: 'unverified' }
+
+/**
  * What a stored upload session becomes when this client picks it up again
  * (the Drive resume banner, or `encryptedUpload` finding it by fingerprint).
+ *
+ * - `resume`: this client marked the record's id as its own; its session
+ *   continues (core's resume rule still decides about its frames).
+ * - `restart-version`: written before the marker by a REPLACE (its pin names
+ *   its own id, which only a replace of a listed row ever recorded), and that
+ *   row is live. The upload starts over in a fresh init as a new version of
+ *   that row, sending the row's OWN stored name byte for byte (`replaceOf`),
+ *   whose recorded pin decides the format: never a freshly sealed name.
+ * - `refuse`: such a replace whose row is gone, trashed or does not
+ *   authenticate. Nothing is uploaded: a fresh init would INSERT a name
+ *   without the pin the content needs, and the file would read back broken.
+ * - `restart-new`: any other record without the marker (a create, whose id
+ *   may be the server's). Never adopted and never proposed again: the upload
+ *   starts over in a fresh init under `fileId`, a fresh id minted now.
+ *
+ * `resumeFileId` is what a caller passes as `encryptedUpload`'s `resumeFileId`:
+ * the record's id while the upload stays on it, none otherwise (for a fresh id
+ * the record is another id's, and `encryptedUpload` drops it).
  */
-export interface ResumePlan {
-  /**
-   * - `resume`: this client marked the record's id as its own; its session
-   *   continues (core's resume rule still decides about its frames).
-   * - `restart-version`: written before the marker by a REPLACE: its pin names
-   *   its own id, which only a replace of a listed row (an id this client
-   *   chose) ever recorded. The upload starts over in a fresh init as a new
-   *   version of that same row, with the same recorded pin.
-   * - `restart-new`: any other record without the marker (a create, whose id
-   *   may be the server's). Never adopted and never proposed again: the upload
-   *   starts over in a fresh init under `fileId`, a fresh id minted now.
-   */
-  kind: 'resume' | 'restart-version' | 'restart-new'
-  /** The id the upload writes under. */
-  fileId: string
-  /**
-   * What a caller passes as `encryptedUpload`'s `resumeFileId`: the record's
-   * id when the upload stays on that id, none for a fresh id (the record is
-   * then another id's, and `encryptedUpload` drops it).
-   */
-  resumeFileId: string | undefined
+export type ResumePlan =
+  | { kind: 'resume'; fileId: string; resumeFileId: string }
+  | { kind: 'restart-version'; fileId: string; resumeFileId: string; replaceOf: { nameEncrypted: string } }
+  | { kind: 'refuse'; fileId: string; resumeFileId: undefined; reason: 'gone' | 'unverified' }
+  | { kind: 'restart-new'; fileId: string; resumeFileId: undefined }
+
+/** Shown when a paused new version's file is no longer there (nothing is uploaded). */
+export const PAUSED_VERSION_GONE_COPY =
+  'The file this paused upload was a new version of is no longer in your files, so nothing was uploaded. ' +
+  'Upload it again to add it as a new file.'
+
+/** Shown when a paused new version's file cannot be verified (nothing is uploaded). */
+export const PAUSED_VERSION_UNVERIFIED_COPY =
+  "We couldn't verify the file this paused upload was a new version of, so nothing was uploaded."
+
+/** A stored version upload that may not restart (`ResumePlan` kind `refuse`). */
+export class PausedVersionRefusedError extends Error {
+  readonly reason: 'gone' | 'unverified'
+
+  constructor(reason: 'gone' | 'unverified') {
+    super(reason === 'gone' ? PAUSED_VERSION_GONE_COPY : PAUSED_VERSION_UNVERIFIED_COPY)
+    this.name = 'PausedVersionRefusedError'
+    this.reason = reason
+  }
 }
 
 /**
  * L13 (contract 2275, SF-0001): the ONE rule for a stored session, used by
  * both the Drive resume banner and `encryptedUpload` itself. A session is
  * resumed only when this client minted its id; any other record restarts
- * (never resumes). Nothing here abandons anything server-side: the only
- * abandon the server offers is file-wide, so the stale session is left to its
- * lease sweep.
+ * (never resumes), or is refused. Nothing here abandons anything server-side:
+ * the only abandon the server offers is file-wide, so the stale session is
+ * left to its lease sweep. `lookupRow` is asked only for an unmarked record.
  */
-export function planResume(
+export async function planResume(
   record: Pick<UploadState, 'fileId' | 'selfMinted' | 'replace_pin' | 'replace_pin_file_id'>,
-  mintId: () => string,
-): ResumePlan {
+  deps: { mintId: () => string; lookupRow: (fileId: string) => Promise<StoredRow> },
+): Promise<ResumePlan> {
   if (record.selfMinted === true) {
     return { kind: 'resume', fileId: record.fileId, resumeFileId: record.fileId }
   }
   if (record.replace_pin !== undefined && record.replace_pin_file_id === record.fileId) {
-    return { kind: 'restart-version', fileId: record.fileId, resumeFileId: record.fileId }
+    const row = await deps.lookupRow(record.fileId)
+    if (row.state === 'live') {
+      return {
+        kind: 'restart-version',
+        fileId: record.fileId,
+        resumeFileId: record.fileId,
+        replaceOf: { nameEncrypted: row.nameEncrypted },
+      }
+    }
+    return { kind: 'refuse', fileId: record.fileId, resumeFileId: undefined, reason: row.state }
   }
-  return { kind: 'restart-new', fileId: mintId(), resumeFileId: undefined }
+  return { kind: 'restart-new', fileId: deps.mintId(), resumeFileId: undefined }
 }
 
 /**

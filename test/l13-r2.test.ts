@@ -18,6 +18,11 @@
  *     locked, Drive's New folder and the move dialog's new folder send nothing.
  * E7  the move dialog shows a failed folder create (the changed-id message
  *     included) as the other create paths do, instead of only logging it.
+ *
+ * Round 3:
+ * R3-1 a version restart sends its row's OWN stored name (byte for byte) and
+ *      reads the pin from it; if the row is gone, trashed or does not
+ *      authenticate, nothing is uploaded.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -254,18 +259,26 @@ describe('E2: a legacy REPLACE session restarts as a new version of the same row
 
   test('planResume: restart as a version of the record\'s own row, resumed by that id', async () => {
     const { planResume } = await import('../src/lib/upload-resume')
-    expect(planResume(legacyReplace, () => 'fresh-own-id')).toEqual({
-      kind: 'restart-version', fileId: 'listed-row-id', resumeFileId: 'listed-row-id',
+    const plan = await planResume(legacyReplace, {
+      mintId: () => 'fresh-own-id',
+      lookupRow: async () => ({ state: 'live', nameEncrypted: 'row-own-name' }),
     })
+    expect(plan).toMatchObject({ kind: 'restart-version', fileId: 'listed-row-id', resumeFileId: 'listed-row-id' })
   })
 
   test('the Drive resume path: one init under the row with its recorded pin, in a fresh session; no new file', async () => {
     const { planResume } = await import('../src/lib/upload-resume')
+    const { lookupOwnRow } = await import('../src/lib/stored-row')
     echo.stored = legacyReplace
+    echo.rows['listed-row-id'] = { name_encrypted: 'row-own-name' }
     // Exactly what the Drive resume banner passes for this record.
-    const plan = planResume(legacyReplace, () => crypto.randomUUID())
+    const plan = await planResume(legacyReplace, {
+      mintId: () => crypto.randomUUID(),
+      lookupRow: (id) => lookupOwnRow(id, FILE_KEY),
+    })
     const uploaded = await encryptedUpload(new File(['a'], 'a.txt'), plan.fileId, FILE_KEY, MK,
-      legacyReplace.parentId, undefined, plan.resumeFileId)
+      legacyReplace.parentId, undefined, plan.resumeFileId, undefined, undefined,
+      plan.kind === 'restart-version' ? { replaceOf: plan.replaceOf } : undefined)
 
     expect(uploaded.id).toBe('listed-row-id')
     // One init, under the row: a new version of it, so no second file and no
@@ -284,7 +297,10 @@ describe('E2: a legacy REPLACE session restarts as a new version of the same row
 
   test('a legacy record whose pin names ANOTHER id is no proof of a replace: it restarts under a fresh id', async () => {
     const { planResume } = await import('../src/lib/upload-resume')
-    const plan = planResume({ ...legacyReplace, replace_pin_file_id: 'some-other-row' }, () => 'fresh-own-id')
+    const plan = await planResume({ ...legacyReplace, replace_pin_file_id: 'some-other-row' }, {
+      mintId: () => 'fresh-own-id',
+      lookupRow: async () => ({ state: 'gone' }),
+    })
     expect(plan).toEqual({ kind: 'restart-new', fileId: 'fresh-own-id', resumeFileId: undefined })
   })
 })
@@ -431,4 +447,84 @@ describe('E7: the move dialog shows a failed folder create', () => {
     }
     expect(handlerBody(source('components/move-modal.tsx'), 'handleNewFolder')).not.toContain('console.error')
   })
+})
+
+// ── R3-1: a version restart sends its row's own name, or nothing ─────────────
+
+describe('R3-1: a legacy version restart writes under its row\'s own stored name, or not at all', () => {
+  /** A paused version upload an older client wrote; its row is `row-1`. */
+  const legacyVersion = {
+    fingerprint: 'fingerprint', fileId: 'row-1', fileName: 'a.txt', fileSize: 1, totalChunks: 1,
+    upload_session_id: 'legacy-session', object_version_id: 'ov-legacy', chunk_size_bytes: 4, chunk_count: 1,
+    chunk_format: 1, replace_pin: 0, replace_pin_file_id: 'row-1', parentId: 'parent-1', createdAt: 1,
+  }
+  const initIds = () => cap.initCalls.map((c) => (c as { file_id: string }).file_id)
+  const initNames = () => cap.initCalls.map((c) => (c as { name_encrypted: string }).name_encrypted)
+  const lookup = (state: 'live' | 'gone' | 'unverified') => async () =>
+    state === 'live' ? { state, nameEncrypted: 'row-own-name' } as const : { state } as const
+
+  test('planResume: a live row -> restart-version carrying that row\'s own stored name', async () => {
+    const { planResume } = await import('../src/lib/upload-resume')
+    expect(await planResume(legacyVersion, { mintId: () => 'fresh', lookupRow: lookup('live') })).toEqual({
+      kind: 'restart-version', fileId: 'row-1', resumeFileId: 'row-1', replaceOf: { nameEncrypted: 'row-own-name' },
+    })
+  })
+
+  test('planResume: the row is gone or does not authenticate -> refuse, never a fresh id', async () => {
+    const { planResume } = await import('../src/lib/upload-resume')
+    expect(await planResume(legacyVersion, { mintId: () => 'fresh', lookupRow: lookup('gone') }))
+      .toEqual({ kind: 'refuse', fileId: 'row-1', resumeFileId: undefined, reason: 'gone' })
+    expect(await planResume(legacyVersion, { mintId: () => 'fresh', lookupRow: lookup('unverified') }))
+      .toEqual({ kind: 'refuse', fileId: 'row-1', resumeFileId: undefined, reason: 'unverified' })
+  })
+
+  test('the Drive banner path, live row: the init sends the row\'s stored name byte for byte and reads the pin from it', async () => {
+    const { planResume } = await import('../src/lib/upload-resume')
+    const { lookupOwnRow } = await import('../src/lib/stored-row')
+    echo.stored = legacyVersion
+    echo.rows['row-1'] = { name_encrypted: 'row-own-name' }
+    const plan = await planResume(legacyVersion, { mintId: () => crypto.randomUUID(), lookupRow: (id) => lookupOwnRow(id, FILE_KEY) })
+    await encryptedUpload(new File(['a'], 'a.txt'), plan.fileId, FILE_KEY, MK, 'parent-1', undefined,
+      plan.resumeFileId, undefined, undefined, plan.kind === 'restart-version' ? { replaceOf: plan.replaceOf } : undefined)
+    expect(initIds()).toEqual(['row-1'])
+    expect(initNames()).toEqual(['row-own-name'])
+    expect(cap.metadataReads).toContain('row-own-name')
+    // Nothing freshly sealed: no name without the row's pin can reach the server.
+    expect(cap.encryptedMetadataKeys).toEqual([])
+  })
+
+  test('uploadFile on its own (no replaceOf), live row: it looks the row up and does the same', async () => {
+    echo.stored = legacyVersion
+    echo.rows['row-1'] = { name_encrypted: 'row-own-name' }
+    await encryptedUpload(new File(['a'], 'a.txt'), 'row-1', FILE_KEY, MK, 'parent-1', undefined, 'row-1')
+    expect(cap.rowLookups).toEqual(['row-1'])
+    expect(initIds()).toEqual(['row-1'])
+    expect(initNames()).toEqual(['row-own-name'])
+    // Read for the ownership check and for the pin: only ever the row's own name.
+    expect(cap.metadataReads.length).toBeGreaterThan(0)
+    expect(cap.metadataReads.every((n) => n === 'row-own-name')).toBe(true)
+    expect(cap.encryptedMetadataKeys).toEqual([1])
+  })
+
+  for (const [why, row, copy] of [
+    ['purged (404)', null, 'gone'],
+    ['in the trash', { is_trashed: true }, 'gone'],
+    ['a name that does not authenticate under this key', { name_encrypted: 'unreadable-name' }, 'unverified'],
+  ] as const) {
+    test(`the row is ${why}: refused with honest copy; nothing sent; the record goes`, async () => {
+      const { PAUSED_VERSION_GONE_COPY, PAUSED_VERSION_UNVERIFIED_COPY, PausedVersionRefusedError } = await import('../src/lib/upload-resume')
+      const { userFriendlyError } = await import('../src/lib/user-friendly-error')
+      echo.stored = legacyVersion
+      if (row) echo.rows['row-1'] = row
+      const err = await caught(() => encryptedUpload(new File(['a'], 'a.txt'), 'row-1', FILE_KEY, MK, 'parent-1', undefined, 'row-1'))
+      const message = copy === 'gone' ? PAUSED_VERSION_GONE_COPY : PAUSED_VERSION_UNVERIFIED_COPY
+      expect(err).toBeInstanceOf(PausedVersionRefusedError)
+      expect((err as Error).message).toBe(message)
+      expect(userFriendlyError(err)).toBe(message)
+      expect(cap.initCalls).toEqual([])
+      expect(cap.uploadedChunks).toEqual([])
+      expect(cap.removedStates).toEqual(['row-1'])
+      expect(cap.abandons).toEqual([])
+    })
+  }
 })

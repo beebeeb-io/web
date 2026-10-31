@@ -247,18 +247,23 @@ describe('A7c: a persisted session is resumed only when this client minted its i
 
   test('planResume: a record without the marker restarts under a fresh own id', async () => {
     const { planResume } = await import('../src/lib/upload-resume')
-    expect(planResume(legacy, () => 'fresh-own-id')).toStrictEqual({ kind: 'restart-new', fileId: 'fresh-own-id', resumeFileId: undefined })
+    expect(await planResume(legacy, { mintId: () => 'fresh-own-id', lookupRow: async () => ({ state: 'gone' }) }))
+      .toStrictEqual({ kind: 'restart-new', fileId: 'fresh-own-id', resumeFileId: undefined })
   })
 
   test('planResume: a record with the marker and its own id resumes that id', async () => {
     const { planResume } = await import('../src/lib/upload-resume')
-    expect(planResume(own, () => 'fresh-own-id')).toEqual({ kind: 'resume', fileId: 'own-session-id', resumeFileId: 'own-session-id' })
+    const lookups: string[] = []
+    expect(await planResume(own, { mintId: () => 'fresh-own-id', lookupRow: async (id) => { lookups.push(id); return { state: 'gone' } } }))
+      .toEqual({ kind: 'resume', fileId: 'own-session-id', resumeFileId: 'own-session-id' })
+    // A marked record needs no row lookup.
+    expect(lookups).toEqual([])
   })
 
   test('the restarted upload writes under the fresh id, drops the legacy record and abandons nothing', async () => {
     const { planResume } = await import('../src/lib/upload-resume')
     echo.stored = { fingerprint: 'fingerprint', fileId: 'server-chosen-id', fileName: 'r.txt', fileSize: 1, totalChunks: 1, parentId: null, createdAt: 1 }
-    const plan = planResume(legacy, () => 'fresh-own-id')
+    const plan = await planResume(legacy, { mintId: () => 'fresh-own-id', lookupRow: async () => ({ state: 'gone' }) })
     // As the Drive resume banner calls it for a restart: the fresh id, no resumeFileId.
     const uploaded = await encryptedUpload(new File(['r'], 'r.txt'), plan.fileId, FILE_KEY, MK)
     expect(uploaded.id).toBe('fresh-own-id')
