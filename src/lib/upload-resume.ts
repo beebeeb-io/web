@@ -122,17 +122,19 @@ export type StoredRow =
  *
  * - `resume`: this client marked the record's id as its own; its session
  *   continues (core's resume rule still decides about its frames).
- * - `restart-version`: written before the marker by a REPLACE (its pin names
- *   its own id, which only a replace of a listed row ever recorded), and that
- *   row is live. The upload starts over in a fresh init as a new version of
- *   that row, sending the row's OWN stored name byte for byte (`replaceOf`),
- *   whose recorded pin decides the format: never a freshly sealed name.
+ * - `restart-version`: written before the marker, and its row is a live row
+ *   this user owns (any such record: a replace, including one from before
+ *   task 1943 that recorded no pin). The upload starts over in a fresh init
+ *   as a new version of that row, sending the row's OWN stored name byte for
+ *   byte (`replaceOf`), whose recorded pin decides the format: never a
+ *   freshly sealed name. No duplicate appears next to the row.
  * - `refuse`: such a replace whose row is gone, trashed or does not
  *   authenticate. Nothing is uploaded: a fresh init would INSERT a name
  *   without the pin the content needs, and the file would read back broken.
- * - `restart-new`: any other record without the marker (a create, whose id
- *   may be the server's). Never adopted and never proposed again: the upload
- *   starts over in a fresh init under `fileId`, a fresh id minted now.
+ * - `restart-new`: any other record without the marker (no live row of this
+ *   user's: a create whose row is gone or not this user's). Never adopted and
+ *   never proposed again: the upload starts over in a fresh init under
+ *   `fileId`, a fresh id minted now.
  *
  * `resumeFileId` is what a caller passes as `encryptedUpload`'s `resumeFileId`:
  * the record's id while the upload stays on it, none otherwise (for a fresh id
@@ -179,16 +181,22 @@ export async function planResume(
   if (record.selfMinted === true) {
     return { kind: 'resume', fileId: record.fileId, resumeFileId: record.fileId }
   }
-  if (record.replace_pin !== undefined && record.replace_pin_file_id === record.fileId) {
-    const row = await deps.lookupRow(record.fileId)
-    if (row.state === 'live') {
-      return {
-        kind: 'restart-version',
-        fileId: record.fileId,
-        resumeFileId: record.fileId,
-        replaceOf: { nameEncrypted: row.nameEncrypted },
-      }
+  // Every unmarked record's row is looked up: a replace record written before
+  // task 1943 carries no pin, so the record alone cannot say it was a replace
+  // (SF-0001 round 3, R3-2). A live row this user owns is an id this client
+  // may target, as for any listed row.
+  const row = await deps.lookupRow(record.fileId)
+  if (row.state === 'live') {
+    return {
+      kind: 'restart-version',
+      fileId: record.fileId,
+      resumeFileId: record.fileId,
+      replaceOf: { nameEncrypted: row.nameEncrypted },
     }
+  }
+  // A record whose pin names its own id was a replace: without its row it
+  // may not restart at all (a new file would lose what it replaced).
+  if (record.replace_pin !== undefined && record.replace_pin_file_id === record.fileId) {
     return { kind: 'refuse', fileId: record.fileId, resumeFileId: undefined, reason: row.state }
   }
   return { kind: 'restart-new', fileId: deps.mintId(), resumeFileId: undefined }

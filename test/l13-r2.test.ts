@@ -23,6 +23,8 @@
  * R3-1 a version restart sends its row's OWN stored name (byte for byte) and
  *      reads the pin from it; if the row is gone, trashed or does not
  *      authenticate, nothing is uploaded.
+ * R3-2 a replace record from before task 1943 (no pin) whose row is a live
+ *      row this user owns restarts as a version of it; only otherwise new.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -527,4 +529,46 @@ describe('R3-1: a legacy version restart writes under its row\'s own stored name
       expect(cap.abandons).toEqual([])
     })
   }
+})
+
+// ── R3-2: replace records from before task 1943 (no pin) ─────────────────────
+
+describe('R3-2: an unmarked record whose row is a live row this user owns restarts as a version of it', () => {
+  /** A pre-1943 version upload: no marker, no pin, so the record alone cannot say "replace". */
+  const pre1943 = {
+    fingerprint: 'fingerprint', fileId: 'row-2', fileName: 'a.txt', fileSize: 1, totalChunks: 1,
+    upload_session_id: 'legacy-session', object_version_id: 'ov-legacy', chunk_size_bytes: 4, chunk_count: 1,
+    parentId: 'parent-1', createdAt: 1,
+  }
+  const initIds = () => cap.initCalls.map((c) => (c as { file_id: string }).file_id)
+
+  test('planResume: a live own row -> restart-version with that row\'s own stored name', async () => {
+    const { planResume } = await import('../src/lib/upload-resume')
+    const asked: string[] = []
+    const plan = await planResume(pre1943, {
+      mintId: () => 'fresh',
+      lookupRow: async (id) => { asked.push(id); return { state: 'live', nameEncrypted: 'row-2-name' } },
+    })
+    expect(plan).toEqual({ kind: 'restart-version', fileId: 'row-2', resumeFileId: 'row-2', replaceOf: { nameEncrypted: 'row-2-name' } })
+    expect(asked).toEqual(['row-2'])
+  })
+
+  test('planResume: no live own row (gone, or not this user\'s) -> restart as new, under a fresh id', async () => {
+    const { planResume } = await import('../src/lib/upload-resume')
+    for (const state of ['gone', 'unverified'] as const) {
+      expect(await planResume(pre1943, { mintId: () => 'fresh', lookupRow: async () => ({ state }) }))
+        .toEqual({ kind: 'restart-new', fileId: 'fresh', resumeFileId: undefined })
+    }
+  })
+
+  test('uploadFile: one init under the row with its stored name; no fresh id, so no duplicate next to it', async () => {
+    echo.stored = pre1943
+    echo.rows['row-2'] = { name_encrypted: 'row-2-name' }
+    const uploaded = await encryptedUpload(new File(['a'], 'a.txt'), 'row-2', FILE_KEY, MK, 'parent-1', undefined, 'row-2')
+    expect(uploaded.id).toBe('row-2')
+    expect(initIds()).toEqual(['row-2'])
+    expect((cap.initCalls[0] as { name_encrypted: string }).name_encrypted).toBe('row-2-name')
+    expect(cap.derivedKeyIds).toEqual([])
+    expect(cap.uploadedChunks.map((c) => c.uploadSessionId)).toEqual(['upload-session-id'])
+  })
 })
