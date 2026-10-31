@@ -14,8 +14,12 @@
  *     REQUESTED for a create (never the echoed one); a completion mismatch
  *     keeps the resume record and says the file may already be there. (The
  *     checks themselves live in api.ts: l13-api-echo-wire.test.ts.)
+ * E6  a folder name never crosses the wire in plaintext: with the vault
+ *     locked, Drive's New folder and the move dialog's new folder send nothing.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { installMocks, cap, echo, resetCaptures } from './helpers/upload-share-mocks'
 
@@ -320,5 +324,85 @@ describe('E5: an upload cleans up after a mismatch only where it is safe', () =>
     expect(cap.ownerKeys).toEqual([])
     // The toast shows that sentence, not a generic fallback.
     expect(userFriendlyError(err)).toBe(SERVER_CHANGED_ITEM_ID_AFTER_UPLOAD_MESSAGE)
+  })
+})
+
+// ── E6 / E7: folders named in the UI ─────────────────────────────────────────
+
+const SRC = join(import.meta.dir, '..', 'src')
+const source = (relative: string) => readFileSync(join(SRC, relative), 'utf8')
+/** The body of `name`'s handler, from its declaration to the next blank-line-separated declaration. */
+function handlerBody(text: string, name: string): string {
+  const start = text.search(new RegExp(`(async function ${name}\\(|const ${name} = async)`))
+  expect(start).toBeGreaterThan(-1)
+  return text.slice(start, start + 2500)
+}
+
+/** The two UI sites that create a folder from a typed name, with the sealer each uses. */
+const NAMED_FOLDER_SITES = [
+  { site: 'drive.tsx handleCreateFolder', file: 'pages/drive.tsx', handler: 'handleCreateFolder', seal: 'encryptFileMetadata' },
+  { site: 'move-modal.tsx handleNewFolder', file: 'components/move-modal.tsx', handler: 'handleNewFolder', seal: 'encryptFilename' },
+] as const
+
+describe('E6: a folder name never crosses the wire in plaintext', () => {
+  for (const s of NAMED_FOLDER_SITES) {
+    test(`${s.site}: vault locked -> refused with "Unlock your vault to create a folder.", no request`, async () => {
+      const { createNamedOwnerFolder } = await import('../src/lib/new-folder')
+      const crypto = await import('../src/lib/crypto')
+      let keysAsked = 0
+      const err = await caught(() => createNamedOwnerFolder({
+        name: 'Tax returns 2026',
+        parentId: 'parent-1',
+        vaultReady: false,
+        getFileKey: async () => { keysAsked++; return Uint8Array.of(5) },
+        getMasterKey: () => MK,
+        seal: crypto[s.seal],
+      }))
+      expect((err as Error).message).toBe('Unlock your vault to create a folder.')
+      expect(cap.createdFolders).toEqual([])
+      expect(keysAsked).toBe(0)
+    })
+
+    test(`${s.site}: vault open -> the name is sealed under the key of the id it proposes`, async () => {
+      const { createNamedOwnerFolder } = await import('../src/lib/new-folder')
+      const crypto = await import('../src/lib/crypto')
+      const asked: string[] = []
+      const created = await createNamedOwnerFolder({
+        name: 'Tax returns 2026',
+        parentId: 'parent-1',
+        vaultReady: true,
+        getFileKey: async (id) => { asked.push(id); return Uint8Array.of(5) },
+        getMasterKey: () => MK,
+        seal: crypto[s.seal],
+      })
+      expect(cap.createdFolders).toHaveLength(1)
+      const sent = cap.createdFolders[0]
+      expect(sent.folderId).toMatch(V4)
+      expect(created.id).toBe(sent.folderId)
+      expect(asked).toEqual([sent.folderId])
+      expect(sent.nameEncrypted).not.toContain('Tax returns 2026')
+      expect(JSON.parse(sent.nameEncrypted).nonce).toEqual([5])
+    })
+
+    test(`${s.site}: the site creates through createNamedOwnerFolder and never starts from the plain name`, () => {
+      const body = handlerBody(source(s.file), s.handler)
+      expect(body).toContain('createNamedOwnerFolder(')
+      expect(body).toContain(`seal: ${s.seal}`)
+      expect(body).not.toMatch(/nameEncrypted\s*=\s*name\b/)
+    })
+  }
+
+  test('no module in src/ seeds a name_encrypted with a plain name', () => {
+    const offenders: string[] = []
+    const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => {
+      const path = join(dir, n)
+      return statSync(path).isDirectory() ? walk(path) : /\.(ts|tsx)$/.test(n) ? [path] : []
+    })
+    for (const file of walk(SRC)) {
+      readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+        if (/let nameEncrypted\s*=\s*name\b/.test(line)) offenders.push(`${file.slice(SRC.length + 1)}:${i + 1}`)
+      })
+    }
+    expect(offenders).toEqual([])
   })
 })

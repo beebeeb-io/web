@@ -4,9 +4,9 @@ import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { listFiles } from '../lib/api'
-import { createOwnerFolder } from '../lib/owner-upload-key'
+import { createNamedOwnerFolder } from '../lib/new-folder'
 import { useKeys } from '../lib/key-context'
-import { decryptFileMetadata, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
+import { decryptFileMetadata, encryptFilename } from '../lib/crypto'
 
 interface MoveModalProps {
   open: boolean
@@ -31,7 +31,7 @@ export function MoveModal({
   mode: initialMode = 'move',
   onConfirm,
 }: MoveModalProps) {
-  const { getFileKey, getMasterKey, isUnlocked } = useKeys()
+  const { getFileKey, getMasterKey, isUnlocked, cryptoReady } = useKeys()
   const [folders, setFolders] = useState<FolderNode[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -127,21 +127,17 @@ export function MoveModal({
     setCreatingFolder(true)
     try {
       const parentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
-      const folderId = crypto.randomUUID()
-      let nameEncrypted = name
-      let nameKey: Uint8Array | undefined
-      if (isUnlocked) {
-        nameKey = await getFileKey(folderId)
-        const enc = await encryptFilename(nameKey, name)
-        nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      }
-      // Inside a shared folder its name-key wrap is published too.
-      const created = await createOwnerFolder({
-        nameEncrypted,
+      // The name is sealed under the key of an id minted for this folder
+      // before anything is sent; with the vault locked nothing is sent
+      // (src/lib/new-folder.ts). Inside a shared folder its name-key wrap is
+      // published too.
+      const created = await createNamedOwnerFolder({
+        name,
         parentId,
-        folderId,
-        nameKey,
-        masterKey: nameKey ? getMasterKey() : undefined,
+        vaultReady: isUnlocked && cryptoReady,
+        getFileKey: (id) => getFileKey(id),
+        getMasterKey,
+        seal: encryptFilename,
       })
       setDecryptedNames((prev) => ({ ...prev, [created.id]: name }))
       setSearch('')

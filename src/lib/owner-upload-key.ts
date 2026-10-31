@@ -67,9 +67,10 @@ export async function publishOwnerUploadKey(
  * Create a folder the owner names, and publish its name-key wrap when it lands
  * inside a shared folder. Without that wrap a guest or member cannot read the
  * new folder's name (its name is sealed under its own key, derived from the
- * owner's master key). `nameKey` is that key; omit it for a folder created
- * while the vault is locked (its name is not encrypted, so there is nothing
- * to publish).
+ * owner's master key). `nameKey` is that key; without it nothing is published.
+ * `nameEncrypted` is always the sealed name: no site sends a plain one (a
+ * folder named in the UI goes through new-folder.ts, which refuses while the
+ * vault is locked).
  */
 export async function createOwnerFolder(args: {
   nameEncrypted: string
