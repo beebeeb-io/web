@@ -82,6 +82,8 @@ const stubStream = (masterKey: Uint8Array) => ({
   // Task 1943: the upload asks the encryptor's format (recorded with the
   // session) and, on a resume, core's resume policy. A new v1 upload here.
   format: async () => 1,
+  // A replace applies the listed row's pin (0 here, core's write format: v1).
+  applyRecordedPin: async () => 1,
   resumePolicy: async () => 'continue' as const,
   pushChunk: async () => new Uint8Array([masterKey[0]]),
   finish: async () => ({ chunk_count: 1, total_plaintext_bytes: 4, total_ciphertext_bytes: 1 }),
@@ -134,6 +136,9 @@ export async function installMocks(): Promise<void> {
       cap.derivedKeyIds.push(id)
       return Uint8Array.of(0xd0)
     },
+    // A replace (`replaceOf`) reads the listed row's pin first; every row here
+    // records pin 0 (core's write format).
+    readFileMetadata: async () => ({ name: 'listed.txt', mime_type: null, pin: 0 }),
   })
 
   // shared_folders_v1 ON: the owner-upload publish under test is a flag-on path.

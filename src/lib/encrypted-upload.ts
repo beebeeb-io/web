@@ -23,6 +23,8 @@ import {
   readFileMetadata,
   toContentPin,
   UnverifiedFileMetadataError,
+  deriveFileKey,
+  zeroize,
   type ContentPin,
 } from './crypto'
 import { initUpload, uploadChunk, completeUpload, getUploadStatus } from './api'
@@ -36,6 +38,8 @@ import {
   saveUploadState,
   removeUploadState,
   recordedCountry,
+  planResume,
+  type ResumePlan,
   type UploadState,
 } from './upload-resume'
 import { isLikelyAlbumArtOrIcon } from './photo-library'
@@ -120,6 +124,9 @@ export const UNVERIFIED_REPLACE_COPY =
 
 const uploadAdmission = new WorkQueue(2)
 
+/** A fresh canonical v4 id, for an upload that may not reuse the id it found. */
+const mintFileId = (): string => crypto.randomUUID()
+
 /** All upload entry points share admission, including retries and folder uploads. */
 export function encryptedUpload(...args: Parameters<typeof uploadFile>): ReturnType<typeof uploadFile> {
   const owner = expectedUserHeaders()['X-Beebeeb-Expected-User']
@@ -133,7 +140,25 @@ export function encryptedUpload(...args: Parameters<typeof uploadFile>): ReturnT
   }, args[8])
 }
 
-async function uploadFile(
+/** `uploadFile`'s parameters: `uploadFileWith`'s, without its own-keys list. */
+type UploadFileArgs = Parameters<typeof uploadFileWith> extends [Uint8Array[], ...infer Rest] ? Rest : never
+
+/**
+ * One upload. Keys it derives itself (an upload restarted under an id it
+ * minted, see `writeUnderOwnId`) are zeroized when it ends, whatever the
+ * outcome; keys the caller passed in stay the caller's.
+ */
+async function uploadFile(...args: UploadFileArgs): Promise<DriveFile> {
+  const ownKeys: Uint8Array[] = []
+  try {
+    return await uploadFileWith(ownKeys, ...args)
+  } finally {
+    for (const key of ownKeys) zeroize(key)
+  }
+}
+
+async function uploadFileWith(
+  ownKeys: Uint8Array[],
   file: File,
   fileId: string,
   fileKey: Uint8Array,
@@ -241,7 +266,7 @@ async function uploadFile(
     return serializeEncryptedBlob(encName.nonce, encName.ciphertext)
   }
 
-  async function startUpload(requestedFileId: string = fileId): Promise<void> {
+  async function startUpload(requestedFileId: string = serverFileId): Promise<void> {
     // `signal` MUST reach the actual `fetch()` call, not just `withNetworkRetry`
     // (task 1571 web PR #106, Codex P1) — otherwise a discard-during-save
     // aborts nothing server-side: `/api/v1/uploads/init` runs to completion
@@ -281,6 +306,14 @@ async function uploadFile(
     region = init.region
   }
 
+  // L13 (SF-0001): a stored session is adopted only when THIS client marked
+  // its id as its own; `planResume` (upload-resume.ts) is the one rule, shared
+  // with the Drive resume banner. A resume writes under the id it resumes, so
+  // the caller's key stays the key of the id this upload proposes.
+  if (resumeFileId !== undefined && resumeFileId !== fileId) {
+    throw new Error('A resumed upload must write under the id it resumes.')
+  }
+
   let fingerprint: string
   if (resumeFileId) {
     // Caller explicitly wants to resume this file ID
@@ -288,32 +321,38 @@ async function uploadFile(
     fingerprint = await computeFingerprint(file)
     const existing = await findByFingerprint(fingerprint)
     const record = existing?.fileId === resumeFileId ? existing : null
-    adoptRecordedReplacePin(record, resumeFileId)
-    if (record?.upload_session_id) {
-      uploadSessionId = record.upload_session_id
-      objectVersionId = record.object_version_id ?? null
-      chunkBytes = record.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
-      totalChunks = record.chunk_count ?? record.totalChunks
-      region = record.region ?? null
-      country = recordedCountry(record)
-      resumingStoredFrames = true
-      sessionFormat = record.chunk_format
+    const plan = record ? planResume(record, mintFileId) : null
+    if (record && plan && plan.kind !== 'resume') {
+      await restartStoredSession(record, plan)
+      await persistResumeState()
     } else {
-      if (record) {
+      adoptRecordedReplacePin(record, resumeFileId)
+      if (record?.upload_session_id) {
+        uploadSessionId = record.upload_session_id
+        objectVersionId = record.object_version_id ?? null
         chunkBytes = record.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
         totalChunks = record.chunk_count ?? record.totalChunks
         region = record.region ?? null
-      country = recordedCountry(record)
-      }
-      try {
-        const status = await getUploadStatus(resumeFileId)
-        skipChunks = new Set(status.uploaded_chunks)
+        country = recordedCountry(record)
         resumingStoredFrames = true
-        sessionFormat = record?.chunk_format
-      } catch {
-        // Status check failed — server record may be gone, start fresh
-        skipChunks = new Set()
-        await startUpload()
+        sessionFormat = record.chunk_format
+      } else {
+        if (record) {
+          chunkBytes = record.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
+          totalChunks = record.chunk_count ?? record.totalChunks
+          region = record.region ?? null
+          country = recordedCountry(record)
+        }
+        try {
+          const status = await getUploadStatus(resumeFileId)
+          skipChunks = new Set(status.uploaded_chunks)
+          resumingStoredFrames = true
+          sessionFormat = record?.chunk_format
+        } catch {
+          // Status check failed — server record may be gone, start fresh
+          skipChunks = new Set()
+          await startUpload()
+        }
       }
     }
   } else {
@@ -326,28 +365,33 @@ async function uploadFile(
       existing.fileId === fileId &&
       existing.fileSize === file.size
     ) {
-      // Found a prior upload — check server status
-      serverFileId = existing.fileId
-      chunkBytes = existing.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
-      totalChunks = existing.chunk_count ?? existing.totalChunks
-      region = existing.region ?? null
-      country = recordedCountry(existing)
-      adoptRecordedReplacePin(existing, fileId)
-      if (existing.upload_session_id) {
-        uploadSessionId = existing.upload_session_id
-        objectVersionId = existing.object_version_id ?? null
-        resumingStoredFrames = true
-        sessionFormat = existing.chunk_format
+      const plan = planResume(existing, mintFileId)
+      if (plan.kind !== 'resume') {
+        await restartStoredSession(existing, plan)
       } else {
-        try {
-          const status = await getUploadStatus(existing.fileId)
-          skipChunks = new Set(status.uploaded_chunks)
+        // Found a prior upload — check server status
+        serverFileId = existing.fileId
+        chunkBytes = existing.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
+        totalChunks = existing.chunk_count ?? existing.totalChunks
+        region = existing.region ?? null
+        country = recordedCountry(existing)
+        adoptRecordedReplacePin(existing, fileId)
+        if (existing.upload_session_id) {
+          uploadSessionId = existing.upload_session_id
+          objectVersionId = existing.object_version_id ?? null
           resumingStoredFrames = true
           sessionFormat = existing.chunk_format
-        } catch {
-          // Server doesn't know about it anymore — start fresh
-          await removeUploadState(existing.fileId)
-          await startUpload()
+        } else {
+          try {
+            const status = await getUploadStatus(existing.fileId)
+            skipChunks = new Set(status.uploaded_chunks)
+            resumingStoredFrames = true
+            sessionFormat = existing.chunk_format
+          } catch {
+            // Server doesn't know about it anymore — start fresh
+            await removeUploadState(existing.fileId)
+            await startUpload()
+          }
         }
       }
     } else {
@@ -367,6 +411,32 @@ async function uploadFile(
 
     // Save state to IndexedDB for future resume
     await persistResumeState()
+  }
+
+  /**
+   * L13: a stored session this client did not mark as its own (written before
+   * the marker existed) is never adopted: no stored frame, chunk status or
+   * session of it is reused, and it is not abandoned (see above). The upload
+   * starts over in a fresh init, recorded with the marker by the caller.
+   *
+   * A create record's id may be the server's, so it is never proposed again:
+   * the upload moves to a fresh id minted here, with its own key and name.
+   * The one exception is a caller that targets that id as a listed row it
+   * is replacing (`replaceOf`), which L13 allows for a version.
+   */
+  async function restartStoredSession(record: UploadState, plan: ResumePlan): Promise<void> {
+    await removeUploadState(record.fileId)
+    if (!options.replaceOf) await writeUnderOwnId(plan.fileId)
+    await startUpload(serverFileId)
+  }
+
+  /** Move this upload to an id minted here: its own key, and its name sealed under it. */
+  async function writeUnderOwnId(id: string): Promise<void> {
+    const ownKey = await deriveFileKey(masterKey, id)
+    ownKeys.push(ownKey)
+    serverFileId = id
+    activeFileKey = ownKey
+    nameEncrypted = await encryptMetadata(activeFileKey)
   }
 
   async function persistResumeState(): Promise<void> {

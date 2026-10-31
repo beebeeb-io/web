@@ -86,13 +86,13 @@ import {
 } from '../components/upgrade-nudge-modal'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { UploadRestartFailedError } from '../lib/upload-session-reinit'
-import { prepareResume } from '../lib/resume-under-own-id'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../lib/bulk-download'
 import {
   computeFingerprint,
   getActiveUploads,
   findByFingerprint,
+  planResume,
   removeUploadState,
   type UploadState,
 } from '../lib/upload-resume'
@@ -1157,26 +1157,25 @@ export function Drive() {
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== match.fileId))
 
       // L13 (SF-0001): only a session this client minted may be resumed. A
-      // record from before the marker (its id may be the server's) is dropped
-      // locally and restarted under a fresh id this client chooses now — never
-      // resumed, never left looping on the old id. Its row is not abandoned
-      // file-wide (that could end another device's live upload); the server's
-      // lease sweep ends the stale session.
-      const plan = await prepareResume(match, () => crypto.randomUUID())
-      if (plan.restarted) {
+      // record from before the marker (its id may be the server's) restarts
+      // under a fresh id this client chooses now — never resumed, never left
+      // looping on the old id. `planResume` is the same rule encryptedUpload
+      // applies; its row is not abandoned file-wide (that could end another
+      // device's live upload), the server's lease sweep ends the stale session.
+      const plan = planResume(match, () => crypto.randomUUID())
+      if (plan.kind !== 'resume') {
         showToast({
           icon: 'upload',
           title: 'Upload restarted',
           description: `${file.name} was started by an older version, so it uploads again as a new file.`,
         })
       }
-      const resumeFileId = plan.abandonId ? undefined : plan.resumeId
-      const fileKey = await getFileKey(plan.resumeId)
+      const fileKey = await getFileKey(plan.fileId)
       try {
         let resumeStartedAt: number | undefined
         await encryptedUpload(
           file,
-          plan.resumeId,
+          plan.fileId,
           fileKey,
           getMasterKey(),
           match.parentId ?? undefined,
@@ -1203,12 +1202,14 @@ export function Drive() {
               ),
             )
           },
-          resumeFileId, // only a self-minted session resumes
+          // A restart under a fresh id drops the old record itself (it is
+          // another id's): only a resumed session is named here.
+          plan.kind === 'resume' ? plan.fileId : undefined,
           undefined,
           undefined,
         )
         setUploads((prev) => prev.filter((u) => u.id !== uploadId))
-        showToast({ icon: 'check', title: plan.abandonId ? 'Uploaded' : 'Upload resumed', description: file.name })
+        showToast({ icon: 'check', title: plan.kind === 'resume' ? 'Upload resumed' : 'Uploaded', description: file.name })
         fetchFiles()
       } catch (err) {
         // Task 1589: the server swept this paused upload (its lease expired)

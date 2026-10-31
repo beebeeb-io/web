@@ -95,34 +95,43 @@ export interface UploadState {
    * L13 (contract 2275, SF-0001): this session's `fileId` is one THIS client
    * chose (a minted id, or a listed row's id), never an id the server handed
    * back. Records written before this field existed have no marker: their id
-   * may be server-chosen, so they are abandoned, never resumed.
+   * may be server-chosen, so they restart, never resume (`planResume`).
    */
   selfMinted?: true
   parentId: string | null
   createdAt: number // Date.now()
 }
 
-/** The id a resume must use, and the legacy id (if any) to abandon first. */
+/**
+ * What a stored upload session becomes when this client picks it up again
+ * (the Drive resume banner, or `encryptedUpload` finding it by fingerprint).
+ */
 export interface ResumePlan {
-  /** The id the upload writes under; a fresh client-chosen id for a legacy record. */
-  resumeId: string
-  /** A stored session this client did not mint: abandon it server-side, never resume it. */
-  abandonId: string | null
+  /**
+   * - `resume`: this client marked the record's id as its own; its session
+   *   continues (core's resume rule still decides about its frames).
+   * - `restart-new`: written before the marker, so its id may be the server's.
+   *   Never adopted and never proposed again: the upload starts over in a
+   *   fresh init under `fileId`, a fresh id this client mints now.
+   */
+  kind: 'resume' | 'restart-new'
+  /** The id the upload writes under. */
+  fileId: string
 }
 
 /**
- * L13: a persisted session may only be resumed when this client minted the id
- * itself. A record without the marker (or whose stored id is not the one being
- * resumed) is abandoned through the upload-abandon endpoint and the upload
- * restarts under a fresh id the client chooses now — it is never resumed, and
- * never left looping on the old id.
+ * L13 (contract 2275, SF-0001): the ONE rule for a stored session, used by
+ * both the Drive resume banner and `encryptedUpload` itself. A session is
+ * resumed only when this client minted its id; any other record restarts.
+ * Nothing here abandons anything server-side: the only abandon the server
+ * offers is file-wide, so the stale session is left to its lease sweep.
  */
 export function planResume(
   record: Pick<UploadState, 'fileId' | 'selfMinted'>,
   mintId: () => string,
 ): ResumePlan {
-  if (record.selfMinted === true) return { resumeId: record.fileId, abandonId: null }
-  return { resumeId: mintId(), abandonId: record.fileId }
+  if (record.selfMinted === true) return { kind: 'resume', fileId: record.fileId }
+  return { kind: 'restart-new', fileId: mintId() }
 }
 
 /**

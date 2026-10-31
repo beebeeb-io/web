@@ -4,6 +4,8 @@
  *
  * E1  the import mints its own folder ids (per folder, per run) and a failed
  *     create stops that subtree instead of falling back to a guessed id.
+ * E3  `uploadFile` itself never adopts a stored session this client did not
+ *     mark as its own; `planResume` is the one rule (Drive + uploadFile).
  * E4  a stored session found by fingerprint is never abandoned file-wide (the
  *     only abandon the server offers ends whatever upload the row holds now).
  */
@@ -144,9 +146,81 @@ describe('E4: a stored session found by fingerprint is never abandoned file-wide
     expect(cap.uploadedChunks.map((c) => c.uploadSessionId)).toEqual(['upload-session-id'])
   })
 
-  test('the resume banner restarting a legacy record makes no abandon call either', async () => {
-    const { prepareResume } = await import('../src/lib/resume-under-own-id')
-    await prepareResume({ fileId: 'other-row-id' }, () => 'fresh-own-id')
+  test('a legacy record for the SAME row, restarted by uploadFile, makes no abandon call either', async () => {
+    echo.stored = { ...legacyOtherRow, fileId: 'legacy-row-id' }
+    await encryptedUpload(new File(['a'], 'a.txt'), 'legacy-row-id', FILE_KEY, MK, undefined, undefined, 'legacy-row-id')
     expect(cap.abandons).toEqual([])
+  })
+})
+
+// ── E3: the rule lives in uploadFile ─────────────────────────────────────────
+
+describe('E3: uploadFile never adopts a stored session this client did not mark as its own', () => {
+  /** A create session an older client wrote: no marker, so its id may be the server's. */
+  const legacyCreate = (fileId: string) => ({
+    fingerprint: 'fingerprint', fileId, fileName: 'a.txt', fileSize: 1, totalChunks: 1,
+    upload_session_id: 'legacy-session', object_version_id: 'ov-legacy', chunk_size_bytes: 4, chunk_count: 1,
+    chunk_format: 1, parentId: null, createdAt: 1,
+  })
+  const initIds = () => cap.initCalls.map((c) => (c as { file_id: string }).file_id)
+  const initName = (i: number) => JSON.parse((cap.initCalls[i] as { name_encrypted: string }).name_encrypted)
+
+  function expectRestartedUnderOwnId(uploadedId: string) {
+    const [fresh, ...more] = initIds()
+    expect(more).toEqual([])
+    expect(fresh).toMatch(V4)
+    expect(fresh).not.toBe('legacy-id')
+    expect(uploadedId).toBe(fresh)
+    // Never into the stored session, never under the stored id.
+    expect(cap.uploadedChunks).toEqual([{ fileId: fresh, index: 0, firstByte: 9, uploadSessionId: 'upload-session-id' }])
+    // Its own key, derived for its own id, sealed the name the init sent.
+    expect(cap.derivedKeyIds).toEqual([fresh])
+    expect(initName(0).nonce).toEqual([0xd0])
+    // The legacy record goes locally; nothing is abandoned server-side.
+    expect(cap.removedStates).toContain('legacy-id')
+    expect(cap.abandons).toEqual([])
+    for (const state of cap.savedStates) expect(state).toMatchObject({ fileId: fresh, selfMinted: true })
+  }
+
+  test('a resumeFileId matching an unmarked create record does a fresh init under a fresh own id', async () => {
+    echo.stored = legacyCreate('legacy-id')
+    const uploaded = await encryptedUpload(new File(['a'], 'a.txt'), 'legacy-id', FILE_KEY, MK,
+      undefined, undefined, 'legacy-id')
+    expectRestartedUnderOwnId(uploaded.id)
+  })
+
+  test('the same record found by fingerprint alone (no resumeFileId) is not adopted either', async () => {
+    echo.stored = legacyCreate('legacy-id')
+    const uploaded = await encryptedUpload(new File(['a'], 'a.txt'), 'legacy-id', FILE_KEY, MK)
+    expectRestartedUnderOwnId(uploaded.id)
+  })
+
+  test('a replace of that row as a listed row (replaceOf) gets a fresh session under the row, never the stored one', async () => {
+    echo.stored = legacyCreate('legacy-id')
+    const uploaded = await encryptedUpload(new File(['a'], 'a.txt'), 'legacy-id', FILE_KEY, MK,
+      undefined, undefined, undefined, undefined, undefined, { replaceOf: { nameEncrypted: 'listed-name' } })
+    expect(uploaded.id).toBe('legacy-id')
+    expect(initIds()).toEqual(['legacy-id'])
+    expect(cap.uploadedChunks.map((c) => c.uploadSessionId)).toEqual(['upload-session-id'])
+    expect(cap.derivedKeyIds).toEqual([])
+    expect(cap.abandons).toEqual([])
+  })
+
+  test('a record this client marked still resumes its own session: no init', async () => {
+    echo.stored = { ...legacyCreate('own-id'), selfMinted: true }
+    const uploaded = await encryptedUpload(new File(['a'], 'a.txt'), 'own-id', FILE_KEY, MK,
+      undefined, undefined, 'own-id')
+    expect(uploaded.id).toBe('own-id')
+    expect(initIds()).toEqual([])
+    expect(cap.uploadedChunks.map((c) => c.uploadSessionId)).toEqual(['legacy-session'])
+  })
+
+  test('a resume names the id it writes under: any other pairing is refused before anything is sent', async () => {
+    echo.stored = { ...legacyCreate('own-id'), selfMinted: true }
+    const err = await caught(() => encryptedUpload(new File(['a'], 'a.txt'), 'some-other-id', FILE_KEY, MK,
+      undefined, undefined, 'own-id'))
+    expect(err).toBeInstanceOf(Error)
+    expect(cap.initCalls).toEqual([])
+    expect(cap.uploadedChunks).toEqual([])
   })
 })

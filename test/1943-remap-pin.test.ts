@@ -213,7 +213,11 @@ describe('resume never applies a pin recorded for a different file id', () => {
   const recordFor = (over: Partial<UploadState>): UploadState => ({
     fingerprint: 'fp', fileId: NEW_ID, fileName: 'report.bin', fileSize: 4, totalChunks: 1,
     upload_session_id: 'new-session', object_version_id: 'ov-new', chunk_size_bytes: 4, chunk_count: 1,
-    region: 'Europe', parentId: null, createdAt: 1, chunk_format: 1, ...over,
+    region: 'Europe', parentId: null, createdAt: 1, chunk_format: 1,
+    // L13 (SF-0001): a record THIS client wrote (marked), so these tests are
+    // about core's resume rule; an unmarked record restarts (l13-r2.test.ts E3).
+    selfMinted: true,
+    ...over,
   })
 
   test('a record whose pin names another file (written before this fix) is resumed without the pin', async () => {

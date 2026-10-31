@@ -245,39 +245,25 @@ describe('A7c: a persisted session is resumed only when this client minted its i
   const legacy = { fileId: 'server-chosen-id' }
   const own = { fileId: 'own-session-id', selfMinted: true as const }
 
-  test('planResume: a record without the marker is abandoned and restarted under a fresh own id', async () => {
+  test('planResume: a record without the marker restarts under a fresh own id', async () => {
     const { planResume } = await import('../src/lib/upload-resume')
-    const plan = planResume(legacy, () => 'fresh-own-id')
-    expect(plan).toEqual({ resumeId: 'fresh-own-id', abandonId: 'server-chosen-id' })
+    expect(planResume(legacy, () => 'fresh-own-id')).toEqual({ kind: 'restart-new', fileId: 'fresh-own-id' })
   })
 
   test('planResume: a record with the marker and its own id resumes that id', async () => {
     const { planResume } = await import('../src/lib/upload-resume')
-    expect(planResume(own, () => 'fresh-own-id')).toEqual({ resumeId: 'own-session-id', abandonId: null })
+    expect(planResume(own, () => 'fresh-own-id')).toEqual({ kind: 'resume', fileId: 'own-session-id' })
   })
 
-  test('prepareResume drops the legacy record locally and never abandons its row file-wide (E4)', async () => {
-    const { prepareResume } = await import('../src/lib/resume-under-own-id')
-    const plan = await prepareResume(legacy, () => 'fresh-own-id')
-    expect(plan).toMatchObject({ resumeId: 'fresh-own-id', abandonId: 'server-chosen-id', restarted: true })
-    expect(cap.abandons).toEqual([])
-    expect(cap.removedStates).toEqual(['server-chosen-id'])
-  })
-
-  test('prepareResume resumes a self-minted record without abandoning anything', async () => {
-    const { prepareResume } = await import('../src/lib/resume-under-own-id')
-    const plan = await prepareResume(own, () => 'fresh-own-id')
-    expect(plan).toMatchObject({ resumeId: 'own-session-id', abandonId: null, restarted: false })
-    expect(cap.abandons).toEqual([])
-    expect(cap.removedStates).toEqual([])
-  })
-
-  test('the restarted upload writes under the fresh id and resumes its own session next time', async () => {
-    const { prepareResume } = await import('../src/lib/resume-under-own-id')
-    const plan = await prepareResume(legacy, () => 'fresh-own-id')
-    const uploaded = await encryptedUpload(new File(['r'], 'r.txt'), plan.resumeId, FILE_KEY, MK)
+  test('the restarted upload writes under the fresh id, drops the legacy record and abandons nothing', async () => {
+    const { planResume } = await import('../src/lib/upload-resume')
+    echo.stored = { fingerprint: 'fingerprint', fileId: 'server-chosen-id', fileName: 'r.txt', fileSize: 1, totalChunks: 1, parentId: null, createdAt: 1 }
+    const plan = planResume(legacy, () => 'fresh-own-id')
+    // As the Drive resume banner calls it for a restart: the fresh id, no resumeFileId.
+    const uploaded = await encryptedUpload(new File(['r'], 'r.txt'), plan.fileId, FILE_KEY, MK)
     expect(uploaded.id).toBe('fresh-own-id')
     expect(cap.uploadedChunks.map((c) => c.fileId)).toEqual(['fresh-own-id'])
+    expect(cap.removedStates).toContain('server-chosen-id')
     // The new record carries the marker, so the next resume keeps this id.
     expect(cap.savedStates.every((s) => (s as { selfMinted?: boolean }).selfMinted === true)).toBe(true)
     expect(cap.abandons).toEqual([])
