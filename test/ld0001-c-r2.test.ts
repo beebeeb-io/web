@@ -268,9 +268,10 @@ test('missing_content_length_uses_the_real_body_length_for_the_legacy_rule', asy
     { onProgress: (p) => events.push({ ...p }) },
   )
   expect(toHex(new Uint8Array(await plaintext.arrayBuffer()))).toBe(toHex(f.plain))
-  expect(events.length).toBe(1)
-  expect(events[0].phase).toBe('done')
-  expect(events[0].decryptedChunks).toBe(f.chunkCount)
+  // Round 3 (C3): the buffered path now also reports byte progress before
+  // `done`; the legacy size rule is what this test pins.
+  expect(events.at(-1)!.phase).toBe('done')
+  expect(events.at(-1)!.decryptedChunks).toBe(f.chunkCount)
 })
 
 // ── Item 5: every decrypted part emits ──────────────────────────────────────

@@ -500,6 +500,44 @@ export async function pipeDecryptedChunks(
  * downloading, then decrypting, then done. Every plaintext part is wiped after
  * it is copied into the result, and on any failure (M7).
  */
+/**
+ * Read a whole response body (the buffered path, C3), reporting the bytes
+ * received on the first read and then every PROGRESS_BYTES_STEP.
+ */
+async function readWholeBody(res: Response, onReceived: (receivedBytes: number) => void): Promise<Uint8Array> {
+  if (!res.body) return new Uint8Array(await res.arrayBuffer())
+  const reader = res.body.getReader()
+  const parts: Uint8Array[] = []
+  let received = 0
+  let lastReported = -1
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value || value.byteLength === 0) continue
+      parts.push(value)
+      received += value.byteLength
+      if (lastReported < 0 || received - lastReported >= PROGRESS_BYTES_STEP) {
+        lastReported = received
+        onReceived(received)
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock()
+    } catch {
+      // Released already.
+    }
+  }
+  const out = new Uint8Array(received)
+  let offset = 0
+  for (const part of parts) {
+    out.set(part, offset)
+    offset += part.byteLength
+  }
+  return out
+}
+
 async function decryptWholeFileResponse(
   res: Response,
   fileKey: Uint8Array,
@@ -517,17 +555,34 @@ async function decryptWholeFileResponse(
   // is read, so keep today's buffered path: it applies the legacy `size_bytes`
   // rule against the REAL body length (round-2 review, item 4).
   if (!res.body || contentLength === null) {
-    const encryptedBytes = new Uint8Array(await res.arrayBuffer())
+    // C3: this path still reports byte progress from the real body (with no
+    // total, so the copy says `Downloading 12.4 MB`), and its `done` runs
+    // inside the wipe like the pipelined path's.
+    const encryptedBytes = await readWholeBody(res, (receivedBytes) => {
+      opts?.onProgress?.({ phase: 'downloading', receivedBytes, totalBytes: null, decryptedChunks: 0, totalChunks })
+    })
+    opts?.onProgress?.({
+      phase: 'decrypting',
+      receivedBytes: encryptedBytes.length,
+      totalBytes: encryptedBytes.length,
+      decryptedChunks: 0,
+      totalChunks,
+    })
     const decrypted = await decryptEncryptedBytes(
       fileKey, content, encryptedBytes, totalChunks, sizeBytes, effectiveChunkSize,
     )
-    opts?.onProgress?.({
-      phase: 'done',
-      receivedBytes: encryptedBytes.length,
-      totalBytes: encryptedBytes.length,
-      decryptedChunks: totalChunks,
-      totalChunks,
-    })
+    try {
+      opts?.onProgress?.({
+        phase: 'done',
+        receivedBytes: encryptedBytes.length,
+        totalBytes: encryptedBytes.length,
+        decryptedChunks: totalChunks,
+        totalChunks,
+      })
+    } catch (err) {
+      decrypted.fill(0)
+      throw err
+    }
     return decrypted
   }
 
@@ -854,7 +909,9 @@ export async function decryptToBlob(
 
   const decrypted = await decryptWholeFileResponse(res, fileKey, meta.content, chunkCount, sizeBytes, opts)
 
+  // C3: the Blob holds its own copy; wipe ours so one plaintext copy is alive.
   const plaintext = new Blob([decrypted as BlobPart], { type: blobMime })
+  decrypted.fill(0)
   dispatchDecrypted(fileId)
   return { plaintext, filename }
 }
@@ -894,7 +951,9 @@ export async function decryptVersionToBlob(
 
   const decrypted = await decryptWholeFileResponse(res, fileKey, meta.content, chunkCount, sizeBytes, opts)
 
+  // C3: the Blob holds its own copy; wipe ours so one plaintext copy is alive.
   const plaintext = new Blob([decrypted as BlobPart], { type: mimeType || meta.mimeType || 'application/octet-stream' })
+  decrypted.fill(0)
   dispatchDecrypted(fileId)
   return plaintext
 }

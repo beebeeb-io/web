@@ -221,3 +221,59 @@ describe('LD-0001 r3 C2: the over-cap path refuses instead of buffering', () => 
     }
   })
 })
+
+describe('LD-0001 r3 C3: one plaintext copy at peak, and progress on the buffered path', () => {
+  async function withBlobSpy<T>(run: (captured: Uint8Array[]) => Promise<T>): Promise<T> {
+    const captured: Uint8Array[] = []
+    const RealBlob = globalThis.Blob
+    class SpyBlob extends RealBlob {
+      constructor(parts?: BlobPart[], options?: BlobPropertyBag) {
+        super(parts, options)
+        for (const part of parts ?? []) if (part instanceof Uint8Array) captured.push(part)
+      }
+    }
+    globalThis.Blob = SpyBlob as typeof Blob
+    try {
+      return await run(captured)
+    } finally {
+      globalThis.Blob = RealBlob
+    }
+  }
+
+  test('the_plaintext_is_zeroed_after_the_blob_copy', async () => {
+    const f = buildFixture()
+    for (const kind of ['live', 'version'] as const) {
+      serve(f)
+      await withBlobSpy(async (captured) => {
+        const blob =
+          kind === 'live'
+            ? (await dl.decryptToBlob(f.fileId, f.fileKey, f.name, null, f.chunkCount, f.plain.length)).plaintext
+            : await dl.decryptVersionToBlob(f.fileId, 'v1', f.fileKey, f.name, null, f.chunkCount, f.plain.length)
+        expect(new Uint8Array(await blob.arrayBuffer())).toEqual(f.plain)
+        expect(captured.length).toBe(1)
+        expect(captured[0].length).toBe(f.plain.length)
+        expect(allZero(captured[0])).toBe(true)
+      })
+    }
+  })
+
+  test('the_buffered_path_reports_byte_progress_from_the_real_body', async () => {
+    const f = buildFixture()
+    serve(f, { contentLength: null, piece: 7 })
+    const events: TransferProgress[] = []
+    const res = await dl.decryptToBlob(f.fileId, f.fileKey, f.name, null, f.chunkCount, f.plain.length, {
+      onProgress: (p) => events.push({ ...p }),
+    })
+    expect(new Uint8Array(await res.plaintext.arrayBuffer())).toEqual(f.plain)
+    const downloading = events.filter((e) => e.phase === 'downloading')
+    expect(downloading.length).toBeGreaterThan(0)
+    expect(downloading.every((e) => e.totalBytes === null)).toBe(true)
+    expect(downloading.some((e) => e.receivedBytes > 0 && e.receivedBytes < f.wire.length)).toBe(true)
+    expect(events.at(-1)).toMatchObject({
+      phase: 'done',
+      receivedBytes: f.wire.length,
+      totalBytes: f.wire.length,
+      decryptedChunks: f.chunkCount,
+    })
+  })
+})
