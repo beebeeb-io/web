@@ -10,9 +10,10 @@
  * row's CURRENT name before anything is sealed. A key that does not open it
  * (the shared path fell through) refuses the rename: a name is never destroyed.
  */
-import { updateFile, type DriveFile } from './api'
+import { getFile, updateFile, type DriveFile } from './api'
 import { encryptFilename, serializeEncryptedBlob } from './crypto'
 import { needsOwnership } from './owner-adoption'
+import { assertOwnerRepairWritable } from './owner-repair'
 import { assertCurrentVersionWritable } from './owner-write-guard'
 
 export const RENAME_KEY_UNAVAILABLE = "This file's key isn't available, so it can't be renamed here."
@@ -53,6 +54,12 @@ export async function renameKeyFor(args: RenameKeyArgs): Promise<Uint8Array> {
  * read-only check runs before any key is resolved or name sealed, so a row
  * whose current version is upper_repair-sealed is refused even when it was
  * never opened, and nothing is PATCHed.
+ *
+ * Round 3 (X1): the read-only mark is checked on the id first, whatever the
+ * page has, and a row the page does not have in its listing (reached from the
+ * sidebar tree, search, a breadcrumb, or a list that refreshed) is read from
+ * the server. The write check and the resolved key then both use that row, so
+ * nothing falls back to the plain derivation.
  */
 export async function renameOwnerRow(
   args: RenameKeyArgs & {
@@ -62,10 +69,10 @@ export async function renameOwnerRow(
     residentUserId: string | null
   },
 ): Promise<void> {
-  if (args.file) {
-    await assertCurrentVersionWritable(args.file, args.masterKey, { viewerId: args.residentUserId })
-  }
-  const fileKey = await renameKeyFor(args)
+  assertOwnerRepairWritable(args.fileId)
+  const file = args.file && args.file.id === args.fileId ? args.file : await getFile(args.fileId)
+  await assertCurrentVersionWritable(file, args.masterKey, { viewerId: args.residentUserId })
+  const fileKey = await renameKeyFor({ ...args, file })
   const enc = await encryptFilename(fileKey, args.newName)
   await updateFile(args.fileId, { name_encrypted: serializeEncryptedBlob(enc.nonce, enc.ciphertext) })
 }

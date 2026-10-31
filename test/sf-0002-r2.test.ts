@@ -303,9 +303,17 @@ function contentOnlyUpperRow(): DriveFile {
 }
 
 /** The server: /download and /versions/:id/download answer with the given frames; writes answer JSON. */
-function server(current: Uint8Array, version: Uint8Array = current) {
+/**
+ * The server: /download and /versions/:id/download answer with the given
+ * frames; GET /files/:id answers with `fresh` (the row as the server has it
+ * now); writes answer JSON.
+ */
+function server(current: Uint8Array, version: Uint8Array = current, fresh: () => DriveFile = contentOnlyUpperRow) {
   return installFetch((url, init) => {
     const method = (init?.method ?? 'GET').toUpperCase()
+    if (method === 'GET' && url.endsWith(`/api/v1/files/${V1.file_id}`)) {
+      return new Response(JSON.stringify(fresh()), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
     if (method === 'GET' && url.endsWith(`/versions/${VERSION_ID}/download`)) {
       return new Response(version, { status: 200, headers: { 'X-Chunk-Count': '1', 'X-Chunk-Size': String(version.length - 28) } })
     }
@@ -775,5 +783,61 @@ describe('W8: share links and invites of a repaired row', () => {
       },
     })
     expect(key).toBe(plain)
+  })
+})
+
+// ══ Round 3 (delta review of 292b0f91..56478b8) ═════════════════════════════
+
+// ── X1: a rename of a row that is not in the listing is still checked ───────
+
+describe('X1: renameOwnerRow without the listed row', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  test('a never-opened content-only upper_repair row that is not in `files` is refused; nothing is PATCHed', async () => {
+    const net = server(UPPER_FRAME)
+    try {
+      await expect(renameOwnerRow({ ...renameArgs(contentOnlyUpperRow()), file: undefined })).rejects.toThrow(
+        OWNER_REPAIR_READ_ONLY,
+      )
+      expect(net.writes()).toHaveLength(0)
+      expect(isOwnerRepairReadOnly(V1.file_id)).toBe(true)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('a marked row that is not in `files` is refused before any request', async () => {
+    markOwnerRepairReadOnly(V1.file_id)
+    const net = server(ordinaryFrame())
+    try {
+      await expect(renameOwnerRow({ ...renameArgs(contentOnlyUpperRow()), file: undefined })).rejects.toThrow(
+        OWNER_REPAIR_READ_ONLY,
+      )
+      expect(net.calls).toHaveLength(0)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('an ordinary row that is not in `files` is renamed under the key resolved for the fetched row', async () => {
+    const net = server(ordinaryFrame())
+    const seen: string[] = []
+    try {
+      await renameOwnerRow({
+        ...renameArgs(contentOnlyUpperRow()),
+        file: undefined,
+        getFileKey: async () => {
+          throw new Error('the plain derivation must not be used')
+        },
+        getFileKeyForFile: async (f: DriveFile) => {
+          seen.push(f.id)
+          return loadWasm().derive_file_key(hexToBytes(V1.master_key_hex), enc.encode(V1.file_id))
+        },
+      })
+      expect(seen).toEqual([V1.file_id])
+      expect(net.writes().map((w) => w.method)).toEqual(['PATCH'])
+    } finally {
+      net.restore()
+    }
   })
 })
