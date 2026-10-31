@@ -306,3 +306,47 @@ describe('LD-0001 r3 B9: multi-range is refused, a malformed Range is ignored', 
     }
   })
 })
+
+describe('LD-0001 r3 B10: the registry is pruned and old ports are closed at once', () => {
+  test('an_entry_whose_owner_tab_is_gone_is_pruned_on_the_next_registration', async () => {
+    const { relay, clients } = relayWith(['tab-a', 'tab-b'])
+    const portA = registerFrom(relay, 'sid-a', 'tab-a')
+    const readerA = bodyOf(relay, 'sid-a')
+    await settle(2)
+    clients.splice(clients.indexOf('tab-a'), 1)
+    registerFrom(relay, 'sid-b', 'tab-b')
+    await settle(4)
+    expect(relay.registry.has('sid-a')).toBe(false)
+    expect(portA.closed).toBe(true)
+    expect((await outcome(readerA.read())).state).toBe('rejected')
+    expect(relay.registry.has('sid-b')).toBe(true)
+  })
+
+  test('a_claim_also_prunes_entries_whose_owner_is_gone', async () => {
+    const { relay, clients } = relayWith(['tab-a', 'tab-b'])
+    registerFrom(relay, 'sid-a', 'tab-a')
+    await settle(2)
+    clients.splice(clients.indexOf('tab-a'), 1)
+    void relay.claim(logic.sha256Hex('other'), 'tab-b')
+    await settle(4)
+    expect(relay.registry.has('sid-a')).toBe(false)
+  })
+
+  test('re_registration_by_the_owner_errors_responses_on_the_old_port_at_once', async () => {
+    const { relay } = relayWith()
+    const oldPort = registerFrom(relay, 'sid', 'tab-a')
+    const reader = bodyOf(relay, 'sid')
+    await settle(2)
+    expect(oldPort.sentOf('pull').length).toBe(1)
+    const newPort = registerFrom(relay, 'sid', 'tab-a')
+    expect((await outcome(reader.read())).state).toBe('rejected')
+    expect(oldPort.closed).toBe(true)
+    expect(relay.registry.get('sid').port).toBe(newPort)
+  })
+
+  test('entries_carry_no_last_activity_field', () => {
+    const { relay } = relayWith()
+    registerFrom(relay, 'sid', 'tab-a')
+    expect('lastActivityAt' in relay.registry.get('sid')).toBe(false)
+  })
+})

@@ -420,16 +420,72 @@
     function bindPort(entry) {
       entry.requests = entry.requests || new Map()
       var port = entry.port
+      // Messages are routed to THIS entry (its port), never to whatever entry
+      // later holds the same id.
       port.addEventListener('message', function (event) {
-        onPortMessage(entry.id, event.data)
+        onPortMessage(entry, event.data)
       })
       if (typeof port.start === 'function') port.start()
     }
 
+    /** Error every open response of `entry` and close its port (B10). */
+    function closeEntry(entry) {
+      if (entry.requests) {
+        entry.requests.forEach(function (request) {
+          stopTimer(request)
+          var pending = request.reject
+          request.resolve = null
+          request.reject = null
+          try {
+            request.controller.error(new Error('stream closed'))
+          } catch (err) {
+            // Already errored/closed.
+          }
+          if (pending) pending(new Error('stream closed'))
+        })
+        entry.requests.clear()
+      }
+      try {
+        entry.port.close()
+      } catch (err) {
+        // Already closed.
+      }
+    }
+
+    /**
+     * B10: drop every entry whose owner tab is gone (a clients.matchAll()
+     * miss). `knownClients` skips the lookup when the caller already has it.
+     */
+    async function prune(knownClients) {
+      var clients = knownClients
+      if (!clients) {
+        try {
+          clients = await deps.matchAll()
+        } catch (err) {
+          return
+        }
+      }
+      if (typeof registry.ids !== 'function') return
+      var live = new Set(
+        clients.map(function (client) {
+          return client.id
+        }),
+      )
+      registry.ids().forEach(function (id) {
+        var entry = registry.get(id)
+        if (entry && !live.has(entry.clientId)) closeStream(id)
+      })
+    }
+
     function register(entry) {
+      var previous = registry.get(entry.id)
       bindPort(entry)
-      entry.lastActivityAt = clock.now()
       registry.register(entry)
+      // B10: the owner re-registered (a fresh port after a network recovery
+      // or a new SW): responses bound to the old port can never be answered,
+      // so they error now instead of after 30 s.
+      if (previous && previous !== entry) closeEntry(previous)
+      void prune()
     }
 
     /** Disarm a request's silence timer (it runs only while a pull waits). */
@@ -539,8 +595,7 @@
       })
     }
 
-    function onPortMessage(id, data) {
-      var entry = registry.get(id)
+    function onPortMessage(entry, data) {
       if (!entry || !data || typeof data !== 'object') return
       var request = entry.requests && entry.requests.get(data.reqId)
       if (data.type === 'progress') {
@@ -570,23 +625,8 @@
     function closeStream(id) {
       var entry = registry.get(id)
       if (!entry) return
-      if (entry.requests) {
-        entry.requests.forEach(function (request) {
-          stopTimer(request)
-          try {
-            request.controller.error(new Error('stream closed'))
-          } catch (err) {
-            // Already errored/closed.
-          }
-        })
-        entry.requests.clear()
-      }
       registry.remove(id)
-      try {
-        entry.port.close()
-      } catch (err) {
-        // Already closed.
-      }
+      closeEntry(entry)
     }
 
     function dropWaiter(hash, waiter) {
@@ -605,6 +645,7 @@
       } catch (err) {
         return null
       }
+      void prune(clients)
       var targets = clients.filter(function (client) {
         return !clientId || client.id === clientId
       })
@@ -653,7 +694,6 @@
           port: data.port,
           clientId: sourceId || '',
           requests: new Map(),
-          lastActivityAt: clock.now(),
         })
         return true
       }
@@ -683,7 +723,6 @@
           port: data.port,
           clientId: sourceId || '',
           requests: new Map(),
-          lastActivityAt: clock.now(),
         }
         bindPort(entry)
         // The route applies claimAccepted() (hash + source.id) before it serves.
