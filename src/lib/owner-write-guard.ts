@@ -16,7 +16,7 @@
 // (when the viewer is known) a member's row are not sealed under an owner
 // convention, so there is nothing to resolve. Only a bounded prefix is read.
 
-import { getApiUrl, getToken, type DriveFile } from './api'
+import { getApiUrl, getToken, restoreVersion, type DriveFile, type FileVersion } from './api'
 import { ownerRepairContentKey } from './crypto'
 import { isRequestUpload } from './file-request-crypto'
 import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly, markOwnerRepairReadOnly } from './owner-repair'
@@ -232,6 +232,45 @@ export async function assertCurrentVersionWritable(
     markOwnerRepairReadOnly(file.id)
     throw new Error(OWNER_REPAIR_READ_ONLY)
   }
+}
+
+/**
+ * SF-0002 round 2 (W4): restoring a kept version makes it current, which is a
+ * new version of this row. Refused when the row itself is read-only (its mark
+ * or its current content), AND when the version being restored resolves as
+ * `upper_repair` (the row is then read-only: "ANY version"; it is marked).
+ */
+export async function assertRestoreWritable(
+  file: WriteTarget,
+  version: Pick<FileVersion, 'id' | 'size_bytes' | 'chunk_count'>,
+  masterKey: Uint8Array | undefined,
+  opts: WriteCheckOptions = {},
+): Promise<void> {
+  await assertCurrentVersionWritable(file, masterKey, opts)
+  if (file.is_folder || !masterKey || !isOwnerContentRow(file, opts.viewerId)) return
+  const verdict = await resolveVersion(
+    `/api/v1/files/${file.id}/versions/${version.id}/download`,
+    file.id,
+    version.size_bytes ?? 0,
+    Math.max(1, version.chunk_count ?? 1),
+    masterKey,
+  )
+  if (verdict === 'read_only') {
+    markOwnerRepairReadOnly(file.id)
+    throw new Error(OWNER_REPAIR_READ_ONLY)
+  }
+}
+
+/** Restore `version` to current, after {@link assertRestoreWritable}. Nothing is POSTed when refused. */
+export async function restoreOwnerVersion(args: {
+  file: WriteTarget
+  version: Pick<FileVersion, 'id' | 'size_bytes' | 'chunk_count'>
+  masterKey: Uint8Array | undefined
+  /** The account the resident key belongs to (`useKeys().getResidentUserId()`). */
+  residentUserId: string | null
+}): Promise<{ message: string; version_number: number }> {
+  await assertRestoreWritable(args.file, args.version, args.masterKey, { viewerId: args.residentUserId })
+  return restoreVersion(args.file.id, args.version.id)
 }
 
 /** The message to show for a refused owner write, or null when `err` is some other failure. */

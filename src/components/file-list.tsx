@@ -11,8 +11,9 @@ import { needsOwnership } from '../lib/owner-adoption'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
-import { decryptManyNames, encryptFilename, readFileMetadata, serializeEncryptedBlob } from '../lib/crypto'
-import { renameKeyFor } from '../lib/owner-rename'
+import { decryptManyNames, readFileMetadata } from '../lib/crypto'
+import { renameOwnerRow } from '../lib/owner-rename'
+import { ownerWriteRefusal } from '../lib/owner-write-guard'
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
@@ -24,7 +25,7 @@ import {
 } from '../lib/pending-select-timer'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
 import { formatBytes, timeAgo } from '../lib/format'
-import { setPreference, updateFile } from '../lib/api'
+import { setPreference } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
 import { SharePopover } from './share-popover'
 import { FolderViewerBadge } from './presence-avatars'
@@ -210,7 +211,7 @@ export function FileList({
   parentId,
   onRefresh,
 }: FileListProps) {
-  const { getFileKey, getFileKeyForFile, isUnlocked } = useKeys()
+  const { getFileKey, getFileKeyForFile, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
   const { showToast } = useToast()
 
   // ─── Active-share lookup ───────────────────────────
@@ -971,20 +972,27 @@ export function FileList({
       // decryptable via the same (request-key) path that reads it.
       // rv-web198c P2-4: a guest's or member's row is renamed under ITS key,
       // proven to open its current name (never the derived fall-through).
-      const fileKey = await renameKeyFor({
+      // SF-0002 round 2 (W4): the same write-time read-only check as the
+      // dialog rename runs first; a refused row is not PATCHed.
+      await renameOwnerRow({
         fileId: file.id,
         file,
+        newName,
         viewerId: null,
+        residentUserId: getResidentUserId(),
+        masterKey: getMasterKey(),
         getFileKey: async () => getFileKeyForFile(file),
         getFileKeyForFile,
         readName: readFileMetadata,
       })
-      const enc = await encryptFilename(fileKey, newName)
-      const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      await updateFile(file.id, { name_encrypted: nameEncrypted })
       onRefresh?.()
-    } catch {
-      showToast({ icon: 'x', title: 'Rename failed', description: 'Could not rename the file.', danger: true })
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Rename failed',
+        description: ownerWriteRefusal(err) ?? 'Could not rename the file.',
+        danger: true,
+      })
     }
   }
 

@@ -53,7 +53,6 @@ import { useAuth } from '../lib/auth-context'
 import {
   listAllFiles,
   toggleStar,
-  updateFile,
   deleteFile,
   bulkTrashFiles,
   getFile,
@@ -95,8 +94,8 @@ import {
   removeUploadState,
   type UploadState,
 } from '../lib/upload-resume'
-import { encryptFilename, encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata, readFileMetadata } from '../lib/crypto'
-import { renameKeyFor } from '../lib/owner-rename'
+import { encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata, readFileMetadata } from '../lib/crypto'
+import { renameOwnerRow } from '../lib/owner-rename'
 import { assertCurrentVersionWritable } from '../lib/owner-write-guard'
 import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
@@ -2307,6 +2306,7 @@ export function Drive() {
       keyId: isUnlocked ? file.id : undefined,
       region: undefined,
       nameEncrypted: file.name_encrypted,
+      writeTarget: file,
       noteEncrypted: file.note_encrypted ?? null,
     }
   }
@@ -2405,23 +2405,21 @@ export function Drive() {
       return
     }
     try {
-      // SF-0002 review: a rename rewrites the name envelope; refuse a row
-      // whose current version is still repair-sealed even if it was never opened.
-      const renameRow = files.find((f) => f.id === renameFileId)
-      if (renameRow) await assertCurrentVersionWritable(renameRow, getMasterKey(), { viewerId: getResidentUserId() })
-      // rv-web198c P2-4: a guest's or member's row is renamed under ITS key,
-      // proven to open its current name; otherwise the rename is refused.
-      const fileKey = await renameKeyFor({
+      // SF-0002 review: the write-time read-only check runs first (a row whose
+      // current version is still repair-sealed is refused even if it was never
+      // opened). rv-web198c P2-4: a guest's or member's row is renamed under
+      // ITS key, proven to open its current name; otherwise it is refused.
+      await renameOwnerRow({
         fileId: renameFileId,
         file: files.find((f) => f.id === renameFileId),
+        newName,
         viewerId: user?.user_id ?? null,
+        residentUserId: getResidentUserId(),
+        masterKey: getMasterKey(),
         getFileKey,
         getFileKeyForFile,
         readName: readFileMetadata,
       })
-      const enc = await encryptFilename(fileKey, newName)
-      const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      await updateFile(renameFileId, { name_encrypted: nameEncrypted })
       void reindexFields(renameFileId, { name: newName })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })
       fetchFiles()
@@ -3398,6 +3396,7 @@ export function Drive() {
             fileName={f ? displayName(f) : ''}
             nameEncrypted={f?.name_encrypted ?? ''}
             mimeType={f?.mime_type ?? undefined}
+            file={f}
             onVersionRestored={fetchFiles}
           />
         )

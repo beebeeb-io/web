@@ -277,3 +277,186 @@ describe('W3: shared-folders flag off keeps the derived key (rv-web198d R1)', ()
     ).rejects.toThrow("Can't open this file")
   })
 })
+
+// ── W4: every write path is guarded, not only the dialog rename ─────────────
+
+const { renameOwnerRow } = await import('../src/lib/owner-rename')
+const { writeFileNote } = await import('../src/lib/file-note')
+const { restoreOwnerVersion } = await import('../src/lib/owner-write-guard')
+
+const UPPER_FRAME = hexToBytes(V1.content_frame_hex)
+const UPPER_PLAINTEXT_LEN = V1.content_plaintext_hex.length / 2
+const VERSION_ID = '0b9d6f1e-6f2a-4c3e-9a51-1d2e3f4a5b6c'
+
+/** An owner row whose NAME is ordinary but whose current content is upper_repair-sealed, never opened. */
+function contentOnlyUpperRow(): DriveFile {
+  const master = hexToBytes(V1.master_key_hex)
+  const derived = loadWasm().derive_file_key(master, enc.encode(V1.file_id))
+  return row({
+    name_encrypted: loadWasm().encrypt_name_for(derived, 'notes.txt', null, 0) as string,
+    size_bytes: UPPER_PLAINTEXT_LEN,
+    chunk_count: 1,
+    acted_via_share_id: null,
+    uploaded_by: 'me',
+  })
+}
+
+/** The server: /download and /versions/:id/download answer with the given frames; writes answer JSON. */
+function server(current: Uint8Array, version: Uint8Array = current) {
+  return installFetch((url, init) => {
+    const method = (init?.method ?? 'GET').toUpperCase()
+    if (method === 'GET' && url.endsWith(`/versions/${VERSION_ID}/download`)) {
+      return new Response(version, { status: 200, headers: { 'X-Chunk-Count': '1', 'X-Chunk-Size': String(version.length - 28) } })
+    }
+    if (method === 'GET' && url.endsWith('/download')) {
+      return new Response(current, { status: 200, headers: { 'X-Chunk-Count': '1', 'X-Chunk-Size': String(current.length - 28) } })
+    }
+    if (method === 'POST' && url.includes('/restore')) {
+      return new Response(JSON.stringify({ message: 'restored', version_number: 3 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return new Response(JSON.stringify(row({})), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  })
+}
+
+function ordinaryFrame(): Uint8Array {
+  const master = hexToBytes(V1.master_key_hex)
+  const derived = loadWasm().derive_file_key(master, enc.encode(V1.file_id))
+  return v1Frame(derived, new Uint8Array(UPPER_PLAINTEXT_LEN).fill(7))
+}
+
+function renameArgs(file: DriveFile) {
+  const master = hexToBytes(V1.master_key_hex)
+  const derived = () => loadWasm().derive_file_key(master, enc.encode(V1.file_id))
+  return {
+    fileId: file.id,
+    file,
+    newName: 'renamed.txt',
+    viewerId: null,
+    residentUserId: 'me',
+    masterKey: master,
+    getFileKey: async () => derived(),
+    getFileKeyForFile: async () => derived(),
+    readName: async () => undefined,
+  }
+}
+
+describe('W4: inline rename (file list) goes through the write check', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  test('a never-opened content-only upper_repair row is refused and nothing is PATCHed', async () => {
+    const net = server(UPPER_FRAME)
+    try {
+      await expect(renameOwnerRow(renameArgs(contentOnlyUpperRow()))).rejects.toThrow(OWNER_REPAIR_READ_ONLY)
+      expect(net.writes()).toHaveLength(0)
+      expect(isOwnerRepairReadOnly(V1.file_id)).toBe(true)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('an ordinary row is renamed: one PATCH carrying the new name', async () => {
+    const net = server(ordinaryFrame())
+    try {
+      await renameOwnerRow(renameArgs(contentOnlyUpperRow()))
+      const writes = net.writes()
+      expect(writes).toHaveLength(1)
+      expect(writes[0].method).toBe('PATCH')
+      expect(writes[0].url).toEndWith(`/api/v1/files/${V1.file_id}`)
+    } finally {
+      net.restore()
+    }
+  })
+})
+
+describe('W4: note writes go through the write check', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  for (const text of ['a private note', '']) {
+    test(`a never-opened content-only upper_repair row gets no note ${text ? 'write' : 'clear'}, and nothing is PATCHed`, async () => {
+      const master = hexToBytes(V1.master_key_hex)
+      const file = contentOnlyUpperRow()
+      const net = server(UPPER_FRAME)
+      try {
+        await expect(
+          writeFileNote({
+            target: file,
+            text,
+            owner: { nameEncrypted: file.name_encrypted },
+            masterKey: master,
+            residentUserId: 'me',
+            getFileKey: async () => loadWasm().derive_file_key(master, enc.encode(V1.file_id)),
+          }),
+        ).rejects.toThrow(OWNER_REPAIR_READ_ONLY)
+        expect(net.writes()).toHaveLength(0)
+      } finally {
+        net.restore()
+      }
+    })
+  }
+
+  test('an ordinary row gets its note cleared: one PATCH', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const file = contentOnlyUpperRow()
+    const net = server(ordinaryFrame())
+    try {
+      await expect(
+        writeFileNote({
+          target: file,
+          text: '',
+          owner: { nameEncrypted: file.name_encrypted },
+          masterKey: master,
+          residentUserId: 'me',
+          getFileKey: async () => loadWasm().derive_file_key(master, enc.encode(V1.file_id)),
+        }),
+      ).resolves.toBeNull()
+      expect(net.writes().map((w) => w.method)).toEqual(['PATCH'])
+    } finally {
+      net.restore()
+    }
+  })
+})
+
+describe('W4: version restore goes through the write check', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  const version = { id: VERSION_ID, size_bytes: UPPER_PLAINTEXT_LEN, chunk_count: 1 }
+
+  test('a never-opened row whose CURRENT version is upper_repair is refused; nothing is POSTed', async () => {
+    const net = server(UPPER_FRAME, ordinaryFrame())
+    try {
+      await expect(
+        restoreOwnerVersion({ file: contentOnlyUpperRow(), version, masterKey: hexToBytes(V1.master_key_hex), residentUserId: 'me' }),
+      ).rejects.toThrow(OWNER_REPAIR_READ_ONLY)
+      expect(net.writes()).toHaveLength(0)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('restoring an upper_repair VERSION to current is refused and marks the row; nothing is POSTed', async () => {
+    const net = server(ordinaryFrame(), UPPER_FRAME)
+    try {
+      await expect(
+        restoreOwnerVersion({ file: contentOnlyUpperRow(), version, masterKey: hexToBytes(V1.master_key_hex), residentUserId: 'me' }),
+      ).rejects.toThrow(OWNER_REPAIR_READ_ONLY)
+      expect(net.writes()).toHaveLength(0)
+      expect(isOwnerRepairReadOnly(V1.file_id)).toBe(true)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('an ordinary row and version restore: one POST', async () => {
+    const net = server(ordinaryFrame(), ordinaryFrame())
+    try {
+      await restoreOwnerVersion({ file: contentOnlyUpperRow(), version, masterKey: hexToBytes(V1.master_key_hex), residentUserId: 'me' })
+      expect(net.writes().map((w) => w.method)).toEqual(['POST'])
+      expect(net.writes()[0].url).toEndWith(`/versions/${VERSION_ID}/restore`)
+    } finally {
+      net.restore()
+    }
+  })
+})

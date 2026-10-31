@@ -11,11 +11,13 @@ import { decryptVersionToBlob } from '../lib/encrypted-download'
 import { UpgradeNudge } from './upgrade-nudge'
 import { shouldShowVersionHistoryUpsell } from '../lib/version-history-copy'
 import {
+  getFile,
   listVersions,
-  restoreVersion,
+  type DriveFile,
   type FileVersion,
   type VersionListItem,
 } from '../lib/api'
+import { ownerWriteRefusal, restoreOwnerVersion } from '../lib/owner-write-guard'
 import { canDeleteVersion, versionContentBytes, versionDeleteCopy } from '../lib/version-delete-copy'
 import { useVersionDelete, VersionDeleteConfirm } from './version-delete'
 
@@ -28,6 +30,8 @@ interface VersionHistoryProps {
   nameEncrypted: string
   /** Used to pick the right MIME for the decrypted version blob. */
   mimeType?: string
+  /** The listed row, when the page has it: a restore runs the SF-0002 write check on it (fetched otherwise). */
+  file?: DriveFile
   onVersionRestored?: () => void
 }
 
@@ -50,6 +54,7 @@ export function VersionHistory({
   fileName,
   nameEncrypted,
   mimeType,
+  file,
   onVersionRestored,
 }: VersionHistoryProps) {
   const [versions, setVersions] = useState<VersionListItem[]>([])
@@ -58,7 +63,7 @@ export function VersionHistory({
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [loading, setLoading] = useState(false)
   const { showToast } = useToast()
-  const { getFileKey, getMasterKey } = useKeys()
+  const { getFileKey, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
   const navigate = useNavigate()
   const { planDetails } = useDriveData()
@@ -135,12 +140,20 @@ export function VersionHistory({
   async function handleRestore(version: FileVersion) {
     if (!confirm(`Restore version ${version.version_number}? The current version will be saved as a previous version.`)) return
     try {
-      await restoreVersion(fileId, version.id)
+      // SF-0002 round 2 (W4): the write-time read-only check (the row, and the
+      // version being restored) runs first; nothing is POSTed when refused.
+      await restoreOwnerVersion({
+        file: file && file.id === fileId ? file : await getFile(fileId),
+        version,
+        masterKey: isUnlocked ? getMasterKey() : undefined,
+        residentUserId: getResidentUserId(),
+      })
       showToast({ icon: 'check', title: `Restored to version ${version.version_number}` })
       fetchVersions()
       onVersionRestored?.()
-    } catch {
-      showToast({ icon: 'x', title: 'Restore failed', danger: true })
+    } catch (err) {
+      const refusal = ownerWriteRefusal(err)
+      showToast({ icon: 'x', title: 'Restore failed', ...(refusal ? { description: refusal } : {}), danger: true })
     }
   }
 

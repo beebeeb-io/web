@@ -11,15 +11,13 @@ import { RenameDialog } from '../components/rename-dialog'
 import { useFilePreview } from '../hooks/use-file-preview'
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
-import { encryptFilename, readFileMetadata, serializeEncryptedBlob } from '../lib/crypto'
-import { renameKeyFor } from '../lib/owner-rename'
-import { assertCurrentVersionWritable } from '../lib/owner-write-guard'
+import { readFileMetadata } from '../lib/crypto'
+import { renameOwnerRow } from '../lib/owner-rename'
 import { moveOwnerItems } from '../lib/owner-upload-key'
 import { encryptedDownload } from '../lib/encrypted-download'
 import {
   listFiles,
   toggleStar,
-  updateFile,
   deleteFile,
   type DriveFile,
 } from '../lib/api'
@@ -126,14 +124,20 @@ export function Starred() {
   async function handleRenameConfirm(newName: string) {
     if (!renameFileId || !isUnlocked || !cryptoReady) return
     try {
-      // SF-0002 review: refuse a rename of a row whose current version is
-      // still repair-sealed (it may never have been opened).
-      const renameRow = files.find((f) => f.id === renameFileId)
-      if (renameRow) await assertCurrentVersionWritable(renameRow, getMasterKey(), { viewerId: getResidentUserId() })
-      // rv-web198c P2-4: a guest's or member's row is renamed under ITS key.
-      const fileKey = await renameKeyFor({ fileId: renameFileId, file: files.find((f) => f.id === renameFileId), viewerId: null, getFileKey, getFileKeyForFile, readName: readFileMetadata })
-      const enc = await encryptFilename(fileKey, newName)
-      await updateFile(renameFileId, { name_encrypted: serializeEncryptedBlob(enc.nonce, enc.ciphertext) })
+      // SF-0002 review: the write-time read-only check runs first (the row may
+      // never have been opened). rv-web198c P2-4: a guest's or member's row is
+      // renamed under ITS key.
+      await renameOwnerRow({
+        fileId: renameFileId,
+        file: files.find((f) => f.id === renameFileId),
+        newName,
+        viewerId: null,
+        residentUserId: getResidentUserId(),
+        masterKey: getMasterKey(),
+        getFileKey,
+        getFileKeyForFile,
+        readName: readFileMetadata,
+      })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })
       fetchFiles()
     } catch (err) {
@@ -217,6 +221,7 @@ export function Starred() {
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
       nameEncrypted: file.name_encrypted,
+      writeTarget: file,
       noteEncrypted: file.note_encrypted ?? null,
     }
   }

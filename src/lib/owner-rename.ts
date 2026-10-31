@@ -10,12 +10,14 @@
  * row's CURRENT name before anything is sealed. A key that does not open it
  * (the shared path fell through) refuses the rename: a name is never destroyed.
  */
-import type { DriveFile } from './api'
+import { updateFile, type DriveFile } from './api'
+import { encryptFilename, serializeEncryptedBlob } from './crypto'
 import { needsOwnership } from './owner-adoption'
+import { assertCurrentVersionWritable } from './owner-write-guard'
 
 export const RENAME_KEY_UNAVAILABLE = "This file's key isn't available, so it can't be renamed here."
 
-export async function renameKeyFor(args: {
+export interface RenameKeyArgs {
   fileId: string
   /** The listed row, when the page has it. */
   file: DriveFile | undefined
@@ -25,7 +27,9 @@ export async function renameKeyFor(args: {
   getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>
   /** Opens a stored name with a key; throws when it does not open. */
   readName: (fileKey: Uint8Array, nameEncrypted: string) => Promise<unknown>
-}): Promise<Uint8Array> {
+}
+
+export async function renameKeyFor(args: RenameKeyArgs): Promise<Uint8Array> {
   const { file } = args
   if (!file) return args.getFileKey(args.fileId)
   // SF-0002 review: an OWNER row is renamed under the key that authenticated
@@ -41,4 +45,27 @@ export async function renameKeyFor(args: {
     throw new Error(RENAME_KEY_UNAVAILABLE)
   }
   return key
+}
+
+/**
+ * SF-0002 round 2 (W4): the ONE rename every surface uses (the Drive, Recent
+ * and Starred dialogs and the inline rename in the file list). The write-time
+ * read-only check runs before any key is resolved or name sealed, so a row
+ * whose current version is upper_repair-sealed is refused even when it was
+ * never opened, and nothing is PATCHed.
+ */
+export async function renameOwnerRow(
+  args: RenameKeyArgs & {
+    newName: string
+    masterKey: Uint8Array | undefined
+    /** The account the resident key belongs to (`useKeys().getResidentUserId()`). */
+    residentUserId: string | null
+  },
+): Promise<void> {
+  if (args.file) {
+    await assertCurrentVersionWritable(args.file, args.masterKey, { viewerId: args.residentUserId })
+  }
+  const fileKey = await renameKeyFor(args)
+  const enc = await encryptFilename(fileKey, args.newName)
+  await updateFile(args.fileId, { name_encrypted: serializeEncryptedBlob(enc.nonce, enc.ciphertext) })
 }

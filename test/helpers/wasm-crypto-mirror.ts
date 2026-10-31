@@ -83,6 +83,11 @@ export async function installWasmCryptoMirror(): Promise<WasmCryptoMirror> {
       encryptNoteFor: async (fileKey: Uint8Array, text: string, pin: ContentPin) =>
         ops.encryptNoteFor(fileKey, text, pin),
       decryptNote: async (fileKey: Uint8Array, noteEncrypted: string) => ops.decryptNote(fileKey, noteEncrypted),
+      // The worker's encryptFilename (a rename seals its new name with it).
+      encryptFilename: async (fileKey: Uint8Array, filename: string) => {
+        const r = w.encrypt_metadata(fileKey, filename) as { nonce: Uint8Array; ciphertext: Uint8Array }
+        return { nonce: r.nonce, ciphertext: r.ciphertext }
+      },
       ownerRepairNameKey: async (masterKey: Uint8Array, fileId: string, nameEncrypted: string) =>
         w.ownerFileKeyForName(masterKey, fileId, nameEncrypted),
       ownerRepairContentKey: async (masterKey: Uint8Array, fileId: string, firstChunkFrame: Uint8Array) =>

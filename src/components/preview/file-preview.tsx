@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { listVersions, restoreVersion, type DriveFile, type FileVersion } from '../../lib/api'
+import { listVersions, type DriveFile, type FileVersion } from '../../lib/api'
 import { decryptToBlob, decryptVersionToBlob } from '../../lib/encrypted-download'
 import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly } from '../../lib/owner-repair'
+import { ownerWriteRefusal, restoreOwnerVersion } from '../../lib/owner-write-guard'
 import { fetchAndDecryptLargeThumbnail, fetchAndDecryptThumbnail } from '../../lib/thumbnail'
 import { PreviewChrome } from './preview-chrome'
 import { InfoRail, CONTENT_CIPHER_LABEL } from './info-rail'
@@ -452,7 +453,7 @@ function resolveEditableKind(
 }
 
 export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext, startInEditMode, folderId, onDelete }: FilePreviewProps) {
-  const { getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, isUnlocked } = useKeys()
+  const { getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
   // SF-0002: the row's name or a version was sealed under the iOS Files-app
   // convention, so it is openable/downloadable but not writable in place.
   const ownerReadOnly = isOwnerRepairReadOnly(file.id)
@@ -773,19 +774,28 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
   const handleRestore = useCallback(async () => {
     if (selectedVersionId === null) return
+    const version = versions?.find((v) => v.id === selectedVersionId)
+    if (!version) return
     if (!confirm('Restore this version? The current version becomes a previous one.')) return
     try {
-      await restoreVersion(file.id, selectedVersionId)
+      // SF-0002 round 2 (W4): refused when the row is read-only, and when the
+      // version being restored is upper_repair-sealed; nothing is POSTed then.
+      await restoreOwnerVersion({
+        file,
+        version,
+        masterKey: isUnlocked ? getMasterKey() : undefined,
+        residentUserId: getResidentUserId(),
+      })
       // After restore: refetch versions, snap back to live.
       const res = await listVersions(file.id)
       setVersions(res.versions)
       setCurrentVersionNumber(res.current_version)
       setSelectedVersionId(null)
       onVersionRestored?.()
-    } catch {
-      setError('Restore failed. The version may have been deleted.')
+    } catch (err) {
+      setError(ownerWriteRefusal(err) ?? 'Restore failed. The version may have been deleted.')
     }
-  }, [file.id, selectedVersionId, onVersionRestored])
+  }, [file, versions, selectedVersionId, isUnlocked, getMasterKey, getResidentUserId, onVersionRestored])
 
   // ── Text/markdown/code editor (task 1563) ─────────────────────────────────
   // Editing is only offered for the LIVE version — editing a historical
