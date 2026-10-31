@@ -223,3 +223,41 @@ describe('LD-0001 r3 B3: an empty clientId never skips the owner check', () => {
     expect(logic.shouldHandleStreamRequest(request(), '', { clientId: '' })).toBe(false)
   })
 })
+
+describe('LD-0001 r3 B4: every claim waiter is answered', () => {
+  test('two_claims_for_one_hash_are_both_answered_by_one_reply', async () => {
+    const { relay, posted } = relayWith()
+    const hash = logic.sha256Hex('sid')
+    const first = relay.claim(hash, 'tab-a')
+    const second = relay.claim(hash, 'tab-a')
+    await settle(2)
+    expect(posted.filter((p) => p.message.type === 'stream-claim').length).toBe(2)
+    const port = new FakePort()
+    relay.onMessage(
+      { type: 'stream-claim-reply', hash, id: 'sid', mime: 'video/mp4', size: 100, port },
+      'tab-a',
+    )
+    const a = await outcome(first)
+    const b = await outcome(second)
+    expect(a.state).toBe('resolved')
+    expect(b.state).toBe('resolved')
+    expect((a as { value: Msg }).value).toMatchObject({ id: 'sid', clientId: 'tab-a' })
+    expect((b as { value: Msg }).value).toMatchObject({ id: 'sid', clientId: 'tab-a' })
+  })
+
+  test('each_claim_has_its_own_timeout_that_resolves_null', async () => {
+    const { relay, clock } = relayWith()
+    const hash = logic.sha256Hex('sid')
+    const first = relay.claim(hash, 'tab-a')
+    await settle(2)
+    clock.advance(1000)
+    const second = relay.claim(hash, 'tab-a')
+    await settle(2)
+    clock.advance(1000)
+    const a = await outcome(first)
+    expect(a).toEqual({ state: 'resolved', value: null })
+    clock.advance(1000)
+    const b = await outcome(second)
+    expect(b).toEqual({ state: 'resolved', value: null })
+  })
+})

@@ -573,6 +573,14 @@
       }
     }
 
+    function dropWaiter(hash, waiter) {
+      var list = claims.get(hash)
+      if (!list) return
+      var index = list.indexOf(waiter)
+      if (index >= 0) list.splice(index, 1)
+      if (!list.length) claims.delete(hash)
+    }
+
     /** Ask the owning window to re-register. It must hash to `hash` (A27). */
     async function claim(hash, clientId) {
       var clients
@@ -586,14 +594,21 @@
       })
       if (!targets.length) return null
 
+      // B4: every claim is its own waiter with its own timeout. A second
+      // claim for the same hash (two ranges after one SW restart) never
+      // orphans the first; one reply answers them all.
       var answer = new Promise(function (resolve) {
-        claims.set(hash, resolve)
-        clock.setTimeout(function () {
-          if (claims.has(hash)) {
-            claims.delete(hash)
-            resolve(null)
-          }
+        var waiter = { resolve: resolve, timer: null }
+        waiter.timer = clock.setTimeout(function () {
+          dropWaiter(hash, waiter)
+          resolve(null)
         }, CLAIM_WAIT_MS)
+        var list = claims.get(hash)
+        if (!list) {
+          list = []
+          claims.set(hash, list)
+        }
+        list.push(waiter)
       })
       targets.forEach(function (client) {
         client.postMessage({ type: 'stream-claim', hash: hash })
@@ -633,11 +648,16 @@
         return true
       }
       if (data.type === 'stream-claim-reply') {
-        var waiter = claims.get(data.hash)
-        if (!waiter) return true
+        var waiters = claims.get(data.hash)
+        if (!waiters || !waiters.length) return true
         claims.delete(data.hash)
+        waiters.forEach(function (w) {
+          clock.clearTimeout(w.timer)
+        })
         if (!data.port || !sourceId) {
-          waiter(null)
+          waiters.forEach(function (w) {
+            w.resolve(null)
+          })
           return true
         }
         var entry = {
@@ -651,7 +671,9 @@
         }
         bindPort(entry)
         // The route applies claimAccepted() (hash + source.id) before it serves.
-        waiter(entry)
+        waiters.forEach(function (w) {
+          w.resolve(entry)
+        })
         return true
       }
       return false
