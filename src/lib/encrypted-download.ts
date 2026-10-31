@@ -180,9 +180,11 @@ export async function pushHeadWithRepair(
   } catch (err) {
     const repaired = head ? await contentKeyFromFrame(masterKey, fileKey, content, head) : null
     if (!head || !repaired) throw err
-    await decryptor.dispose()
     let next: ContentDecryptor
     try {
+      // Round 3 (X3): everything from the dispose on sits inside the wipe, so a
+      // rejecting dispose (or start) never leaves the repaired key in memory.
+      await decryptor.dispose()
       next = await startDecryptStream(repaired, content.fileId, content.pin)
     } finally {
       repaired.fill(0)

@@ -572,7 +572,7 @@ describe('W5: transient errors and repeated cost', () => {
 
 // ── W6: a split row (uppercase name, lowercase content) opens its content ───
 
-const { decryptEncryptedBytes, pipeDecryptedChunks } = await import('../src/lib/encrypted-download')
+const { decryptEncryptedBytes, pipeDecryptedChunks, pushHeadWithRepair } = await import('../src/lib/encrypted-download')
 const { rememberOwnerRepairKey } = await import('../src/lib/owner-repair')
 const SPLIT = vectors.upper_repair_split_v1
 const PIN_UNRECORDED = 0 as const
@@ -902,5 +902,30 @@ describe('X2: writes that need no key are refused while the vault is locked', ()
     } finally {
       net.restore()
     }
+  })
+})
+
+// ── X3: the repaired key is wiped even when the old decryptor's dispose rejects ─
+
+describe('X3: pushHeadWithRepair wipes the repaired key on every path', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  test('a rejecting dispose still leaves every repaired key zeroed', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const derived = loadWasm().derive_file_key(master, enc.encode(V1.file_id))
+    const failing = {
+      pushFrame: async () => {
+        throw new Error('chunk 0 did not authenticate')
+      },
+      dispose: async () => {
+        throw new Error('dispose failed')
+      },
+    } as unknown as Parameters<typeof pushHeadWithRepair>[0]
+    mirror.contentRepairKeys.length = 0
+    await expect(
+      pushHeadWithRepair(failing, hexToBytes(V1.content_frame_hex), derived, { fileId: V1.file_id, pin: PIN_UNRECORDED }, master),
+    ).rejects.toThrow('dispose failed')
+    expect(mirror.contentRepairKeys.length).toBeGreaterThan(0)
+    expect(mirror.contentRepairKeys.every((k) => k.length === 32 && k.every((b) => b === 0))).toBe(true)
   })
 })
