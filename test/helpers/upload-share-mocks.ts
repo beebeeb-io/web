@@ -29,6 +29,8 @@ export const cap = {
   createdFolders: [] as Array<{ nameEncrypted: string; parentId?: string; folderId?: string }>,
   movedItems: [] as Array<{ id: string; parentId: string | null }>,
   abandons: [] as string[],
+  /** Every id a file/folder key was derived for (`deriveFileKey`). */
+  derivedKeyIds: [] as string[],
 }
 /**
  * L13 (contract 2275, SF-0001): by default the mocked server ECHOES the id the
@@ -64,6 +66,7 @@ export function resetCaptures(): void {
   cap.createdFolders.length = 0
   cap.movedItems.length = 0
   cap.abandons.length = 0
+  cap.derivedKeyIds.length = 0
 }
 
 // Listing pager (the folder-share suite drives this).
@@ -122,6 +125,12 @@ export async function installMocks(): Promise<void> {
     }),
     serializeEncryptedBlob: (nonce: Uint8Array, ciphertext: Uint8Array) =>
       JSON.stringify({ nonce: Array.from(nonce), ciphertext: Array.from(ciphertext) }),
+    // A fresh array per call (callers zeroize what they derive); 0xd0 marks a
+    // key derived inside the code under test rather than passed in by a test.
+    deriveFileKey: async (_masterKey: Uint8Array, id: string) => {
+      cap.derivedKeyIds.push(id)
+      return Uint8Array.of(0xd0)
+    },
   })
 
   // shared_folders_v1 ON: the owner-upload publish under test is a flag-on path.
