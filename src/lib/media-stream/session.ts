@@ -584,11 +584,17 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     controllers.delete(tailController)
   }
 
-  if (head.frame.length <= CHUNK_OVERHEAD) {
+  // Read before the factory: pushing the frame to the worker transfers (and
+  // empties) its buffer.
+  const headFrameLength = head.frame.length
+  // A zero-length file is exactly one 28-byte frame (core: an empty file still
+  // has one frame). Anything shorter, or an empty head on a multi-chunk row,
+  // is not a frame.
+  if (headFrameLength < CHUNK_OVERHEAD || (headFrameLength === CHUNK_OVERHEAD && N > 1)) {
     throw new StreamSessionError('auth', 'chunk 0 is too short to be a frame', 0)
   }
-  chunkSize = head.frame.length - CHUNK_OVERHEAD
-  bounds = streamBounds(chunkSize)
+  chunkSize = headFrameLength - CHUNK_OVERHEAD
+  if (chunkSize > 0) bounds = streamBounds(chunkSize)
 
   // §5.2: X-Chunk-Count on chunk 0 and the row's counts must agree.
   if (head.chunkCount !== null && head.chunkCount !== N) {
@@ -676,7 +682,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     // The legacy "encrypted total stored in size_bytes" case (encrypted-download.ts).
     const ciphertextTotal =
       (N - 1) * (chunkSize + CHUNK_OVERHEAD) +
-      (N > 1 ? tailPlaintext!.length + CHUNK_OVERHEAD : head.frame.length)
+      (N > 1 ? tailPlaintext!.length + CHUNK_OVERHEAD : headFrameLength)
     const expectedFromRow =
       opts.row.size_bytes === ciphertextTotal
         ? opts.row.size_bytes - N * CHUNK_OVERHEAD
@@ -706,6 +712,9 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     if (terminal) throw terminal
     if (!Number.isInteger(max) || max <= 0) {
       throw new RangeError(`invalid read length ${max}`)
+    }
+    if (totalSize === 0) {
+      throw new RangeError(`offset ${offset} is past the end of an empty stream`)
     }
     const loc = chunkForOffset(offset, chunkSize, N, totalSize)
     const length = Math.min(max, MAX_MESSAGE_BYTES, loc.available)

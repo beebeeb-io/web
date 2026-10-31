@@ -267,3 +267,70 @@ describe('LD-0001 r3 A4: no setup failure leaves plaintext behind', () => {
   })
 })
 
+// @@ A5
+function emptyFile(pin: 0 | 2) {
+  const masterKey = seededKey(7)
+  const fileId = deterministicFileId(`empty-${pin}`)
+  let enc = wasm.WasmChunkEncryptor.withChunkSize(masterKey, fileId, 0n, BigInt(4 * MiB))
+  if (pin === 2) enc = enc.withRecordedPin(2)
+  const frame = enc.pushChunk(new Uint8Array(0)) as Uint8Array
+  enc.finish()
+  const fileKey = wasm.derive_file_key(masterKey, new TextEncoder().encode(fileId)) as Uint8Array
+  return { fileId, fileKey, frame }
+}
+
+function emptyRow(chunkCount: number): StreamRow {
+  return {
+    chunk_count: chunkCount,
+    size_bytes: 0,
+    download_version: {
+      object_version_id: 'ov-empty',
+      version_number: 1,
+      chunk_count: chunkCount,
+      chunk_size_bytes: 4 * MiB,
+      plaintext_size_bytes: 0,
+      ciphertext_size_bytes: 28 * chunkCount,
+      chunks: Array.from({ length: chunkCount }, (_, index) => ({ index, size_bytes: 28 })),
+    },
+  }
+}
+
+describe('LD-0001 r3 A5: a zero-length file', () => {
+  test('zero_length_file_is_an_empty_stream', async () => {
+    for (const pin of [0, 2] as const) {
+      const empty = emptyFile(pin)
+      expect(empty.frame.length).toBe(28)
+      const session = await openStreamSession({
+        fileId: empty.fileId,
+        fileKey: empty.fileKey,
+        content: { fileId: empty.fileId, pin },
+        row: emptyRow(1),
+        source: new FakeChunkSource([empty.frame]),
+        clock: new FakeClock(),
+        readerFactory: inProcessReaderFactory(createContentOps(wasm)),
+      })
+      expect(session.totalSize).toBe(0)
+      expect(session.chunkCount).toBe(1)
+      expect([...session.verified]).toEqual([0])
+      expect(session.retainedBytes()).toBe(0)
+      await expect(session.read('r', 0, 1)).rejects.toThrow(RangeError)
+      await session.close()
+    }
+  })
+
+  test('a_28_byte_head_on_a_multi_chunk_row_is_refused', async () => {
+    const empty = emptyFile(0)
+    await expect(
+      openStreamSession({
+        fileId: empty.fileId,
+        fileKey: empty.fileKey,
+        content: { fileId: empty.fileId, pin: 0 },
+        row: emptyRow(2),
+        source: new FakeChunkSource([empty.frame, empty.frame]),
+        clock: new FakeClock(),
+        readerFactory: inProcessReaderFactory(createContentOps(wasm)),
+      }),
+    ).rejects.toMatchObject({ kind: 'auth', index: 0 })
+  })
+})
+
