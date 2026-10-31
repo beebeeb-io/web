@@ -442,6 +442,17 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
    *  downscaled thumbnail — so it fetches the original when this is false. */
   const [blobIsOriginal, setBlobIsOriginal] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  /** Bytes saved so far by the over-cap card's stream-to-disk (C4). */
+  const [savedProgress, setSavedProgress] = useState<{ written: number; total: number | null } | null>(null)
+  /** The over-cap download in flight: closing the preview aborts it (C4). */
+  const overCapAbortRef = useRef<AbortController | null>(null)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   const [error, setError] = useState<string | null>(null)
   /** Live whole-file transfer progress (LD-0001 PR-C); null before the first event. */
   const [transfer, setTransfer] = useState<TransferProgress | null>(null)
@@ -1006,16 +1017,28 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         // The over-cap card has no Blob and must NEVER load the whole file into
         // memory: stream the plaintext to disk through the service worker, the
         // same path the toolbar Download uses (item 2). `downloading` disables
-        // the button for the duration.
-        await streamOverCapDownload({
-          fileId: file.id,
-          fileKey,
-          nameEncrypted: file.name_encrypted,
-          mimeType: effectiveMime ?? undefined,
-          versionId: action.versionId,
-          chunkCount: action.chunkCount,
-          sizeBytes: action.sizeBytes,
-        })
+        // the button for the duration. C4: closing the preview (or switching
+        // file or version) aborts it, and nothing updates state afterwards.
+        const abort = new AbortController()
+        overCapAbortRef.current?.abort()
+        overCapAbortRef.current = abort
+        await streamOverCapDownload(
+          {
+            fileId: file.id,
+            fileKey,
+            nameEncrypted: file.name_encrypted,
+            mimeType: effectiveMime ?? undefined,
+            versionId: action.versionId,
+            chunkCount: action.chunkCount,
+            sizeBytes: action.sizeBytes,
+          },
+          {
+            signal: abort.signal,
+            onProgress: (written, total) => {
+              if (mountedRef.current && !abort.signal.aborted) setSavedProgress({ written, total })
+            },
+          },
+        )
         return
       }
       if (action.kind === 'version-not-found') throw new Error('Version not found')
@@ -1043,11 +1066,26 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       }
       saveBlob(original)
     } catch (err: unknown) {
+      // An abandoned (aborted) download is not an error, and an unmounted
+      // preview takes no state update (C4).
+      if (!mountedRef.current || (err as { name?: unknown } | null)?.name === 'AbortError') return
       setError(err instanceof Error ? err.message : 'Download failed')
     } finally {
-      setDownloading(false)
+      if (mountedRef.current) {
+        setDownloading(false)
+        setSavedProgress(null)
+      }
     }
   }
+
+  // C4: a different file or version, or closing the preview, abandons an
+  // over-cap download in flight.
+  useEffect(() => {
+    return () => {
+      overCapAbortRef.current?.abort()
+      overCapAbortRef.current = null
+    }
+  }, [file.id, selectedVersionId])
 
   // Keyboard navigation for prev/next (arrow keys) + ⌘E to enter the editor.
   useEffect(() => {
@@ -1218,7 +1256,11 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           <p className="max-w-[320px] text-sm text-ink-2">{capCopy}</p>
           <BBButton variant="amber" size="md" onClick={handleDownload} disabled={downloading}>
             <Icon name="download" size={14} className="mr-2" />
-            {downloading ? 'Downloading…' : 'Download'}
+            {downloading
+              ? savedProgress && savedProgress.total
+                ? `Downloading ${formatSize(savedProgress.written)} of ${formatSize(savedProgress.total)}`
+                : 'Downloading…'
+              : 'Download'}
           </BBButton>
         </div>
       )}

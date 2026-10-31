@@ -846,7 +846,7 @@ export interface OverCapDownloadArgs {
  */
 export async function streamOverCapDownload(
   args: OverCapDownloadArgs,
-  _opts: { signal?: AbortSignal; onProgress?: DownloadProgress } = {},
+  opts: { signal?: AbortSignal; onProgress?: DownloadProgress } = {},
   download: typeof encryptedDownload = encryptedDownload,
 ): Promise<void> {
   await download(
@@ -856,8 +856,14 @@ export async function streamOverCapDownload(
     args.mimeType,
     args.chunkCount,
     args.sizeBytes,
-    // C1: a past version streams from its own endpoint; C2: never buffered.
-    { versionId: args.versionId ?? undefined, neverBuffer: true },
+    // C1: a past version streams from its own endpoint; C2: never buffered;
+    // C4: cancellable (closing the preview aborts it) and with byte progress.
+    {
+      versionId: args.versionId ?? undefined,
+      neverBuffer: true,
+      signal: opts.signal,
+      onProgress: opts.onProgress,
+    },
   )
 }
 

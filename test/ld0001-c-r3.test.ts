@@ -277,3 +277,17 @@ describe('LD-0001 r3 C3: one plaintext copy at peak, and progress on the buffere
     })
   })
 })
+
+describe('LD-0001 r3 C4: the over-cap Download is cancellable and reports progress', () => {
+  test('the_over_cap_download_passes_signal_and_on_progress', async () => {
+    const calls: unknown[][] = []
+    const abort = new AbortController()
+    const onProgress = () => {}
+    await dl.streamOverCapDownload(overCapArgs(), { signal: abort.signal, onProgress }, (async (...args: unknown[]) => {
+      calls.push(args)
+    }) as typeof dl.encryptedDownload)
+    const opts = calls[0][6] as Record<string, unknown> | undefined
+    expect(opts?.signal).toBe(abort.signal)
+    expect(opts?.onProgress).toBe(onProgress)
+  })
+})
