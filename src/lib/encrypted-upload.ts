@@ -190,17 +190,14 @@ async function uploadFileWith(
 
   // Replace only: the existing file's recorded pin, read BEFORE anything
   // reaches the server. A new file stays `null` and never applies a pin.
-  // A pin belongs to ONE file id (`replacePinFileId`, the replaced file):
-  // it is applied and recorded only while the upload targets that id
-  // (`pinForCurrentFile`, the single gate), and resumed only from a record
-  // that names that id (`adoptRecordedReplacePin`). An init answered with
-  // another id is a brand-new file, which never pins (Codex P2 on web#170).
+  // A pin belongs to ONE file id, the replaced file's, which is the id this
+  // upload writes under (L13: every init and completion answer is checked
+  // against it, so it cannot change under the pin). A pin is resumed only from
+  // a record that names that id (`adoptRecordedReplacePin`).
   let replacePin: ContentPin | null = null
-  let replacePinFileId: string | null = null
   if (options.replaceOf) {
     try {
       replacePin = (await readFileMetadata(fileKey, options.replaceOf.nameEncrypted)).pin
-      replacePinFileId = fileId
     } catch (err) {
       throw new UnverifiedFileMetadataError(UNVERIFIED_REPLACE_COPY, { cause: err })
     }
@@ -215,12 +212,14 @@ async function uploadFileWith(
   }
 
   /**
-   * The pin, only when it belongs to the file this upload now writes
-   * (`serverFileId`, which every init may change). The ONLY way the encryptor
-   * and the resume record get a pin.
+   * The pin of the file this upload writes, or null for a new file. The ONLY
+   * way the encryptor and the resume record get a pin. (The id it belongs to
+   * no longer needs a gate here: an answer naming another id aborts in the
+   * api.ts primitives, and an upload that moves to its own fresh id
+   * (`writeUnderOwnId`) is a create, which never holds a pin.)
    */
   function pinForCurrentFile(): ContentPin | null {
-    return replacePin !== null && replacePinFileId === serverFileId ? replacePin : null
+    return replacePin
   }
 
   // A replace sends the replaced file's OWN name, byte for byte (crypto review
@@ -249,6 +248,9 @@ async function uploadFileWith(
   const fallbackChunkCount = fallbackPlan.chunk_count
 
   // ── Resume detection ──────────────────────────────
+  // The id this upload writes under: the caller's, or one minted here when a
+  // legacy create record restarts (`writeUnderOwnId`). Never an id taken from
+  // an answer (L13: the api.ts primitives check every answer against it).
   let serverFileId = fileId
   let skipChunks = new Set<number>()
   let uploadSessionId: string | null = null
@@ -510,7 +512,6 @@ async function uploadFileWith(
     if (pinForCurrentFile() !== null || !record || record.replace_pin === undefined) return
     if (record.fileId !== resumedId || record.replace_pin_file_id !== resumedId) return
     replacePin = toContentPin(record.replace_pin)
-    replacePinFileId = resumedId
   }
 
   /**
@@ -540,9 +541,9 @@ async function uploadFileWith(
     totalChunks = fallbackChunkCount
     region = null
     await startUpload(id)
+    // Same id (the init answer is checked against it): this write replaces
+    // the old record.
     await persistResumeState()
-    // Answered under another id: the old id's record is a different entry.
-    if (serverFileId !== id) await removeUploadState(id).catch(() => {})
   }
 
   // Transfers every chunk against the CURRENT session and completes it. Run
@@ -592,10 +593,11 @@ async function uploadFileWith(
     }
 
     // ── Streaming encryption via the shared core ChunkEncryptor ───────────────
-    // Create the worker-owned encryptor now that the server has fixed the chunk
-    // plan + final file id. The per-file key is derived ONCE inside core from
-    // masterKey + serverFileId — the SAME derivation that produced `activeFileKey`
-    // — so we pass masterKey here and keep `activeFileKey` only for the metadata,
+    // Create the worker-owned encryptor now that the init has fixed the chunk
+    // plan. The per-file key is derived ONCE inside core from masterKey +
+    // serverFileId (the id this client proposed; L13 checks every answer
+    // against it) — the SAME derivation that produced `activeFileKey` — so we
+    // pass masterKey here and keep `activeFileKey` only for the metadata,
     // thumbnail, and folder-share paths below.
     //
     // If the v2 server overrode the chunk size, pin the encryptor to that exact
@@ -608,9 +610,9 @@ async function uploadFileWith(
       : await startEncryptedStream(masterKey, serverFileId, file.size, 'web')
 
     try {
-      // Replace of an existing file: write in the format its recorded pin
-      // requires, before the first chunk. Only for the file the pin belongs
-      // to: an answer with another id is a brand-new file, which never pins.
+      // Replace of an existing file (or a version of it): write in the format
+      // its recorded pin requires, before the first chunk. A new file has no
+      // pin and writes core's write format.
       const pin = pinForCurrentFile()
       if (pin !== null) {
         await enc.applyRecordedPin(pin)

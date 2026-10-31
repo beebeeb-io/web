@@ -87,8 +87,9 @@ export interface UploadState {
   /**
    * The file id `replace_pin` belongs to (the replaced file). Written with
    * every pin; a resume applies the pin only when this equals `fileId` and
-   * the id being resumed. A replace the server answered with another id is a
-   * new file: its record carries neither field.
+   * the id being resumed. A new file's record carries neither field. (On a
+   * record without the selfMinted marker, a pin that names its own id is what
+   * marks a replace: `planResume` restarts it as a version of that row.)
    */
   replace_pin_file_id?: string
   /**
