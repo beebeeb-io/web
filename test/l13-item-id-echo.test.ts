@@ -247,12 +247,12 @@ describe('A7c: a persisted session is resumed only when this client minted its i
 
   test('planResume: a record without the marker restarts under a fresh own id', async () => {
     const { planResume } = await import('../src/lib/upload-resume')
-    expect(planResume(legacy, () => 'fresh-own-id')).toEqual({ kind: 'restart-new', fileId: 'fresh-own-id' })
+    expect(planResume(legacy, () => 'fresh-own-id')).toStrictEqual({ kind: 'restart-new', fileId: 'fresh-own-id', resumeFileId: undefined })
   })
 
   test('planResume: a record with the marker and its own id resumes that id', async () => {
     const { planResume } = await import('../src/lib/upload-resume')
-    expect(planResume(own, () => 'fresh-own-id')).toEqual({ kind: 'resume', fileId: 'own-session-id' })
+    expect(planResume(own, () => 'fresh-own-id')).toEqual({ kind: 'resume', fileId: 'own-session-id', resumeFileId: 'own-session-id' })
   })
 
   test('the restarted upload writes under the fresh id, drops the legacy record and abandons nothing', async () => {

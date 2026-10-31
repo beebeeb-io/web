@@ -4,6 +4,8 @@
  *
  * E1  the import mints its own folder ids (per folder, per run) and a failed
  *     create stops that subtree instead of falling back to a guessed id.
+ * E2  a legacy REPLACE session restarts as a new version of THAT row (same id,
+ *     same recorded pin), never as a new file under a fresh id.
  * E3  `uploadFile` itself never adopts a stored session this client did not
  *     mark as its own; `planResume` is the one rule (Drive + uploadFile).
  * E4  a stored session found by fingerprint is never abandoned file-wide (the
@@ -222,5 +224,57 @@ describe('E3: uploadFile never adopts a stored session this client did not mark 
     expect(err).toBeInstanceOf(Error)
     expect(cap.initCalls).toEqual([])
     expect(cap.uploadedChunks).toEqual([])
+  })
+})
+
+// ── E2: legacy replace sessions ──────────────────────────────────────────────
+
+describe('E2: a legacy REPLACE session restarts as a new version of the same row', () => {
+  /**
+   * A paused version upload an older client wrote: no marker, but its pin
+   * names its own id, which only a replace of a listed row (an id this client
+   * chose) ever recorded.
+   */
+  const legacyReplace = {
+    fingerprint: 'fingerprint', fileId: 'listed-row-id', fileName: 'a.txt', fileSize: 1, totalChunks: 1,
+    upload_session_id: 'legacy-session', object_version_id: 'ov-legacy', chunk_size_bytes: 4, chunk_count: 1,
+    chunk_format: 1, replace_pin: 0, replace_pin_file_id: 'listed-row-id', parentId: 'parent-1', createdAt: 1,
+  }
+  const initIds = () => cap.initCalls.map((c) => (c as { file_id: string }).file_id)
+
+  test('planResume: restart as a version of the record\'s own row, resumed by that id', async () => {
+    const { planResume } = await import('../src/lib/upload-resume')
+    expect(planResume(legacyReplace, () => 'fresh-own-id')).toEqual({
+      kind: 'restart-version', fileId: 'listed-row-id', resumeFileId: 'listed-row-id',
+    })
+  })
+
+  test('the Drive resume path: one init under the row with its recorded pin, in a fresh session; no new file', async () => {
+    const { planResume } = await import('../src/lib/upload-resume')
+    echo.stored = legacyReplace
+    // Exactly what the Drive resume banner passes for this record.
+    const plan = planResume(legacyReplace, () => crypto.randomUUID())
+    const uploaded = await encryptedUpload(new File(['a'], 'a.txt'), plan.fileId, FILE_KEY, MK,
+      legacyReplace.parentId, undefined, plan.resumeFileId)
+
+    expect(uploaded.id).toBe('listed-row-id')
+    // One init, under the row: a new version of it, so no second file and no
+    // duplicate name next to it.
+    expect(initIds()).toEqual(['listed-row-id'])
+    // A fresh session: the legacy session's frames are never continued.
+    expect(cap.uploadedChunks.map((c) => c.uploadSessionId)).toEqual(['upload-session-id'])
+    // The row's own key (the caller's) and its recorded pin.
+    expect(cap.derivedKeyIds).toEqual([])
+    expect(cap.appliedPins).toEqual([0])
+    expect(cap.savedStates.at(-1)).toMatchObject({
+      fileId: 'listed-row-id', selfMinted: true, replace_pin: 0, replace_pin_file_id: 'listed-row-id',
+    })
+    expect(cap.abandons).toEqual([])
+  })
+
+  test('a legacy record whose pin names ANOTHER id is no proof of a replace: it restarts under a fresh id', async () => {
+    const { planResume } = await import('../src/lib/upload-resume')
+    const plan = planResume({ ...legacyReplace, replace_pin_file_id: 'some-other-row' }, () => 'fresh-own-id')
+    expect(plan).toEqual({ kind: 'restart-new', fileId: 'fresh-own-id', resumeFileId: undefined })
   })
 })

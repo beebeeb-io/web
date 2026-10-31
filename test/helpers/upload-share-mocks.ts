@@ -31,6 +31,8 @@ export const cap = {
   abandons: [] as string[],
   /** Every id a file/folder key was derived for (`deriveFileKey`). */
   derivedKeyIds: [] as string[],
+  /** Every recorded pin an encryptor was told to apply (a replace / version). */
+  appliedPins: [] as number[],
 }
 /**
  * L13 (contract 2275, SF-0001): by default the mocked server ECHOES the id the
@@ -70,6 +72,7 @@ export function resetCaptures(): void {
   cap.movedItems.length = 0
   cap.abandons.length = 0
   cap.derivedKeyIds.length = 0
+  cap.appliedPins.length = 0
 }
 
 // Listing pager (the folder-share suite drives this).
@@ -83,7 +86,10 @@ const stubStream = (masterKey: Uint8Array) => ({
   // session) and, on a resume, core's resume policy. A new v1 upload here.
   format: async () => 1,
   // A replace applies the listed row's pin (0 here, core's write format: v1).
-  applyRecordedPin: async () => 1,
+  applyRecordedPin: async (pin: number) => {
+    cap.appliedPins.push(pin)
+    return 1
+  },
   resumePolicy: async () => 'continue' as const,
   pushChunk: async () => new Uint8Array([masterKey[0]]),
   finish: async () => ({ chunk_count: 1, total_plaintext_bytes: 4, total_ciphertext_bytes: 1 }),

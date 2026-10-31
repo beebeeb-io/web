@@ -110,28 +110,44 @@ export interface ResumePlan {
   /**
    * - `resume`: this client marked the record's id as its own; its session
    *   continues (core's resume rule still decides about its frames).
-   * - `restart-new`: written before the marker, so its id may be the server's.
-   *   Never adopted and never proposed again: the upload starts over in a
-   *   fresh init under `fileId`, a fresh id this client mints now.
+   * - `restart-version`: written before the marker by a REPLACE: its pin names
+   *   its own id, which only a replace of a listed row (an id this client
+   *   chose) ever recorded. The upload starts over in a fresh init as a new
+   *   version of that same row, with the same recorded pin.
+   * - `restart-new`: any other record without the marker (a create, whose id
+   *   may be the server's). Never adopted and never proposed again: the upload
+   *   starts over in a fresh init under `fileId`, a fresh id minted now.
    */
-  kind: 'resume' | 'restart-new'
+  kind: 'resume' | 'restart-version' | 'restart-new'
   /** The id the upload writes under. */
   fileId: string
+  /**
+   * What a caller passes as `encryptedUpload`'s `resumeFileId`: the record's
+   * id when the upload stays on that id, none for a fresh id (the record is
+   * then another id's, and `encryptedUpload` drops it).
+   */
+  resumeFileId: string | undefined
 }
 
 /**
  * L13 (contract 2275, SF-0001): the ONE rule for a stored session, used by
  * both the Drive resume banner and `encryptedUpload` itself. A session is
- * resumed only when this client minted its id; any other record restarts.
- * Nothing here abandons anything server-side: the only abandon the server
- * offers is file-wide, so the stale session is left to its lease sweep.
+ * resumed only when this client minted its id; any other record restarts
+ * (never resumes). Nothing here abandons anything server-side: the only
+ * abandon the server offers is file-wide, so the stale session is left to its
+ * lease sweep.
  */
 export function planResume(
-  record: Pick<UploadState, 'fileId' | 'selfMinted'>,
+  record: Pick<UploadState, 'fileId' | 'selfMinted' | 'replace_pin' | 'replace_pin_file_id'>,
   mintId: () => string,
 ): ResumePlan {
-  if (record.selfMinted === true) return { kind: 'resume', fileId: record.fileId }
-  return { kind: 'restart-new', fileId: mintId() }
+  if (record.selfMinted === true) {
+    return { kind: 'resume', fileId: record.fileId, resumeFileId: record.fileId }
+  }
+  if (record.replace_pin !== undefined && record.replace_pin_file_id === record.fileId) {
+    return { kind: 'restart-version', fileId: record.fileId, resumeFileId: record.fileId }
+  }
+  return { kind: 'restart-new', fileId: mintId(), resumeFileId: undefined }
 }
 
 /**

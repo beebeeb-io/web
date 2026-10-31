@@ -1167,7 +1167,9 @@ export function Drive() {
         showToast({
           icon: 'upload',
           title: 'Upload restarted',
-          description: `${file.name} was started by an older version, so it uploads again as a new file.`,
+          description: plan.kind === 'restart-version'
+            ? `${file.name} was started by an older version, so it uploads again from the start as a new version of the same file.`
+            : `${file.name} was started by an older version, so it uploads again as a new file.`,
         })
       }
       const fileKey = await getFileKey(plan.fileId)
@@ -1202,9 +1204,10 @@ export function Drive() {
               ),
             )
           },
-          // A restart under a fresh id drops the old record itself (it is
-          // another id's): only a resumed session is named here.
-          plan.kind === 'resume' ? plan.fileId : undefined,
+          // The record's id while the upload stays on it (a resume, or a
+          // legacy replace restarting as a version of its row); none for a
+          // fresh id (encryptedUpload then drops the old record as another id's).
+          plan.resumeFileId,
           undefined,
           undefined,
         )

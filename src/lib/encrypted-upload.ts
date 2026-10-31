@@ -419,14 +419,22 @@ async function uploadFileWith(
    * session of it is reused, and it is not abandoned (see above). The upload
    * starts over in a fresh init, recorded with the marker by the caller.
    *
-   * A create record's id may be the server's, so it is never proposed again:
-   * the upload moves to a fresh id minted here, with its own key and name.
-   * The one exception is a caller that targets that id as a listed row it
-   * is replacing (`replaceOf`), which L13 allows for a version.
+   * - `restart-version`: a replace of a listed row. It stays a new version of
+   *   that row: the same id, the pin it recorded. Its record is kept until the
+   *   fresh init succeeded (the new record then replaces it), so a refused
+   *   init (a live lease: 409) leaves it on offer.
+   * - `restart-new`: a create record's id may be the server's, so it is never
+   *   proposed again: the upload moves to a fresh id minted here, with its own
+   *   key and name. The one exception is a caller that targets that id as a
+   *   listed row it is replacing (`replaceOf`), which L13 allows for a version.
    */
   async function restartStoredSession(record: UploadState, plan: ResumePlan): Promise<void> {
-    await removeUploadState(record.fileId)
-    if (!options.replaceOf) await writeUnderOwnId(plan.fileId)
+    if (plan.kind === 'restart-version') {
+      adoptRecordedReplacePin(record, record.fileId)
+    } else {
+      await removeUploadState(record.fileId)
+      if (!options.replaceOf) await writeUnderOwnId(plan.fileId)
+    }
     await startUpload(serverFileId)
   }
 
