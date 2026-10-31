@@ -631,55 +631,73 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
   setupReader = setupHead.reader
   if (setupHead.repairedKey) setupHead.repairedKey.fill(0)
 
-  if (setupHead.headPlaintext.length !== chunkSize) {
-    await setupReader.close()
-    throw new StreamSessionError('auth', 'chunk 0 decrypted to the wrong size', 0)
-  }
-  store(0, setupHead.headPlaintext)
-  verified.add(0)
-  emit({ type: 'verified', index: 0 })
-
+  // Every setup failure from here on wipes what it decrypted (M1): the
+  // cached head and tail, a head of the wrong size, a tail that was never
+  // cached. The reader is closed, so its key copy is wiped too.
+  let headStored = false
   let tailPlaintext: Uint8Array | null = null
-  if (N > 1 && tail) {
-    try {
-      tailPlaintext = await setupReader.openAt(N - 1, true, tail.frame)
-    } catch (err) {
-      await setupReader.close()
-      throw new StreamSessionError(
-        'auth',
-        `chunk ${N - 1} (the last chunk) could not be authenticated`,
-        N - 1,
-        { cause: err },
-      )
+  let tailStored = false
+  let totalSize = 0
+  try {
+    if (setupHead.headPlaintext.length !== chunkSize) {
+      throw new StreamSessionError('auth', 'chunk 0 decrypted to the wrong size', 0)
     }
-    if (tailPlaintext.length === 0 || tailPlaintext.length > chunkSize) {
-      tailPlaintext.fill(0)
-      await setupReader.close()
-      throw new StreamSessionError('auth', 'the last chunk has an invalid size', N - 1)
+    store(0, setupHead.headPlaintext)
+    headStored = true
+    verified.add(0)
+    emit({ type: 'verified', index: 0 })
+
+    if (N > 1 && tail) {
+      try {
+        tailPlaintext = await setupReader.openAt(N - 1, true, tail.frame)
+      } catch (err) {
+        throw new StreamSessionError(
+          'auth',
+          `chunk ${N - 1} (the last chunk) could not be authenticated`,
+          N - 1,
+          { cause: err },
+        )
+      }
+      if (tailPlaintext.length === 0 || tailPlaintext.length > chunkSize) {
+        throw new StreamSessionError('auth', 'the last chunk has an invalid size', N - 1)
+      }
+      store(N - 1, tailPlaintext)
+      tailStored = true
+      verified.add(N - 1)
+      emit({ type: 'verified', index: N - 1 })
     }
-    store(N - 1, tailPlaintext)
-    verified.add(N - 1)
-    emit({ type: 'verified', index: N - 1 })
-  }
 
-  // §5.3: total plaintext and the row's sizes.
-  const totalSize = (N - 1) * chunkSize + (N > 1 ? tailPlaintext!.length : chunkSize)
-  if (dv && dv.plaintext_size_bytes !== totalSize) {
-    await setupReader.close()
-    throw new StreamSessionError('auth', 'total plaintext disagrees with download_version', 0)
-  }
+    // §5.3: total plaintext and the row's sizes.
+    totalSize = (N - 1) * chunkSize + (N > 1 ? tailPlaintext!.length : chunkSize)
+    if (dv && dv.plaintext_size_bytes !== totalSize) {
+      throw new StreamSessionError('auth', 'total plaintext disagrees with download_version', 0)
+    }
 
-  // The legacy "encrypted total stored in size_bytes" case (encrypted-download.ts).
-  const ciphertextTotal =
-    (N - 1) * (chunkSize + CHUNK_OVERHEAD) +
-    (N > 1 ? tailPlaintext!.length + CHUNK_OVERHEAD : head.frame.length)
-  const expectedFromRow =
-    opts.row.size_bytes === ciphertextTotal
-      ? opts.row.size_bytes - N * CHUNK_OVERHEAD
-      : opts.row.size_bytes
-  if (expectedFromRow !== totalSize) {
-    await setupReader.close()
-    throw new StreamSessionError('auth', 'total plaintext disagrees with size_bytes', 0)
+    // The legacy "encrypted total stored in size_bytes" case (encrypted-download.ts).
+    const ciphertextTotal =
+      (N - 1) * (chunkSize + CHUNK_OVERHEAD) +
+      (N > 1 ? tailPlaintext!.length + CHUNK_OVERHEAD : head.frame.length)
+    const expectedFromRow =
+      opts.row.size_bytes === ciphertextTotal
+        ? opts.row.size_bytes - N * CHUNK_OVERHEAD
+        : opts.row.size_bytes
+    if (expectedFromRow !== totalSize) {
+      throw new StreamSessionError('auth', 'total plaintext disagrees with size_bytes', 0)
+    }
+  } catch (err) {
+    if (!headStored) setupHead.headPlaintext.fill(0)
+    if (tailPlaintext && !tailStored) tailPlaintext.fill(0)
+    wipeCache()
+    const reader: StreamReader | null = setupReader
+    setupReader = null
+    if (reader) {
+      try {
+        await reader.close()
+      } catch {
+        // Best effort: the worker wipes the key on close.
+      }
+    }
+    throw err
   }
 
   // ── Reads ──────────────────────────────────────────────────────────────────

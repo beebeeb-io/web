@@ -222,3 +222,48 @@ describe('LD-0001 r3 A3: the chunk-0 repair path in the worker factory', () => {
   })
 })
 
+// @@ A4
+describe('LD-0001 r3 A4: no setup failure leaves plaintext behind', () => {
+  test('every_setup_failure_after_the_head_is_cached_wipes_it', async () => {
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const dv = rowFor(fx).download_version!
+    const tailSwapped = new FakeChunkSource(fx.frames)
+    tailSwapped.overrides.set(2, fx.frames[1])
+    const cases: Array<{ extra: Partial<OpenStreamOptions>; cachedIndices: number[] }> = [
+      { extra: { row: { ...rowFor(fx), download_version: { ...dv, plaintext_size_bytes: 95 } } }, cachedIndices: [0, 2] },
+      { extra: { row: { ...rowFor(fx), size_bytes: 95 } }, cachedIndices: [0, 2] },
+      { extra: { source: tailSwapped }, cachedIndices: [0] },
+    ]
+    for (const c of cases) {
+      const ops = createContentOps(wasm)
+      const { log, observer } = observed()
+      await expect(
+        open(fx, { ...c.extra, observer, readerFactory: inProcessReaderFactory(ops) }),
+      ).rejects.toMatchObject({ kind: 'auth' })
+      expect(log.cached.map((e) => e.index)).toEqual(c.cachedIndices)
+      for (const entry of log.cached) expect(allZero(entry.bytes)).toBe(true)
+      expect(ops.liveReaderCount()).toBe(0)
+    }
+  })
+
+  test('a_wrong_size_head_plaintext_is_zeroed_before_the_throw', async () => {
+    const ops = createContentOps(wasm)
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const base = inProcessReaderFactory(ops)
+    const handed: { bytes?: Uint8Array } = {}
+    const factory: StreamReaderFactory = async (args) => {
+      const out = await base(args)
+      const padded = new Uint8Array(out.headPlaintext.length + 1)
+      padded.set(out.headPlaintext)
+      padded[padded.length - 1] = 0x5a
+      out.headPlaintext.fill(0)
+      handed.bytes = padded
+      return { ...out, headPlaintext: padded }
+    }
+    await expect(open(fx, { readerFactory: factory })).rejects.toMatchObject({ kind: 'auth', index: 0 })
+    expect(handed.bytes).toBeDefined()
+    expect(allZero(handed.bytes!)).toBe(true)
+    expect(ops.liveReaderCount()).toBe(0)
+  })
+})
+
