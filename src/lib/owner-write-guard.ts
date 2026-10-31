@@ -18,7 +18,10 @@ const FILE_PROVIDER_CHUNK = 1024 * 1024
 /** Core's maximum plaintext chunk size; the read never goes past one frame. */
 const MAX_CHUNK_SIZE = 256 * 1024 * 1024
 
-type WriteTarget = Pick<DriveFile, 'id' | 'size_bytes' | 'chunk_count' | 'acted_via_share_id' | 'uploaded_by'>
+export type WriteTarget = Pick<
+  DriveFile,
+  'id' | 'is_folder' | 'size_bytes' | 'chunk_count' | 'acted_via_share_id' | 'uploaded_by'
+>
 
 function intHeader(value: string | null): number | null {
   const n = value ? Number.parseInt(value, 10) : Number.NaN
@@ -93,6 +96,10 @@ export async function assertCurrentVersionWritable(
   masterKey: Uint8Array | undefined,
 ): Promise<void> {
   if (isOwnerRepairReadOnly(file.id)) throw new Error(OWNER_REPAIR_READ_ONLY)
+  // SF-0002 round 2 (W1): a folder has no content version, and its /download
+  // answers 4xx. Its NAME is covered by the mark above (the name resolver
+  // marks an upper_repair name), so nothing is fetched for it.
+  if (file.is_folder) return
   if (!masterKey) return
   // The check only reports which owner convention authenticates chunk 0 and
   // refuses on `upper_repair`; it never switches the key a write uses, so it
