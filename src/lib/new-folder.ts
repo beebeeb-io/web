@@ -8,8 +8,10 @@
  * only when unlocked: the server refuses a non-envelope name with a 400, but
  * the plain name had already crossed the wire.)
  */
+import type { IconName } from '@beebeeb/shared'
 import { createOwnerFolder } from './owner-upload-key'
 import { serializeEncryptedBlob, zeroize, type EncryptedMetadata } from './crypto'
+import { userFriendlyError } from './user-friendly-error'
 import type { DriveFile } from './api'
 
 /** What a folder create with a locked vault says (and nothing is sent). */
@@ -51,4 +53,21 @@ export async function createNamedOwnerFolder(args: {
   } finally {
     zeroize(nameKey)
   }
+}
+
+/**
+ * The toast for a folder create that failed, the same on every site that
+ * creates one from a typed name (E7: the move dialog only logged it). The
+ * changed-id abort and every other error show their user-facing sentence.
+ */
+export function folderCreateFailureToast(err: unknown): {
+  icon: IconName
+  title: string
+  description: string
+  danger: true
+} {
+  if (err instanceof VaultLockedFolderError) {
+    return { icon: 'lock', title: 'Vault is locked', description: FOLDER_NEEDS_UNLOCK, danger: true }
+  }
+  return { icon: 'folder', title: 'Failed to create folder', description: userFriendlyError(err), danger: true }
 }

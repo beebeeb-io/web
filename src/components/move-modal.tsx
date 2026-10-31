@@ -4,7 +4,8 @@ import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { listFiles } from '../lib/api'
-import { createNamedOwnerFolder } from '../lib/new-folder'
+import { createNamedOwnerFolder, folderCreateFailureToast } from '../lib/new-folder'
+import { useToast } from './toast'
 import { useKeys } from '../lib/key-context'
 import { decryptFileMetadata, encryptFilename } from '../lib/crypto'
 
@@ -32,6 +33,7 @@ export function MoveModal({
   onConfirm,
 }: MoveModalProps) {
   const { getFileKey, getMasterKey, isUnlocked, cryptoReady } = useKeys()
+  const { showToast } = useToast()
   const [folders, setFolders] = useState<FolderNode[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -143,7 +145,9 @@ export function MoveModal({
       setSearch('')
       fetchFolders(parentId)
     } catch (err) {
-      console.error('[MoveModal] Failed to create folder:', err)
+      // Shown, as on every other create path: a failed create (the changed-id
+      // abort included) must not look like nothing happened.
+      showToast(folderCreateFailureToast(err))
       setSearch('')
     } finally {
       setCreatingFolder(false)

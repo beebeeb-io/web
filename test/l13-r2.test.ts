@@ -16,6 +16,8 @@
  *     checks themselves live in api.ts: l13-api-echo-wire.test.ts.)
  * E6  a folder name never crosses the wire in plaintext: with the vault
  *     locked, Drive's New folder and the move dialog's new folder send nothing.
+ * E7  the move dialog shows a failed folder create (the changed-id message
+ *     included) as the other create paths do, instead of only logging it.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -404,5 +406,29 @@ describe('E6: a folder name never crosses the wire in plaintext', () => {
       })
     }
     expect(offenders).toEqual([])
+  })
+})
+
+describe('E7: the move dialog shows a failed folder create', () => {
+  test('the changed-id abort gets its own message, as on the other create paths', async () => {
+    const { folderCreateFailureToast } = await import('../src/lib/new-folder')
+    expect(folderCreateFailureToast(new ServerChangedItemIdError())).toEqual({
+      icon: 'folder', title: 'Failed to create folder', description: SERVER_CHANGED_ITEM_ID_MESSAGE, danger: true,
+    })
+  })
+
+  test('a locked vault says how to fix it', async () => {
+    const { folderCreateFailureToast, VaultLockedFolderError } = await import('../src/lib/new-folder')
+    expect(folderCreateFailureToast(new VaultLockedFolderError())).toEqual({
+      icon: 'lock', title: 'Vault is locked', description: 'Unlock your vault to create a folder.', danger: true,
+    })
+  })
+
+  test('move-modal.tsx and drive.tsx both show it; the dialog no longer only logs', () => {
+    for (const s of NAMED_FOLDER_SITES) {
+      const body = handlerBody(source(s.file), s.handler)
+      expect(body).toContain('showToast(folderCreateFailureToast(err))')
+    }
+    expect(handlerBody(source('components/move-modal.tsx'), 'handleNewFolder')).not.toContain('console.error')
   })
 })

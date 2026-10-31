@@ -68,7 +68,7 @@ import {
   type SyncNode,
 } from '../lib/api'
 import { createOwnerFolder, moveOwnerItems } from '../lib/owner-upload-key'
-import { createNamedOwnerFolder } from '../lib/new-folder'
+import { createNamedOwnerFolder, folderCreateFailureToast } from '../lib/new-folder'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { usePlanBlock } from '../hooks/use-plan-block'
 import { noCardTrialStatus, trialCapShortfallNotice } from '../lib/no-card-trial'
@@ -1941,12 +1941,7 @@ export function Drive() {
 
       fetchFiles()
     } catch (err) {
-      showToast({
-        icon: 'folder',
-        title: 'Failed to create folder',
-        description: userFriendlyError(err),
-        danger: true,
-      })
+      showToast(folderCreateFailureToast(err))
     }
   }
 
