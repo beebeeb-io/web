@@ -64,7 +64,8 @@ export type WriteTarget = Pick<
 export interface WriteCheckOptions {
   /**
    * The account the resident key belongs to (`useKeys().getResidentUserId()`).
-   * A row another member uploaded is then skipped; unknown (null) checks it.
+   * A row another member uploaded is then skipped. Unknown (null) refuses any
+   * row with a recorded uploader (round 3, X4).
    */
   viewerId?: string | null
   /** Cancels the check (an AbortError is rethrown as is, never as a verdict). */
@@ -96,17 +97,30 @@ function checkFailed(cause?: unknown): Error {
 }
 
 /**
- * Is this row's content sealed under one of the OWNER's conventions? A request
- * upload (sealed content key), a guest's row (link) and a member's row are not:
- * the owner's master key resolves nothing for them, so there is no verdict to
- * reach. An unknown viewer keeps a member-attributed row checked (the safe side:
- * refused when undecided, never silently allowed).
+ * Is this row's content sealed under one of the OWNER's conventions?
+ * - `other`: a request upload (sealed content key), a guest's row (link) or a
+ *   row another member uploaded. The owner's master key resolves nothing for
+ *   it, so there is nothing to check.
+ * - `owner`: the viewer's own upload, or a row with no uploader recorded
+ *   (legacy rows; the server sets `uploaded_by` at upload commit).
+ * - `unknown` (round 3, X4): an uploader is recorded but the viewer is not
+ *   known. Probing it under the owner's key would refuse a member's row for
+ *   good, and skipping it would let an owner row through: the caller refuses
+ *   with the unlock copy instead.
  */
+function contentOwner(file: WriteTarget, viewerId: string | null | undefined): 'owner' | 'other' | 'unknown' {
+  if (isRequestUpload(file)) return 'other'
+  if (file.acted_via_share_id != null) return 'other'
+  if (!file.uploaded_by) return 'owner'
+  if (!viewerId) return 'unknown'
+  return file.uploaded_by === viewerId ? 'owner' : 'other'
+}
+
+/** True when the owner check applies; throws the unlock copy when the viewer is unknown. */
 function isOwnerContentRow(file: WriteTarget, viewerId: string | null | undefined): boolean {
-  if (isRequestUpload(file)) return false
-  if (file.acted_via_share_id != null) return false
-  if (file.uploaded_by && viewerId && file.uploaded_by !== viewerId) return false
-  return true
+  const owner = contentOwner(file, viewerId)
+  if (owner === 'unknown') throw needsUnlock()
+  return owner === 'owner'
 }
 
 /** Candidate wire-frame lengths for chunk 0, most likely first (none longer than `have`). */

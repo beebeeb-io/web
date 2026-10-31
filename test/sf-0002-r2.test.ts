@@ -487,6 +487,9 @@ function frameResponse(frame: Uint8Array): Response {
   return new Response(frame, { status: 200, headers: { 'X-Chunk-Count': '1', 'X-Chunk-Size': String(frame.length - 28) } })
 }
 
+/** Every caller passes the resident user id; these rows are the viewer's own. */
+const ME = { viewerId: 'me' }
+
 describe('W5: transient errors and repeated cost', () => {
   beforeEach(() => clearOwnerRepairReadOnly())
 
@@ -505,7 +508,7 @@ describe('W5: transient errors and repeated cost', () => {
       return frameResponse(frame)
     })
     try {
-      await expect(assertCurrentVersionWritable(ordinaryRow(), master)).resolves.toBeUndefined()
+      await expect(assertCurrentVersionWritable(ordinaryRow(), master, ME)).resolves.toBeUndefined()
       expect(net.downloads()).toHaveLength(2)
     } finally {
       net.restore()
@@ -516,7 +519,7 @@ describe('W5: transient errors and repeated cost', () => {
     const master = hexToBytes(V1.master_key_hex)
     const net = installFetch(() => new Response('unavailable', { status: 503 }))
     try {
-      await expect(assertCurrentVersionWritable(ordinaryRow(), master)).rejects.toThrow(OWNER_WRITE_CHECK_FAILED)
+      await expect(assertCurrentVersionWritable(ordinaryRow(), master, ME)).rejects.toThrow(OWNER_WRITE_CHECK_FAILED)
       expect(net.downloads()).toHaveLength(1)
       expect(isOwnerRepairReadOnly(V1.file_id)).toBe(false)
     } finally {
@@ -529,16 +532,16 @@ describe('W5: transient errors and repeated cost', () => {
     const frame = ordinaryFrame()
     const net = installFetch(() => frameResponse(frame))
     try {
-      await assertCurrentVersionWritable(ordinaryRow(), master)
+      await assertCurrentVersionWritable(ordinaryRow(), master, ME)
       // A rename changes updated_at but not the content version.
-      await assertCurrentVersionWritable(ordinaryRow({ updated_at: '2026-10-31T01:00:00Z' }), master)
+      await assertCurrentVersionWritable(ordinaryRow({ updated_at: '2026-10-31T01:00:00Z' }), master, ME)
       expect(net.downloads()).toHaveLength(1)
       // A new content version is checked again.
-      await assertCurrentVersionWritable(ordinaryRow({ version_number: 3 }), master)
+      await assertCurrentVersionWritable(ordinaryRow({ version_number: 3 }), master, ME)
       expect(net.downloads()).toHaveLength(2)
       // Locking the vault forgets every verdict.
       clearOwnerRepairReadOnly()
-      await assertCurrentVersionWritable(ordinaryRow({ version_number: 3 }), master)
+      await assertCurrentVersionWritable(ordinaryRow({ version_number: 3 }), master, ME)
       expect(net.downloads()).toHaveLength(3)
     } finally {
       net.restore()
@@ -555,14 +558,14 @@ describe('W5: transient errors and repeated cost', () => {
     const ctl = new AbortController()
     ctl.abort()
     try {
-      const err = await assertCurrentVersionWritable(ordinaryRow(), master, { signal: ctl.signal }).then(
+      const err = await assertCurrentVersionWritable(ordinaryRow(), master, { ...ME, signal: ctl.signal }).then(
         () => null,
         (e: unknown) => e,
       )
       expect((err as Error | null)?.name).toBe('AbortError')
       expect(isOwnerRepairReadOnly(V1.file_id)).toBe(false)
       // Nothing was cached: the next check asks again.
-      await assertCurrentVersionWritable(ordinaryRow(), master)
+      await assertCurrentVersionWritable(ordinaryRow(), master, ME)
       expect(net.downloads()).toHaveLength(2)
     } finally {
       net.restore()
@@ -927,5 +930,52 @@ describe('X3: pushHeadWithRepair wipes the repaired key on every path', () => {
     ).rejects.toThrow('dispose failed')
     expect(mirror.contentRepairKeys.length).toBeGreaterThan(0)
     expect(mirror.contentRepairKeys.every((k) => k.length === 32 && k.every((b) => b === 0))).toBe(true)
+  })
+})
+
+// ── X4: an unknown viewer never probes a member's row under the owner key ───
+
+describe("X4: the viewer decides whose row it is", () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  test("viewer unknown + a member's row: refused with the unlock copy, not probed", async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    // The member's content is sealed under its own key: nothing an owner key opens.
+    const memberFrame = v1Frame(new Uint8Array(32).fill(0x33), new Uint8Array(UPPER_PLAINTEXT_LEN).fill(1))
+    const member = row({ size_bytes: UPPER_PLAINTEXT_LEN, chunk_count: 1, uploaded_by: 'member-1', acted_via_share_id: null })
+    const net = server(memberFrame, memberFrame, () => member)
+    try {
+      await expect(assertCurrentVersionWritable(member, master, { viewerId: null })).rejects.toThrow(
+        OWNER_WRITE_NEEDS_UNLOCK,
+      )
+      expect(net.downloads()).toHaveLength(0)
+      expect(isOwnerRepairReadOnly(V1.file_id)).toBe(false)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test("viewer known + a member's row: not probed, allowed", async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const member = row({ size_bytes: UPPER_PLAINTEXT_LEN, chunk_count: 1, uploaded_by: 'member-1', acted_via_share_id: null })
+    const net = server(UPPER_FRAME, UPPER_FRAME, () => member)
+    try {
+      await expect(assertCurrentVersionWritable(member, master, { viewerId: 'me' })).resolves.toBeUndefined()
+      expect(net.downloads()).toHaveLength(0)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('viewer unknown + a row with no uploader recorded (legacy owner row): still checked', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const legacy = row({ size_bytes: UPPER_PLAINTEXT_LEN, chunk_count: 1, uploaded_by: null, acted_via_share_id: null })
+    const net = server(UPPER_FRAME, UPPER_FRAME, () => legacy)
+    try {
+      await expect(assertCurrentVersionWritable(legacy, master, { viewerId: null })).rejects.toThrow(OWNER_REPAIR_READ_ONLY)
+      expect(net.downloads()).toHaveLength(1)
+    } finally {
+      net.restore()
+    }
   })
 })
