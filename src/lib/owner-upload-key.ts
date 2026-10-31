@@ -8,10 +8,10 @@
  * invite to hang it on (`POST /shared-folders/:id/keys`, owner only,
  * insert-only).
  */
-import { ApiError, createFolder, publishSharedFolderKeys, updateFile, type DriveFile } from './api'
+import { ApiError, createFolder, getFile, publishSharedFolderKeys, updateFile, type DriveFile } from './api'
 import { collectAllChildItems, sealChildKey } from './folder-share-crypto'
 import { assertNoSeenCustodyAbove, folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
-import { deriveFileKey, zeroize } from './crypto'
+import { deriveFileKey, readNameMetadata, zeroize } from './crypto'
 import { sharedFoldersEnabled } from './use-feature-flag'
 import { withNetworkRetry } from './net-retry'
 
@@ -87,11 +87,57 @@ export async function createOwnerFolder(args: {
   // A dropped connection is retried under the SAME id (SF-0001 round 3): it
   // was minted for this folder, so no other client holds it. The changed-id
   // abort and every HTTP error are not retried.
-  const created = await withNetworkRetry(() => createFolder(args.nameEncrypted, args.parentId, args.folderId))
+  let dropped = false
+  let created: DriveFile
+  try {
+    created = await withNetworkRetry(async () => {
+      try {
+        return await createFolder(args.nameEncrypted, args.parentId, args.folderId)
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 0) dropped = true
+        throw err
+      }
+    })
+  } catch (err) {
+    // POST /files/folder is a plain INSERT: a retry whose first attempt DID
+    // commit answers 500 (the primary key), and a connection that stayed down
+    // leaves it unknown. After a dropped connection, then, the folder may be
+    // there already (SF-0001 round 4): if a row under this id exists and its
+    // name authenticates under this user's key, it IS this folder, and the
+    // create goes on below, the name-key wrap included. Otherwise the error
+    // stands.
+    const maybeLanded = dropped && err instanceof ApiError && (err.status === 0 || err.status === 500)
+    const landed = maybeLanded ? await folderThatLanded(args.folderId, args.nameKey) : null
+    if (!landed) throw err
+    created = landed
+  }
   if (args.parentId && args.nameKey && args.masterKey) {
     await publishOwnerUploadKey(args.masterKey, args.parentId, created.id, args.nameKey, true)
   }
   return created
+}
+
+/**
+ * The folder under `folderId`, if a row exists, is a live folder and its name
+ * authenticates under `nameKey` (the key derived for that id): then it is the
+ * one this client's earlier attempt created. Null for anything else, including
+ * a lookup that fails (the create's own error is what the caller surfaces).
+ */
+async function folderThatLanded(folderId: string, nameKey: Uint8Array | undefined): Promise<DriveFile | null> {
+  if (!nameKey) return null
+  let row: DriveFile
+  try {
+    row = await getFile(folderId)
+  } catch {
+    return null
+  }
+  if (row.id !== folderId || !row.is_folder || row.is_trashed) return null
+  try {
+    await readNameMetadata(nameKey, row.name_encrypted)
+  } catch {
+    return null
+  }
+  return row
 }
 
 /** The server takes at most this many key rows per publish call. */

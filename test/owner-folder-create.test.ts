@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
+import { createContentOps } from '../src/lib/content-crypto'
 
 // shared_folders_v1 ON for this file (the paths under test are flag-on ones).
 await mockModuleScoped('../src/lib/use-feature-flag', import.meta.dir, { sharedFoldersEnabled: async () => true, sharedFoldersEnabledForWrite: async () => true })
@@ -35,12 +36,23 @@ const FOLDER_KEY = new Uint8Array(32).fill(0x5a)
 let custodyOn = true
 /** The next N folder creates fail as a dropped connection (ApiError status 0). */
 let dropNextCreates = 0
+/**
+ * R4-3: after the drops, the next create answers 500. POST /files/folder is a
+ * plain INSERT, so a retry whose first attempt committed hits the primary key.
+ */
+let conflictAfterDrops = false
+/** What GET /files/{NEW_FOLDER} answers: the folder that landed, or nothing. */
+let landedNewFolder: Record<string, unknown> | null = null
+const rowLookups: string[] = []
 const created: Array<{ parentId?: string; folderId?: string }> = []
 const published: Array<{ folderId: string; keys: { file_id: string; encrypted_file_key: string }[] }> = []
 
 const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
   ...r,
   ...ownedFolderCrypto(),
+  // Core's name reader, in process (the worker hop skipped).
+  readNameMetadata: async (fileKey: Uint8Array, nameEncrypted: string) =>
+    createContentOps(wasm).readNameMetadata(fileKey, nameEncrypted),
 }))
 
 await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => ({
@@ -58,14 +70,28 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => ({
       wrapped_folder_key: null,
     }
   },
-  getFile: async (id: string) => ({ id, parent_id: null }),
+  getFile: async (id: string) => {
+    rowLookups.push(id)
+    if (id === NEW_FOLDER) {
+      if (!landedNewFolder) {
+        const NotFound = r.ApiError as unknown as new (message: string, status: number) => Error
+        throw new NotFound('Not found.', 404)
+      }
+      return landedNewFolder
+    }
+    return { id, parent_id: null }
+  },
   getSentInvites: async () => [],
   createFolder: async (_name: string, parentId?: string, folderId?: string) => {
     created.push({ parentId, folderId })
+    const Failed = r.ApiError as unknown as new (message: string, status: number) => Error
     if (dropNextCreates > 0) {
       dropNextCreates--
-      const Dropped = r.ApiError as unknown as new (message: string, status: number) => Error
-      throw new Dropped('Could not reach the server. Check your connection and try again.', 0)
+      throw new Failed('Could not reach the server. Check your connection and try again.', 0)
+    }
+    if (conflictAfterDrops) {
+      conflictAfterDrops = false
+      throw new Failed('Internal server error', 500)
     }
     return { id: folderId, parent_id: parentId ?? null, is_folder: true }
   },
@@ -83,6 +109,9 @@ beforeEach(() => {
   resetCustodyMemoryForTests()
   custodyOn = true
   dropNextCreates = 0
+  conflictAfterDrops = false
+  landedNewFolder = null
+  rowLookups.length = 0
   created.length = 0
   published.length = 0
   clearSharedFolderLookups()
@@ -159,5 +188,60 @@ describe('createOwnerFolder retries a transient create failure under the same fo
     const folder = await createOwnerFolder({ nameEncrypted: '{}', folderId: NEW_FOLDER })
     expect(folder.id).toBe(NEW_FOLDER)
     expect(created).toEqual([{ parentId: undefined, folderId: NEW_FOLDER }, { parentId: undefined, folderId: NEW_FOLDER }])
+  })
+})
+
+// SF-0001 round 4, R4-3: the retry after a dropped connection may meet the
+// folder its first attempt already created (a 500 on the primary key). The
+// row is then looked up: one that exists and whose name authenticates under
+// this user's key IS the folder, and the create goes on (wrap included).
+describe('createOwnerFolder after a dropped connection: the folder may already be there', () => {
+  /** A folder name sealed by core under `key` (the shape encryptFileMetadata produces). */
+  function sealedName(key: Uint8Array, name: string): string {
+    const b = wasm.encrypt_metadata(key, JSON.stringify({ name, mime_type: null })) as { nonce: Uint8Array; ciphertext: Uint8Array }
+    return JSON.stringify({ cipher_suite: 'V1Aes256Gcm', nonce: Array.from(b.nonce), ciphertext: Array.from(b.ciphertext) })
+  }
+  const folderRow = (name_encrypted: string) => ({
+    id: NEW_FOLDER, name_encrypted, is_folder: true, is_trashed: false, parent_id: ROOT, mime_type: null,
+    size_bytes: 0, chunk_count: 0, created_at: '2026-10-31T00:00:00Z', updated_at: '2026-10-31T00:00:00Z',
+  })
+  const createArgs = () => ({
+    nameEncrypted: sealedName(nameKey(), 'Taxes'), parentId: ROOT, folderId: NEW_FOLDER, nameKey: nameKey(), masterKey: MASTER,
+  })
+
+  test('dropped, then 500; the row is there and its name authenticates: created, and the wrap is published', async () => {
+    dropNextCreates = 1
+    conflictAfterDrops = true
+    landedNewFolder = folderRow(sealedName(nameKey(), 'Taxes'))
+    const folder = await createOwnerFolder(createArgs())
+    expect(folder.id).toBe(NEW_FOLDER)
+    expect(rowLookups).toContain(NEW_FOLDER)
+    // The parent is a shared (custody) folder: its name-key wrap still goes out.
+    expect(published).toHaveLength(1)
+    expect(published[0].keys.map((k) => k.file_id)).toEqual([NEW_FOLDER])
+  })
+
+  test('dropped, then 500; no such row: the error surfaces, nothing is published', async () => {
+    dropNextCreates = 1
+    conflictAfterDrops = true
+    await expect(createOwnerFolder(createArgs())).rejects.toMatchObject({ status: 500 })
+    expect(rowLookups).toContain(NEW_FOLDER)
+    expect(published).toEqual([])
+  })
+
+  test('dropped, then 500; a row whose name does not authenticate under this key: the error surfaces', async () => {
+    dropNextCreates = 1
+    conflictAfterDrops = true
+    landedNewFolder = folderRow(sealedName(new Uint8Array(32).fill(9), 'Taxes'))
+    await expect(createOwnerFolder(createArgs())).rejects.toMatchObject({ status: 500 })
+    expect(rowLookups).toContain(NEW_FOLDER)
+    expect(published).toEqual([])
+  })
+
+  test('a 500 with no dropped connection before it is just an error: no lookup', async () => {
+    conflictAfterDrops = true
+    landedNewFolder = folderRow(sealedName(nameKey(), 'Taxes'))
+    await expect(createOwnerFolder(createArgs())).rejects.toMatchObject({ status: 500 })
+    expect(rowLookups).not.toContain(NEW_FOLDER)
   })
 })
