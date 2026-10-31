@@ -317,7 +317,9 @@ describe('T32 streaming_copy_strings_exact (§7)', () => {
       { type: 'play' },
     )
     expect(streamingInfoLine(playing)).toBe('Streaming · 0 of 120 parts verified')
-    const fortyOne = reduceMediaState(playing, { type: 'progress', decryptedChunks: 36, totalParts: 120 })
+    // Round 3 (B7): the pill follows the pulled chunk the hook dispatches,
+    // not decryptedChunks (which only the whole-file path sets).
+    const fortyOne = reduceMediaState(playing, { type: 'pull', index: 36 })
     expect(streamingInfoLine(fortyOne)).toBe('Streaming · 0 of 120 parts verified')
     expect(statusCopy(reduceMediaState(fortyOne, { type: 'waiting' }))).toBe(
       'Buffering · downloading part 37 of 120',

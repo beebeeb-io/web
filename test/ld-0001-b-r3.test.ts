@@ -261,3 +261,13 @@ describe('LD-0001 r3 B4: every claim waiter is answered', () => {
     expect(b).toEqual({ state: 'resolved', value: null })
   })
 })
+
+describe('LD-0001 r3 B7: the buffering copy names the part the player waits on', () => {
+  test('buffering_copy_uses_the_latest_pull_index', () => {
+    let state = reduceMediaState(createMediaState(120), { type: 'ready' })
+    state = reduceMediaState(state, { type: 'play' })
+    state = reduceMediaState(state, { type: 'pull', index: 36 } as MediaEvent)
+    state = reduceMediaState(state, { type: 'waiting' })
+    expect(statusCopy(state)).toBe('Buffering · downloading part 37 of 120')
+  })
+})

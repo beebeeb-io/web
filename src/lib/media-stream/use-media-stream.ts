@@ -220,6 +220,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
   const sawMetadataRef = useRef(false)
   const rangesServedRef = useRef(false)
   const pendingRestoreRef = useRef<{ time: number; paused: boolean } | null>(null)
+  const lastPullPartRef = useRef<number | null>(null)
 
   const setElement = useCallback((el: HTMLMediaElement | null) => {
     elementRef.current = el
@@ -293,7 +294,15 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
         id,
         mime: mime ?? '',
         size: session.totalSize,
-        read: (reqId, offset, max) => session.read(reqId, offset, max),
+        read: (reqId, offset, max) => {
+          // B7: the buffering pill names the chunk the player is waiting on.
+          const part = session.chunkSize > 0 ? Math.floor(offset / session.chunkSize) : 0
+          if (part !== lastPullPartRef.current) {
+            lastPullPartRef.current = part
+            dispatch({ type: 'pull', index: part })
+          }
+          return session.read(reqId, offset, max)
+        },
         env,
         onOpenRange: () => {
           rangesServedRef.current = true
@@ -306,7 +315,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
       })
       return true
     },
-    [makeEnv, mime, updatePerFile],
+    [dispatch, makeEnv, mime, updatePerFile],
   )
 
   const mediaStateRef = useRef<MediaState | null>(null)
@@ -347,6 +356,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
     const opening = new AbortController()
     // A new session starts with no media state of its own (a retry too).
     setMediaState(null)
+    lastPullPartRef.current = null
 
     const run = async (): Promise<void> => {
       try {

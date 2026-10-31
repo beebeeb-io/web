@@ -37,6 +37,11 @@ export interface MediaState {
   receivedBytes: number
   totalBytes: number | null
   decryptedChunks: number
+  /**
+   * B7: the 0-based chunk the player's latest pull needs (streaming only).
+   * The buffering pill names this part; null until the first pull.
+   */
+  currentPart: number | null
   errorKind: ErrorKind | null
   errorIndex: number | null
 }
@@ -44,6 +49,8 @@ export interface MediaState {
 export type MediaEvent =
   | { type: 'open'; mode: 'streaming' | 'whole-file' }
   | { type: 'verified'; index: number }
+  /** The SW pulled bytes from chunk `index` (B7). */
+  | { type: 'pull'; index: number }
   | { type: 'ready' }
   | { type: 'play' }
   | { type: 'pause' }
@@ -74,6 +81,7 @@ export function createMediaState(totalParts: number): MediaState {
     receivedBytes: 0,
     totalBytes: null,
     decryptedChunks: 0,
+    currentPart: null,
     errorKind: null,
     errorIndex: null,
   }
@@ -93,6 +101,8 @@ export function reduceMediaState(state: MediaState, event: MediaEvent): MediaSta
       verified.add(event.index)
       return { ...state, verified }
     }
+    case 'pull':
+      return state.currentPart === event.index ? state : { ...state, currentPart: event.index }
     case 'ready':
       return state.transport === 'preparing' ? { ...state, transport: 'ready' } : state
     case 'play':
@@ -239,7 +249,8 @@ export function statusCopy(state: MediaState): string | null {
         : `Downloading the start · ${received} of ${formatMB(state.totalBytes)}`
     }
     case 'buffering':
-      return `Buffering · downloading part ${partNumber(state)} of ${state.totalParts}`
+      // B7: the part the player waits on — the latest pull's chunk.
+      return `Buffering · downloading part ${Math.min((state.currentPart ?? 0) + 1, Math.max(1, state.totalParts))} of ${state.totalParts}`
     case 'stalled':
       return 'Connection stalled · retrying'
     case 'ended':

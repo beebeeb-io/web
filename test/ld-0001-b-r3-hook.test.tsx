@@ -388,3 +388,18 @@ describe('LD-0001 r3 B6: only a chunk authentication failure claims verification
     expect(m.h.path).toBe('streaming')
   })
 })
+
+describe('LD-0001 r3 B7: the buffering pill names the real part', () => {
+  test('buffering_names_the_part_the_player_waits_on', async () => {
+    const session = fakeSession(120, 1024)
+    const m = await mountStreaming(session)
+    m.media.fire('loadedmetadata')
+    m.media.fire('play')
+    await tick()
+    m.port.postMessage({ type: 'pull', reqId: 'r1', offset: 36 * 1024 + 5, max: 512 })
+    await tick()
+    m.media.fire('waiting')
+    await waitFor(() => m.h.overlay !== null, 'overlay')
+    expect(m.h.overlay).toBe('Buffering · downloading part 37 of 120')
+  })
+})
