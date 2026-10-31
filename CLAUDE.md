@@ -54,6 +54,8 @@ Defined in `src/index.css`. Key colors: `paper`/`paper-2`/`paper-3` (warm off-wh
 
 Hi-fi designs are in the workspace `../../design/hifi/`: hifi-auth.jsx, hifi-onboarding.jsx, hifi-drive.jsx, hifi-upload-share.jsx, hifi-preview.jsx, hifi-settings.jsx, hifi-security.jsx, hifi-billing.jsx, hifi-empty-errors.jsx, hifi-brand-system.jsx.
 
+Design files live in the workspace root `../../design/hifi/` — never copy them into this public repo (a snapshot once published a false external-audit claim).
+
 ## Pages & routing
 
 - `/signup`, `/login` — guest only · `/onboarding` — post-signup recovery phrase
