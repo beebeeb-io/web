@@ -1509,7 +1509,10 @@ export function Drive() {
         // SF-0002 review: the row may be read-only from its CONTENT alone; a
         // version gate needs chunk 0 checked, not only a mark set on open.
         const row = files.find((f) => f.id === replaceFileId) ?? (await getFile(replaceFileId))
-        await assertCurrentVersionWritable(row, getMasterKey(), { viewerId: getResidentUserId() })
+        await assertCurrentVersionWritable(row, getMasterKey(), {
+          viewerId: getResidentUserId(),
+          signal: abortController.signal,
+        })
       }
       // Replace: the existing file's current name, whose recorded pin decides
       // the format of the new version (task 1943). Read from the listing, or

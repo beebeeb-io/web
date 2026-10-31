@@ -30,6 +30,7 @@ import {
 import { getToken, getApiUrl, ApiError } from './api'
 import { dispatchDecrypted } from './decrypt-events'
 import { markOwnerRepairReadOnly } from './owner-repair'
+import { withServerBusyRetry } from './server-busy-retry'
 
 export { UnverifiedFileMetadataError }
 
@@ -70,10 +71,27 @@ const NONCE_LENGTH = 12
 const GCM_TAG_LENGTH = 16
 const CHUNK_OVERHEAD = NONCE_LENGTH + GCM_TAG_LENGTH
 
-function parseHeaderInt(value: string | null): number | null {
+export function parseHeaderInt(value: string | null): number | null {
   if (!value) return null
   const n = Number.parseInt(value, 10)
   return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/**
+ * GET an encrypted body (`/api/v1/files/{id}/download`, or one version's
+ * `/versions/{vid}/download`) with the session's auth, the way the downloads
+ * below do, retrying a `429 server_busy` (task 1870) and honouring `signal`.
+ * The response is returned unread; the caller checks `ok`. Used by the
+ * SF-0002 write-time check; the download paths below keep their own fetch
+ * until they are consolidated (LD-0001 / W1 own them).
+ */
+export function requestEncryptedBody(path: string, signal?: AbortSignal): Promise<Response> {
+  return withServerBusyRetry(() => {
+    const headers: Record<string, string> = {}
+    const token = getToken()
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    return fetch(`${getApiUrl()}${path}`, { headers, signal, credentials: 'include' })
+  }, signal)
 }
 
 export function inferChunkCountFromEncryptedSize(

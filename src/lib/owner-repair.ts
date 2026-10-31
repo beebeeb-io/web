@@ -83,6 +83,8 @@ export function ownerRepairContentKeyWith(
 
 const readOnlyIds = new Set<string>()
 const repairedKeys = new Map<string, Uint8Array>()
+/** Versions the write-time check already found writable this session (SF-0002 round 2, W5). */
+const writableVersions = new Set<string>()
 
 /** Remember that this row resolved as upper_repair: it is read-only here. */
 export function markOwnerRepairReadOnly(fileId: string): void {
@@ -96,8 +98,23 @@ export function isOwnerRepairReadOnly(fileId: string): boolean {
 /** Drop every mark and cached key (vault lock / account change). */
 export function clearOwnerRepairReadOnly(): void {
   readOnlyIds.clear()
+  writableVersions.clear()
   for (const key of repairedKeys.values()) key.fill(0)
   repairedKeys.clear()
+}
+
+/**
+ * The write-time check found this content version writable: one probe per
+ * version per session. `versionKey` names the file AND the version (see
+ * owner-write-guard.ts). A read-only verdict is a mark instead; an undecided
+ * check is never remembered.
+ */
+export function rememberWritableVersion(versionKey: string): void {
+  writableVersions.add(versionKey)
+}
+
+export function isKnownWritableVersion(versionKey: string): boolean {
+  return writableVersions.has(versionKey)
 }
 
 /**

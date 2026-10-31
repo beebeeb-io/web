@@ -460,3 +460,103 @@ describe('W4: version restore goes through the write check', () => {
     }
   })
 })
+
+// ── W5: server-busy retry, abort, and one probe per version ─────────────────
+
+function ordinaryRow(over: Partial<DriveFile> = {}): DriveFile {
+  return row({
+    size_bytes: UPPER_PLAINTEXT_LEN,
+    chunk_count: 1,
+    acted_via_share_id: null,
+    uploaded_by: 'me',
+    version_number: 2,
+    ...over,
+  })
+}
+
+function frameResponse(frame: Uint8Array): Response {
+  return new Response(frame, { status: 200, headers: { 'X-Chunk-Count': '1', 'X-Chunk-Size': String(frame.length - 28) } })
+}
+
+describe('W5: transient errors and repeated cost', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  test('a 429 server_busy, then 200, is allowed after one retry', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const frame = ordinaryFrame()
+    let n = 0
+    const net = installFetch(() => {
+      n++
+      if (n === 1) {
+        return new Response(JSON.stringify({ error: 'server_busy', retry_after: 0 }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '0' },
+        })
+      }
+      return frameResponse(frame)
+    })
+    try {
+      await expect(assertCurrentVersionWritable(ordinaryRow(), master)).resolves.toBeUndefined()
+      expect(net.downloads()).toHaveLength(2)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('a 503 is not retried by the server-busy helper: refused with the retryable copy, never read-only', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const net = installFetch(() => new Response('unavailable', { status: 503 }))
+    try {
+      await expect(assertCurrentVersionWritable(ordinaryRow(), master)).rejects.toThrow(OWNER_WRITE_CHECK_FAILED)
+      expect(net.downloads()).toHaveLength(1)
+      expect(isOwnerRepairReadOnly(V1.file_id)).toBe(false)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('a second rename of the same row (same version) makes no /download request', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const frame = ordinaryFrame()
+    const net = installFetch(() => frameResponse(frame))
+    try {
+      await assertCurrentVersionWritable(ordinaryRow(), master)
+      // A rename changes updated_at but not the content version.
+      await assertCurrentVersionWritable(ordinaryRow({ updated_at: '2026-10-31T01:00:00Z' }), master)
+      expect(net.downloads()).toHaveLength(1)
+      // A new content version is checked again.
+      await assertCurrentVersionWritable(ordinaryRow({ version_number: 3 }), master)
+      expect(net.downloads()).toHaveLength(2)
+      // Locking the vault forgets every verdict.
+      clearOwnerRepairReadOnly()
+      await assertCurrentVersionWritable(ordinaryRow({ version_number: 3 }), master)
+      expect(net.downloads()).toHaveLength(3)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('an aborted check rejects as an abort, not as a verdict', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const frame = ordinaryFrame()
+    const net = installFetch((_url, init) => {
+      if (init?.signal?.aborted) return Promise.reject(new DOMException('Cancelled', 'AbortError'))
+      return frameResponse(frame)
+    })
+    const ctl = new AbortController()
+    ctl.abort()
+    try {
+      const err = await assertCurrentVersionWritable(ordinaryRow(), master, { signal: ctl.signal }).then(
+        () => null,
+        (e: unknown) => e,
+      )
+      expect((err as Error | null)?.name).toBe('AbortError')
+      expect(isOwnerRepairReadOnly(V1.file_id)).toBe(false)
+      // Nothing was cached: the next check asks again.
+      await assertCurrentVersionWritable(ordinaryRow(), master)
+      expect(net.downloads()).toHaveLength(2)
+    } finally {
+      net.restore()
+    }
+  })
+})

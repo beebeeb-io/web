@@ -15,11 +15,23 @@
 // Only the owner's own rows are checked: a request upload, a guest's row and
 // (when the viewer is known) a member's row are not sealed under an owner
 // convention, so there is nothing to resolve. Only a bounded prefix is read.
+//
+// Round 2 (W5): the request is the shared download request (auth, a
+// `429 server_busy` retry, the caller's AbortSignal), and a writable verdict is
+// remembered per (file, content version) for the session, so repeated renames
+// of one row probe once. Cleared with the read-only marks on lock.
 
-import { getApiUrl, getToken, restoreVersion, type DriveFile, type FileVersion } from './api'
+import { restoreVersion, type DriveFile, type FileVersion } from './api'
 import { ownerRepairContentKey } from './crypto'
+import { parseHeaderInt, requestEncryptedBody } from './encrypted-download'
 import { isRequestUpload } from './file-request-crypto'
-import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly, markOwnerRepairReadOnly } from './owner-repair'
+import {
+  OWNER_REPAIR_READ_ONLY,
+  isKnownWritableVersion,
+  isOwnerRepairReadOnly,
+  markOwnerRepairReadOnly,
+  rememberWritableVersion,
+} from './owner-repair'
 
 /** Shown when the check itself could not reach a verdict (network, server, or no frame authenticated). Retryable. */
 export const OWNER_WRITE_CHECK_FAILED = "Couldn't check this file before changing it. Try again."
@@ -43,7 +55,8 @@ export type WriteTarget = Pick<
   | 'file_request_id'
   | 'sender_ephemeral_pubkey'
   | 'wrapped_content_key'
->
+> &
+  Partial<Pick<DriveFile, 'version_number' | 'updated_at'>>
 
 export interface WriteCheckOptions {
   /**
@@ -51,16 +64,27 @@ export interface WriteCheckOptions {
    * A row another member uploaded is then skipped; unknown (null) checks it.
    */
   viewerId?: string | null
+  /** Cancels the check (an AbortError is rethrown as is, never as a verdict). */
+  signal?: AbortSignal
+}
+
+function isAbort(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AbortError'
+}
+
+/**
+ * The session cache key of a row's CURRENT content version. A rename changes
+ * `updated_at` but not `version_number`, so it is keyed on the version when the
+ * row carries one; size and chunk count change with any new content too.
+ */
+function currentVersionKey(file: WriteTarget): string {
+  const version = file.version_number != null ? `v${file.version_number}` : `t${file.updated_at ?? ''}`
+  return `${file.id}|${version}|${file.size_bytes ?? 0}|${file.chunk_count ?? 0}`
 }
 
 /** The write was refused because no verdict was reached; retrying may succeed. */
 function checkFailed(cause?: unknown): Error {
   return new Error(OWNER_WRITE_CHECK_FAILED, cause === undefined ? undefined : { cause })
-}
-
-function intHeader(value: string | null): number | null {
-  const n = value ? Number.parseInt(value, 10) : Number.NaN
-  return Number.isFinite(n) && n > 0 ? n : null
 }
 
 /**
@@ -152,14 +176,13 @@ async function resolveVersion(
   sizeBytes: number,
   rowChunkCount: number,
   masterKey: Uint8Array,
+  signal: AbortSignal | undefined,
 ): Promise<Verdict> {
-  const headers: Record<string, string> = {}
-  const token = getToken()
-  if (token) headers['Authorization'] = `Bearer ${token}`
   let res: Response
   try {
-    res = await fetch(`${getApiUrl()}${path}`, { headers, credentials: 'include' })
+    res = await requestEncryptedBody(path, signal)
   } catch (err) {
+    if (isAbort(err)) throw err
     throw checkFailed(err)
   }
   if (!res.ok) {
@@ -170,13 +193,14 @@ async function resolveVersion(
     }
     throw checkFailed()
   }
-  const chunkCount = Math.max(1, intHeader(res.headers.get('X-Chunk-Count')) ?? rowChunkCount)
-  const chunkSize = intHeader(res.headers.get('X-Chunk-Size'))
-  const want = prefixLength(sizeBytes, chunkCount, chunkSize, intHeader(res.headers.get('Content-Length')))
+  const chunkCount = Math.max(1, parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? rowChunkCount)
+  const chunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size'))
+  const want = prefixLength(sizeBytes, chunkCount, chunkSize, parseHeaderInt(res.headers.get('Content-Length')))
   let bytes: Uint8Array
   try {
     bytes = await readPrefix(res, want)
   } catch (err) {
+    if (isAbort(err)) throw err
     throw checkFailed(err)
   }
   for (const len of chunk0Candidates(bytes.length, sizeBytes, chunkCount, chunkSize)) {
@@ -219,6 +243,8 @@ export async function assertCurrentVersionWritable(
   if (file.is_folder) return
   if (!masterKey) return
   if (!isOwnerContentRow(file, opts.viewerId)) return
+  const versionKey = currentVersionKey(file)
+  if (isKnownWritableVersion(versionKey)) return
   // The check only reports which owner convention authenticates chunk 0 and
   // refuses on `upper_repair`; it never switches the key a write uses.
   const verdict = await resolveVersion(
@@ -227,11 +253,13 @@ export async function assertCurrentVersionWritable(
     file.size_bytes ?? 0,
     Math.max(1, file.chunk_count ?? 1),
     masterKey,
+    opts.signal,
   )
   if (verdict === 'read_only') {
     markOwnerRepairReadOnly(file.id)
     throw new Error(OWNER_REPAIR_READ_ONLY)
   }
+  rememberWritableVersion(versionKey)
 }
 
 /**
@@ -248,17 +276,21 @@ export async function assertRestoreWritable(
 ): Promise<void> {
   await assertCurrentVersionWritable(file, masterKey, opts)
   if (file.is_folder || !masterKey || !isOwnerContentRow(file, opts.viewerId)) return
+  const versionKey = `${file.id}|ver:${version.id}`
+  if (isKnownWritableVersion(versionKey)) return
   const verdict = await resolveVersion(
     `/api/v1/files/${file.id}/versions/${version.id}/download`,
     file.id,
     version.size_bytes ?? 0,
     Math.max(1, version.chunk_count ?? 1),
     masterKey,
+    opts.signal,
   )
   if (verdict === 'read_only') {
     markOwnerRepairReadOnly(file.id)
     throw new Error(OWNER_REPAIR_READ_ONLY)
   }
+  rememberWritableVersion(versionKey)
 }
 
 /** Restore `version` to current, after {@link assertRestoreWritable}. Nothing is POSTed when refused. */
