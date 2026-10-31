@@ -94,6 +94,7 @@ import {
   getActiveUploads,
   findByFingerprint,
   planResume,
+  pausedRowCheckFailedMessage,
   PausedVersionRefusedError,
   removeUploadState,
   type UploadState,
@@ -1169,10 +1170,22 @@ export function Drive() {
       // device's live upload); the server's lease sweep ends the stale session.
       try {
         const recordKey = await getFileKey(match.fileId)
-        const plan = await planResume(match, {
-          mintId: () => crypto.randomUUID(),
-          lookupRow: (id) => lookupOwnRow(id, recordKey),
-        })
+        let plan: Awaited<ReturnType<typeof planResume>>
+        try {
+          plan = await planResume(match, {
+            mintId: () => crypto.randomUUID(),
+            lookupRow: (id) => lookupOwnRow(id, recordKey),
+          })
+        } catch (err) {
+          // The row check could not answer (401 / 403 / 410, no connection, a
+          // crypto worker error). Nothing was uploaded and the record is KEPT:
+          // it goes back on the paused banner, where Dismiss removes it, and
+          // the toast says why. Never a "Queued" card that silently loops.
+          setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+          setPausedUploads((prev) => (prev.some((u) => u.fileId === match.fileId) ? prev : [...prev, match]))
+          showToast({ icon: 'upload', title: 'Upload not restarted', description: pausedRowCheckFailedMessage(err), danger: true })
+          continue
+        }
         if (plan.kind === 'refuse') {
           await removeUploadState(match.fileId)
           setUploads((prev) => prev.filter((u) => u.id !== uploadId))

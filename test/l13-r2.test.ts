@@ -38,6 +38,9 @@
  *      but does not own). Only an own-pin replace record restarts as a version.
  * R4-4 only a real authentication failure makes a row "unverified"; a crypto
  *      worker error propagates, and the paused upload's record is kept.
+ * R4-5 when the row check cannot answer (401 / 403 / 410, no connection, a
+ *      worker error), the Drive banner says so honestly and keeps the record
+ *      on the paused banner, where Dismiss removes it: no silent loop.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -696,5 +699,39 @@ describe('R4-4: a crypto worker error is not "unverified": it propagates and the
     expect(thrown).not.toBeNull()
     expect(isAuthenticationFailure(thrown)).toBe(true)
     expect(isAuthenticationFailure(new Error('crypto worker was restarted'))).toBe(false)
+  })
+})
+
+// ── R4-5: a row check that cannot answer is said, and dismissable ────────────
+
+describe('R4-5: the Drive banner says why a row check failed and keeps the record dismissable', () => {
+  test('each failure has its own honest sentence; every one says where to dismiss it', async () => {
+    const { pausedRowCheckFailedMessage } = await import('../src/lib/upload-resume')
+    const { ApiError } = await import('../src/lib/api')
+    const msg = (err: unknown) => pausedRowCheckFailedMessage(err)
+    expect(msg(new ApiError('Unauthorized', 401))).toBe(
+      'Your session expired. Sign in again, then resume this upload. It stays in your paused uploads until you dismiss it.')
+    expect(msg(new ApiError('Forbidden', 403))).toBe(
+      'You no longer have access to the file this paused upload was a new version of, so it was not restarted. Dismiss it from your paused uploads.')
+    expect(msg(new ApiError('Gone', 410))).toBe(
+      'The file this paused upload was a new version of is gone, so it was not restarted. Dismiss it from your paused uploads.')
+    for (const other of [new ApiError('Could not reach the server.', 0), new Error('crypto worker was restarted')]) {
+      expect(msg(other)).toBe(
+        "We couldn't check the file this paused upload was a new version of, so it was not restarted. Try again, or dismiss it from your paused uploads.")
+    }
+  })
+
+  test('drive.tsx: a failed row check keeps the record, puts it back on the paused banner, and says why', () => {
+    const text = source('pages/drive.tsx')
+    const start = text.indexOf('async function handleResumeFile(')
+    expect(start).toBeGreaterThan(-1)
+    const body = text.slice(start, text.indexOf('const { browse: browseResume', start))
+    const check = body.slice(body.indexOf('await planResume('))
+    const handler = check.slice(check.indexOf('} catch (err) {'), check.indexOf('continue'))
+    // The plan has its own catch: the row check's failure is not a "Resume failed" loop.
+    expect(handler).toContain('pausedRowCheckFailedMessage(err)')
+    expect(handler).toContain('setPausedUploads(')
+    // The record is not deleted on a check that could not answer.
+    expect(handler).not.toContain('removeUploadState')
   })
 })

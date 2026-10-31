@@ -167,6 +167,27 @@ export class PausedVersionRefusedError extends Error {
 }
 
 /**
+ * What the Drive banner says when `planResume`'s row check could not answer
+ * (SF-0001 round 4): the server refused the lookup (401 / 403 / 410), there
+ * was no connection, or the crypto worker failed. Nothing was uploaded and the
+ * record is kept on the paused banner, where Dismiss removes it, so it never
+ * loops silently. Duck-typed on `status` (this module has no ./api import).
+ */
+export function pausedRowCheckFailedMessage(err: unknown): string {
+  const status = typeof err === 'object' && err !== null ? (err as { status?: unknown }).status : undefined
+  if (status === 401) {
+    return 'Your session expired. Sign in again, then resume this upload. It stays in your paused uploads until you dismiss it.'
+  }
+  if (status === 403) {
+    return 'You no longer have access to the file this paused upload was a new version of, so it was not restarted. Dismiss it from your paused uploads.'
+  }
+  if (status === 410) {
+    return 'The file this paused upload was a new version of is gone, so it was not restarted. Dismiss it from your paused uploads.'
+  }
+  return "We couldn't check the file this paused upload was a new version of, so it was not restarted. Try again, or dismiss it from your paused uploads."
+}
+
+/**
  * L13 (contract 2275, SF-0001): the ONE rule for a stored session, used by
  * both the Drive resume banner and `encryptedUpload` itself. A session is
  * resumed only when this client minted its id; any other record restarts
