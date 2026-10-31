@@ -176,7 +176,7 @@ export function OfficeEditor({
   onShare,
   thumbnailUrl = null,
 }: OfficeEditorProps) {
-  const { getFileKey, getMasterKey } = useKeys()
+  const { getFileKey, getMasterKey, getResidentUserId } = useKeys()
   const { resolved: appTheme } = useTheme()
 
   const [activeTab, setActiveTab] = useState('Home')
@@ -583,7 +583,7 @@ export function OfficeEditor({
   async function performUpload(uploadFileId: string, conflictCreated: boolean, signal: AbortSignal, savedBytes: Uint8Array, nameOverride?: string): Promise<DriveFile> {
     // SF-0002 review: a new version under this id needs the CURRENT version's
     // content writable, not only a mark set when the file was opened.
-    if (uploadFileId === file.id) await assertCurrentVersionWritable(file, getMasterKey())
+    if (uploadFileId === file.id) await assertCurrentVersionWritable(file, getMasterKey(), { viewerId: getResidentUserId() })
     const fileKey = await getFileKey(uploadFileId)
     const name = nameOverride ?? decryptedName
     const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()

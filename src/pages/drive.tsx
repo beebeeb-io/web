@@ -156,7 +156,7 @@ function inferMimeFromName(name: string): string | null {
 export function Drive() {
   const { isFrozen } = useFrozen()
   const { user } = useAuth()
-  const { getFileKey, getMasterKey, getFileKeyForFile, isUnlocked, cryptoReady, cryptoError } = useKeys()
+  const { getFileKey, getMasterKey, getFileKeyForFile, getResidentUserId, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const { usage: driveUsage, planDetails: drivePlanDetails, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline, unpinFolders, accountDocument: driveAccountDocument } = useDriveData()
   const noCardTrial = noCardTrialStatus(driveAccountDocument)
   const { indexFile, reindexFields, unindexFile } = useSearchIndex()
@@ -1510,7 +1510,7 @@ export function Drive() {
         // SF-0002 review: the row may be read-only from its CONTENT alone; a
         // version gate needs chunk 0 checked, not only a mark set on open.
         const row = files.find((f) => f.id === replaceFileId) ?? (await getFile(replaceFileId))
-        await assertCurrentVersionWritable(row, getMasterKey())
+        await assertCurrentVersionWritable(row, getMasterKey(), { viewerId: getResidentUserId() })
       }
       // Replace: the existing file's current name, whose recorded pin decides
       // the format of the new version (task 1943). Read from the listing, or
@@ -2408,7 +2408,7 @@ export function Drive() {
       // SF-0002 review: a rename rewrites the name envelope; refuse a row
       // whose current version is still repair-sealed even if it was never opened.
       const renameRow = files.find((f) => f.id === renameFileId)
-      if (renameRow) await assertCurrentVersionWritable(renameRow, getMasterKey())
+      if (renameRow) await assertCurrentVersionWritable(renameRow, getMasterKey(), { viewerId: getResidentUserId() })
       // rv-web198c P2-4: a guest's or member's row is renamed under ITS key,
       // proven to open its current name; otherwise the rename is refused.
       const fileKey = await renameKeyFor({

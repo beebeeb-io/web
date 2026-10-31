@@ -133,7 +133,7 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
   toolbarSlotEl,
   onRequestExitEdit,
 }, ref) {
-  const { getFileKey, getMasterKey } = useKeys()
+  const { getFileKey, getMasterKey, getResidentUserId } = useKeys()
   // SF-0002: a file repaired from the iOS Files-app convention opens and
   // downloads, but every write would have to re-key an existing object.
   const ownerReadOnly = isOwnerRepairReadOnly(file.id)
@@ -220,7 +220,7 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
     const uploadFileId = targetFileId ?? crypto.randomUUID()
     // SF-0002 review: a new version under this id needs the CURRENT version's
     // content writable, not only a mark set when the file was opened.
-    if (uploadFileId === file.id) await assertCurrentVersionWritable(file, getMasterKey())
+    if (uploadFileId === file.id) await assertCurrentVersionWritable(file, getMasterKey(), { viewerId: getResidentUserId() })
     const fileKey = await getFileKey(uploadFileId)
     const name = nameOverride ?? decryptedName
     const effectiveType = mimeType ?? (isMarkdown ? 'text/markdown' : 'text/plain')

@@ -34,7 +34,7 @@ import { mergeRecentlyChangedFiles } from '../lib/recent-files'
 const RECENT_LIMIT = 50
 
 export function Recent() {
-  const { getFileKey, getFileKeyForFile, getMasterKey, isUnlocked, cryptoReady } = useKeys()
+  const { getFileKey, getFileKeyForFile, getMasterKey, getResidentUserId, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
   const { setNodeStarred } = useSync()
   const navigate = useNavigate()
@@ -124,7 +124,7 @@ export function Recent() {
       // SF-0002 review: refuse a rename of a row whose current version is
       // still repair-sealed (it may never have been opened).
       const renameRow = files.find((f) => f.id === renameFileId)
-      if (renameRow) await assertCurrentVersionWritable(renameRow, getMasterKey())
+      if (renameRow) await assertCurrentVersionWritable(renameRow, getMasterKey(), { viewerId: getResidentUserId() })
       // rv-web198c P2-4: a guest's or member's row is renamed under ITS key.
       const fileKey = await renameKeyFor({ fileId: renameFileId, file: files.find((f) => f.id === renameFileId), viewerId: null, getFileKey, getFileKeyForFile, readName: readFileMetadata })
       const enc = await encryptFilename(fileKey, newName)
