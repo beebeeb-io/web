@@ -197,6 +197,13 @@ export interface WholeFileOptions {
    * name/MIME read before any content), never the caller's UI row.
    */
   mediaCapBytes?: number
+  /**
+   * The row's legacy server `mime_type` (C5). The cap reads
+   * `rowMimeType ?? authenticated MIME` with the authenticated name: exactly
+   * the rule the preview's renderer uses, so the two always agree on what is
+   * media.
+   */
+  rowMimeType?: string | null
 }
 
 /** Emit at most once per 64 KiB received, plus on every part and phase change. */
@@ -868,19 +875,23 @@ export async function streamOverCapDownload(
 }
 
 /**
- * The whole-file media cap, decided on AUTHENTICATED metadata only (round-2
- * review, item 6): the caller's row (`file.mime_type`, UI filename) is
- * unauthenticated, so a server could otherwise suppress or force the card.
- * Runs after `openFileMetadata` and before any fetch.
+ * The whole-file media cap. Runs after `openFileMetadata` and before any fetch.
+ *
+ * Round 3 (C5): "is media" is decided exactly as the preview's renderer
+ * decides it, `file.mime_type ?? authenticated MIME`, with the authenticated
+ * name for the extension. Round 2 read the authenticated metadata only, so a
+ * file the renderer plays as video (legacy row MIME) could escape the cap and
+ * be buffered whole. The name is never the caller's UI name.
  */
 function guardMediaCap(
   meta: { name: string; mimeType: string | null },
   sizeBytes: number,
   mediaCapBytes: number | undefined,
+  rowMimeType: string | null | undefined,
 ): void {
   if (mediaCapBytes === undefined) return
   if (!(sizeBytes > mediaCapBytes)) return
-  const kind = mediaKind(meta.mimeType, meta.name)
+  const kind = mediaKind(rowMimeType ?? meta.mimeType, meta.name)
   if (kind) throw new TooLargeToPreviewError(kind)
 }
 
@@ -898,7 +909,7 @@ export async function decryptToBlob(
   opts?: WholeFileOptions,
 ): Promise<{ plaintext: Blob; filename: string }> {
   const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
-  guardMediaCap(meta, sizeBytes, opts?.mediaCapBytes)
+  guardMediaCap(meta, sizeBytes, opts?.mediaCapBytes, opts?.rowMimeType)
   const filename = meta.name
   const blobMime = mimeType || meta.mimeType || 'application/octet-stream'
 
@@ -944,7 +955,7 @@ export async function decryptVersionToBlob(
   opts?: WholeFileOptions,
 ): Promise<Blob> {
   const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
-  guardMediaCap(meta, sizeBytes, opts?.mediaCapBytes)
+  guardMediaCap(meta, sizeBytes, opts?.mediaCapBytes, opts?.rowMimeType)
   const token = getToken()
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`

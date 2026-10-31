@@ -291,3 +291,33 @@ describe('LD-0001 r3 C4: the over-cap Download is cancellable and reports progre
     expect(opts?.onProgress).toBe(onProgress)
   })
 })
+
+describe('LD-0001 r3 C5: the cap and the renderer agree on what is media', () => {
+  test('the_row_mime_counts_first_like_the_renderer', async () => {
+    const cap = policy.WHOLE_FILE_MEDIA_CAP_BYTES
+    // The authenticated metadata names no media type; the row says video.
+    const f = buildFixture({ name: 'clip.bin', mime: null })
+    serve(f)
+    const err = await expectRejection(
+      dl.decryptToBlob(f.fileId, f.fileKey, f.name, 'video/mp4', f.chunkCount, cap + 1, {
+        mediaCapBytes: cap,
+        rowMimeType: 'video/mp4',
+      }),
+    )
+    expect(err).toBeInstanceOf(policy.TooLargeToPreviewError)
+    expect(fetchCalls).toBe(0)
+  })
+
+  test('without_a_row_mime_the_authenticated_metadata_decides', async () => {
+    const cap = policy.WHOLE_FILE_MEDIA_CAP_BYTES
+    const f = buildFixture({ name: 'holiday.mp4', mime: 'video/mp4' })
+    const err = await expectRejection(
+      dl.decryptVersionToBlob(f.fileId, 'v1', f.fileKey, f.name, null, f.chunkCount, cap + 1, {
+        mediaCapBytes: cap,
+        rowMimeType: null,
+      }),
+    )
+    expect(err).toBeInstanceOf(policy.TooLargeToPreviewError)
+    expect(fetchCalls).toBe(0)
+  })
+})

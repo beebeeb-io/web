@@ -715,7 +715,13 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             effectiveMime ?? undefined,
             file.chunk_count,
             file.size_bytes,
-            { onProgress: onTransfer, signal: abort.signal, mediaCapBytes: WHOLE_FILE_MEDIA_CAP_BYTES },
+            {
+              onProgress: onTransfer,
+              signal: abort.signal,
+              mediaCapBytes: WHOLE_FILE_MEDIA_CAP_BYTES,
+              // C5: the renderer's rule (row MIME first) decides "is media".
+              rowMimeType: file.mime_type ?? null,
+            },
           )
           plaintext = res.plaintext
         } else {
@@ -730,7 +736,13 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             effectiveMime ?? undefined,
             v.chunk_count,
             v.size_bytes,
-            { onProgress: onTransfer, signal: abort.signal, mediaCapBytes: WHOLE_FILE_MEDIA_CAP_BYTES },
+            {
+              onProgress: onTransfer,
+              signal: abort.signal,
+              mediaCapBytes: WHOLE_FILE_MEDIA_CAP_BYTES,
+              // C5: the renderer's rule (row MIME first) decides "is media".
+              rowMimeType: file.mime_type ?? null,
+            },
           )
         }
         if (!cancelled) {
