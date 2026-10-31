@@ -12,7 +12,7 @@ import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { hexToBytes, loadVectors, loadWasm } from './helpers/wasm-crypto-mirror'
 import { createContentOps } from '../src/lib/content-crypto'
 import type { UploadState } from '../src/lib/upload-resume'
-import { SERVER_CHANGED_ITEM_ID_MESSAGE, ServerChangedItemIdError } from '../src/lib/item-id-echo'
+import { SERVER_CHANGED_ITEM_ID_MESSAGE, ServerChangedItemIdError, assertEchoedItemId } from '../src/lib/item-id-echo'
 
 const wasm = loadWasm()
 const ops = createContentOps(wasm)
@@ -90,6 +90,9 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
     const answer = initAnswers.length > 1 ? initAnswers.shift()! : initAnswers[0]
     const init = answer(metadata.file_id) as { file_id: string; upload_session_id: string }
     cap.events.push(`init:${metadata.file_id}->${init.file_id}`)
+    // L13: the real initUpload (api.ts) checks the answer against the id it
+    // proposed; this mock answers like the server and checks like the primitive.
+    assertEchoedItemId(metadata.file_id, init.file_id)
     return init
   },
   uploadChunk: async (fileId: string, index: number, _data: Uint8Array, session?: string | null) => {

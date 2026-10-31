@@ -14,6 +14,11 @@
  */
 import { beforeEach } from 'bun:test'
 import { mockModuleScoped } from './scoped-module-mock'
+// L13: the real request primitives (api.ts createFolder / initUpload /
+// completeUpload) check every answer against the id they proposed, proven on
+// the wire in l13-api-echo-wire.test.ts. These mocks answer like the server
+// and check like the primitive, so a suite sees what callers really get.
+import { assertEchoedItemId } from '../../src/lib/item-id-echo'
 
 // ── Shared state ─────────────────────────────────────────────────────────────
 // Upload-contract captures (the contract suite asserts on these).
@@ -167,6 +172,7 @@ export async function installMocks(): Promise<void> {
       cap.initCalls.push(metadata)
       const requested = (metadata as { file_id: string }).file_id
       const answered = echo.init ? echo.init(requested) : requested
+      assertEchoedItemId(requested, answered)
       if (echo.protocol === 'v1') return { protocol: 'v1', file_id: answered, chunk_count: 1 }
       return {
         protocol: 'v2', file_id: answered, tenant_id: 'tenant-id',
@@ -180,11 +186,15 @@ export async function installMocks(): Promise<void> {
       cap.uploadedChunks.push({ fileId, index, firstByte: data[0], uploadSessionId })
       return { index, size: data.byteLength }
     },
-    completeUpload: async (fileId: string) => ({
-      id: echo.complete ? echo.complete(fileId) : fileId, name_encrypted: cap.updatedFiles.at(-1)?.nameEncrypted ?? '',
-      mime_type: null, size_bytes: 4, chunk_count: 1, is_folder: false, is_uploading: false,
-      created_at: '2026-05-08T00:00:00.000Z', updated_at: '2026-05-08T00:00:00.000Z',
-    }),
+    completeUpload: async (fileId: string) => {
+      const answered = echo.complete ? echo.complete(fileId) : fileId
+      assertEchoedItemId(fileId, answered, 'complete')
+      return {
+        id: answered, name_encrypted: cap.updatedFiles.at(-1)?.nameEncrypted ?? '',
+        mime_type: null, size_bytes: 4, chunk_count: 1, is_folder: false, is_uploading: false,
+        created_at: '2026-05-08T00:00:00.000Z', updated_at: '2026-05-08T00:00:00.000Z',
+      }
+    },
     addFolderKeys: async (inviteId: string, keys: unknown[], folderKeyId: string, format?: string) => {
       cap.addFolderKeysCalls.push({ inviteId, keys, folderKeyId, format })
     },
@@ -196,10 +206,12 @@ export async function installMocks(): Promise<void> {
       cap.abandons.push(fileId)
       return { outcome: 'reverted_to_previous_version' as const }
     },
-    createFolder: async (nameEncrypted: string, parentId?: string, folderId?: string) => {
+    createFolder: async (nameEncrypted: string, parentId: string | undefined, folderId: string) => {
       cap.createdFolders.push({ nameEncrypted, parentId, folderId })
+      const answered = echo.createFolder ? echo.createFolder(folderId) : folderId
+      assertEchoedItemId(folderId, answered)
       return {
-        id: echo.createFolder ? echo.createFolder(folderId) : (folderId ?? 'server-folder-id'),
+        id: answered,
         name_encrypted: nameEncrypted, mime_type: null, size_bytes: 0, chunk_count: 0,
         is_folder: true, is_uploading: false,
         created_at: '2026-05-08T00:00:00.000Z', updated_at: '2026-05-08T00:00:00.000Z',

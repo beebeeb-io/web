@@ -1,6 +1,7 @@
 import { isPasswordSetSignInRequired } from './reset-2fa'
 import { collectPaged } from './paginate'
 import { buildUploadInitV2Body, type UploadInitMetadata } from './upload-init-body'
+import { assertEchoedItemId } from './item-id-echo'
 import {
   opaqueLoginStart as wasmOpaqueLoginStart,
   opaqueLoginFinish as wasmOpaqueLoginFinish,
@@ -1119,15 +1120,23 @@ export async function listAllFiles(
   )
 }
 
+/**
+ * Create a folder under the id THIS client minted (`folderId`; its name is
+ * sealed under the key derived from it). L13 (SF-0001): an answer naming any
+ * other item throws `ServerChangedItemIdError` before a caller can publish a
+ * wrap for it, move items into it, or navigate to it.
+ */
 export async function createFolder(
   nameEncrypted: string,
-  parentId?: string,
-  folderId?: string,
+  parentId: string | undefined,
+  folderId: string,
 ): Promise<DriveFile> {
-  return request<DriveFile>('/api/v1/files/folder', {
+  const created = await request<DriveFile>('/api/v1/files/folder', {
     method: 'POST',
     body: JSON.stringify({ name_encrypted: nameEncrypted, parent_id: parentId, folder_id: folderId }),
   })
+  assertEchoedItemId(folderId, created.id)
+  return created
 }
 
 // ─── Chunked upload endpoints ────────────────────
@@ -1161,8 +1170,16 @@ export type UploadInitResponse =
   | (UploadInitV1Response & { protocol: 'v1' })
   | (UploadInitV2Response & { protocol: 'v2' })
 
+/**
+ * Open an upload for the item this client names (`metadata.file_id`: its own
+ * minted id for a create, the listed row's id for a replace or version).
+ * L13 (SF-0001): on either protocol, an answer naming any other item throws
+ * `ServerChangedItemIdError` before a chunk, a name, a pin or a resume record
+ * can be sealed under it. (What to clean up after that is the caller's call:
+ * only it knows whether the requested id is one no other upload can hold.)
+ */
 export async function initUpload(
-  metadata: UploadInitMetadata,
+  metadata: UploadInitMetadata & { file_id: string },
   signal?: AbortSignal,
 ): Promise<UploadInitResponse> {
   try {
@@ -1171,6 +1188,7 @@ export async function initUpload(
       body: JSON.stringify(buildUploadInitV2Body(metadata)),
       signal,
     })
+    assertEchoedItemId(metadata.file_id, v2.file_id)
     return { ...v2, protocol: 'v2' }
   } catch (err) {
     if (!(err instanceof ApiError) || err.status !== 404) {
@@ -1183,6 +1201,7 @@ export async function initUpload(
     body: JSON.stringify(metadata),
     signal,
   })
+  assertEchoedItemId(metadata.file_id, v1.file_id)
   return { ...v1, protocol: 'v1' }
 }
 
@@ -1273,22 +1292,28 @@ async function uploadChunkRequest(
   return res.json() as Promise<{ index: number; size: number; skipped?: boolean }>
 }
 
+/**
+ * Finish the upload of `fileId`. L13 (SF-0001): an answer naming any other
+ * item throws `ServerChangedItemIdError` (stage `complete`, whose sentence
+ * says the file may already be on the server) before the caller drops the
+ * resume record or publishes a key for the answer.
+ */
 export async function completeUpload(
   fileId: string,
   uploadSessionId?: string | null,
 ): Promise<DriveFile> {
   // No legacy fallback on a v2 404 (task 1589) — see uploadChunk() above.
-  if (uploadSessionId) {
-    return request<DriveFile>(`/api/v1/uploads/${uploadSessionId}/complete`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    })
-  }
-
-  return request<DriveFile>(`/api/v1/files/${fileId}/upload/complete`, {
-    method: 'POST',
-    body: JSON.stringify({}),
-  })
+  const completed = uploadSessionId
+    ? await request<DriveFile>(`/api/v1/uploads/${uploadSessionId}/complete`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      })
+    : await request<DriveFile>(`/api/v1/files/${fileId}/upload/complete`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      })
+  assertEchoedItemId(fileId, completed.id, 'complete')
+  return completed
 }
 
 export async function getUploadStatus(

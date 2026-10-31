@@ -10,6 +10,10 @@
  *     mark as its own; `planResume` is the one rule (Drive + uploadFile).
  * E4  a stored session found by fingerprint is never abandoned file-wide (the
  *     only abandon the server offers ends whatever upload the row holds now).
+ * E5  mismatch cleanup: an init mismatch abandons the id this client
+ *     REQUESTED for a create (never the echoed one); a completion mismatch
+ *     keeps the resume record and says the file may already be there. (The
+ *     checks themselves live in api.ts: l13-api-echo-wire.test.ts.)
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
@@ -276,5 +280,45 @@ describe('E2: a legacy REPLACE session restarts as a new version of the same row
     const { planResume } = await import('../src/lib/upload-resume')
     const plan = planResume({ ...legacyReplace, replace_pin_file_id: 'some-other-row' }, () => 'fresh-own-id')
     expect(plan).toEqual({ kind: 'restart-new', fileId: 'fresh-own-id', resumeFileId: undefined })
+  })
+})
+
+// ── E5: what an upload does after a mismatch ─────────────────────────────────
+
+describe('E5: an upload cleans up after a mismatch only where it is safe', () => {
+  test('init mismatch on a create: abandons the id it REQUESTED (only it holds that id), never the echoed one', async () => {
+    echo.init = () => 'server-chosen-id'
+    expectSubstitutionAbort(await caught(() => encryptedUpload(new File(['a'], 'a.txt'), 'client-chosen-id', FILE_KEY, MK)))
+    expect(cap.abandons).toEqual(['client-chosen-id'])
+    expect(cap.uploadedChunks).toEqual([])
+    expect(cap.savedStates).toEqual([])
+  })
+
+  test('init mismatch on a replace: nothing is abandoned (the listed row may hold another device\'s live upload)', async () => {
+    echo.init = () => 'server-chosen-id'
+    expectSubstitutionAbort(await caught(() => encryptedUpload(new File(['a'], 'a.txt'), 'listed-row-id', FILE_KEY, MK,
+      undefined, undefined, undefined, undefined, undefined, { replaceOf: { nameEncrypted: 'listed-name' } })))
+    expect(cap.abandons).toEqual([])
+    expect(cap.uploadedChunks).toEqual([])
+  })
+
+  test('completion mismatch: the resume record is kept and the error says the file may already be on the server', async () => {
+    const { SERVER_CHANGED_ITEM_ID_AFTER_UPLOAD_MESSAGE } = await import('../src/lib/item-id-echo')
+    const { userFriendlyError } = await import('../src/lib/user-friendly-error')
+    echo.complete = () => 'server-chosen-id'
+    const err = await caught(() => encryptedUpload(new File(['a'], 'a.txt'), 'own-id', FILE_KEY, MK, 'parent-1'))
+    expect(err).toBeInstanceOf(ServerChangedItemIdError)
+    expect((err as Error).message).toBe(SERVER_CHANGED_ITEM_ID_AFTER_UPLOAD_MESSAGE)
+    expect((err as Error).message).toContain('may already be on the server')
+    // The chunks went under the own id; its record stays, so the next run of
+    // this file resumes that id instead of uploading a second copy.
+    expect(cap.uploadedChunks.map((c) => c.fileId)).toEqual(['own-id'])
+    expect(cap.savedStates.at(-1)).toMatchObject({ fileId: 'own-id', selfMinted: true })
+    expect(cap.removedStates).toEqual([])
+    // Nothing abandoned, nothing published under either id.
+    expect(cap.abandons).toEqual([])
+    expect(cap.ownerKeys).toEqual([])
+    // The toast shows that sentence, not a generic fallback.
+    expect(userFriendlyError(err)).toBe(SERVER_CHANGED_ITEM_ID_AFTER_UPLOAD_MESSAGE)
   })
 })

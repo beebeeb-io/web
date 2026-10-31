@@ -24,7 +24,7 @@ import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { hexToBytes, inProcessPort, loadVectors, loadWasm, toHex } from './helpers/wasm-crypto-mirror'
 import { applyRecordedPinInRegistry, createContentOps } from '../src/lib/content-crypto'
 
-import { ServerChangedItemIdError } from '../src/lib/item-id-echo'
+import { ServerChangedItemIdError, assertEchoedItemId } from '../src/lib/item-id-echo'
 
 const wasm = loadWasm()
 const ops = createContentOps(wasm)
@@ -88,6 +88,9 @@ await mockModuleScoped('../src/lib/net-retry', import.meta.dir, {
 await mockModuleScoped('../src/lib/api', import.meta.dir, {
   initUpload: async (metadata: { file_id: string; name_encrypted: string }) => {
     cap.initCalls.push(metadata)
+    // L13: the real initUpload (api.ts) checks the answer against the id it
+    // proposed; this mock answers like the server and checks like the primitive.
+    assertEchoedItemId(metadata.file_id, serverFileId(metadata.file_id))
     return {
       protocol: 'v2', file_id: serverFileId(metadata.file_id), tenant_id: 't',
       object_version_id: 'ov', upload_session_id: 'us', chunk_size_bytes: 4, chunk_count: 1,

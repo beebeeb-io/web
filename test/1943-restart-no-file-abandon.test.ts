@@ -21,7 +21,7 @@ import type * as Wasm from 'beebeeb-wasm'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import type { UploadState } from '../src/lib/upload-resume'
-import { ServerChangedItemIdError } from '../src/lib/item-id-echo'
+import { ServerChangedItemIdError, assertEchoedItemId } from '../src/lib/item-id-echo'
 
 const wasm = loadWasm()
 const MK = new Uint8Array(32).fill(5)
@@ -102,6 +102,9 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
     }
     current = { session: 'fresh-session', live: true }
     const fileId = remapTo ?? metadata.file_id
+    // L13: the real initUpload (api.ts) checks the answer against the id it
+    // proposed; this mock answers like the server and checks like the primitive.
+    assertEchoedItemId(metadata.file_id, fileId)
     return {
       protocol: 'v2', file_id: fileId, tenant_id: 't', object_version_id: 'ov-fresh',
       upload_session_id: 'fresh-session', chunk_size_bytes: 4, chunk_count: 1,

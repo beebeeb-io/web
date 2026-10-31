@@ -27,8 +27,8 @@ import {
   zeroize,
   type ContentPin,
 } from './crypto'
-import { initUpload, uploadChunk, completeUpload, getUploadStatus } from './api'
-import { assertEchoedItemId } from './item-id-echo'
+import { abandonUpload, initUpload, uploadChunk, completeUpload, getUploadStatus } from './api'
+import { isServerChangedItemIdError } from './item-id-echo'
 import { withNetworkRetry } from './net-retry'
 import { fileStorageCountry } from './storage-regions'
 import type { DriveFile } from './api'
@@ -207,6 +207,14 @@ async function uploadFileWith(
   }
 
   /**
+   * True while this upload creates a NEW item under an id minted for it: not a
+   * replace or version of a listed row (no `replaceOf`, no pin of a row).
+   */
+  function isCreate(): boolean {
+    return !options.replaceOf && replacePin === null
+  }
+
+  /**
    * The pin, only when it belongs to the file this upload now writes
    * (`serverFileId`, which every init may change). The ONLY way the encryptor
    * and the resume record get a pin.
@@ -274,23 +282,34 @@ async function uploadFileWith(
     // `abandonUpload` issued at the moment of abort can land BEFORE that,
     // see `not_uploading` (nothing to abandon yet), and leave the file
     // wedged once init's late response arrives.
-    const init = await withNetworkRetry(() => initUpload({
-      file_id: requestedFileId,
-      name_encrypted: nameEncrypted,
-      size_bytes: file.size,
-      chunk_count: fallbackChunkCount,
-      parent_id: parentId ?? null,
-      is_media: isMedia,
-      conflict_created: options.conflictCreated ?? false,
-    }, signal), signal)
-
-    // L13 (contract 2275, SF-0001): init answers name the item this upload
-    // writes under. Any id but the one this client proposed — a create's own
-    // minted id, or the listed row's id for a replace/version — aborts HERE,
-    // before a chunk, a name, a pin or a resume record can be sealed under it.
-    // (A server dedup/replace-by-name answer lands in this branch too: it is an
-    // abort, never a silent replace.)
-    assertEchoedItemId(requestedFileId, init.file_id)
+    //
+    // L13 (contract 2275, SF-0001): initUpload throws ServerChangedItemIdError
+    // when the answer names any id but the one proposed here (a create's own
+    // minted id, or the listed row's id for a replace/version), before a chunk,
+    // a name, a pin or a resume record can be sealed under it. A server
+    // dedup/replace-by-name answer is that abort too, never a silent replace.
+    let init: Awaited<ReturnType<typeof initUpload>>
+    try {
+      init = await withNetworkRetry(() => initUpload({
+        file_id: requestedFileId,
+        name_encrypted: nameEncrypted,
+        size_bytes: file.size,
+        chunk_count: fallbackChunkCount,
+        parent_id: parentId ?? null,
+        is_media: isMedia,
+        conflict_created: options.conflictCreated ?? false,
+      }, signal), signal)
+    } catch (err) {
+      // The session the init may have opened is abandoned under the id this
+      // client REQUESTED, never the echoed one, and only for a create: its id
+      // was minted for this upload, so no other upload can hold it. A replace's
+      // id is a listed row, where the file-wide abandon could end another
+      // device's live upload; that is left to the server's lease sweep.
+      if (isServerChangedItemIdError(err) && isCreate()) {
+        await abandonUpload(requestedFileId).catch(() => {})
+      }
+      throw err
+    }
     serverFileId = init.file_id
     totalChunks = init.chunk_count
     // Task 2062: both protocols answer with the pool's country at init.
@@ -644,12 +663,14 @@ async function uploadFileWith(
       throw err
     }
 
-    // L13: the completion answer names the item that was written. Anything but
-    // this upload's id aborts before the resume record is dropped or any key is
-    // published under the echoed id.
-    const completed = await completeUpload(serverFileId, uploadSessionId)
-    assertEchoedItemId(serverFileId, completed.id)
-    return completed
+    // L13: completeUpload throws ServerChangedItemIdError (stage `complete`)
+    // when the answer names any id but this upload's. That happens before the
+    // resume record is dropped or any key is published: the record is KEPT,
+    // because the bytes went up under this upload's own id and the file may
+    // exist, so the next run of this file continues that id instead of
+    // uploading a second copy. Nothing is abandoned (the upload may have
+    // committed).
+    return completeUpload(serverFileId, uploadSessionId)
   }
 
   // ── Upload chunks + complete ──────────────────────
