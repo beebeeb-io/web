@@ -29,7 +29,7 @@ import {
 } from './crypto'
 import { getToken, getApiUrl, ApiError } from './api'
 import { dispatchDecrypted } from './decrypt-events'
-import { markOwnerRepairReadOnly } from './owner-repair'
+import { isOwnerRepairReadOnly, markOwnerRepairReadOnly, ownerRepairKeyFor } from './owner-repair'
 import { withServerBusyRetry } from './server-busy-retry'
 
 export { UnverifiedFileMetadataError }
@@ -111,6 +111,19 @@ export function inferChunkCountFromEncryptedSize(
  * master key only when it holds one). A key that resolves as `upper_repair`
  * also marks the file read-only for the rest of this session. Null when the
  * frame is not a repaired row, so the caller rethrows the original error.
+ *
+ * Which keys may take the fallback (round 2, W6): any OWNER key of the row,
+ * whichever one the caller resolved: the owner's string derivation, or the key
+ * the owner NAME repair resolved for this row (key-context caches only keys
+ * core derived from the master key). A shared-folder or other foreign key is
+ * never switched to an owner key (SF-0002 review).
+ *
+ * Which answers are taken:
+ * - `upper_repair`: always (that version is read-only; the row is marked);
+ * - `string`/`binary`: only for a row that is ALREADY read-only, i.e. a split
+ *   row whose name resolved as `upper_repair` and whose content is ordinary.
+ *   Opening it is a read of a read-only row. A writable row is never switched
+ *   to another write-capable key, which recovery never does.
  */
 async function contentKeyFromFrame(
   masterKey: Uint8Array | undefined,
@@ -119,34 +132,77 @@ async function contentKeyFromFrame(
   firstChunkFrame: Uint8Array,
 ): Promise<Uint8Array | null> {
   if (!masterKey) return null
-  // Only the OWNER's own derivation may take the repair fallback. A
-  // shared-folder or other foreign key is never switched to an owner key, even
-  // though the master key would let core resolve one (SF-0002 review).
-  if (!(await isOwnerDerivedKey(masterKey, content.fileId, fileKey))) return null
+  const nameRepaired = sameKey(ownerRepairKeyFor(content.fileId), fileKey)
+  if (!nameRepaired && !(await isOwnerDerivedKey(masterKey, content.fileId, fileKey))) return null
   try {
     const repair = await ownerRepairContentKey(masterKey, content.fileId, firstChunkFrame)
     if (!(repair.key instanceof Uint8Array)) return null
-    // Accept ONLY the read-only repair convention. A `string`/`binary` answer
-    // would be a write-capable key switch, which recovery never does.
-    if (repair.convention !== 'upper_repair') {
-      repair.key.fill(0)
-      return null
+    if (repair.convention === 'upper_repair') {
+      markOwnerRepairReadOnly(content.fileId)
+      return repair.key
     }
-    markOwnerRepairReadOnly(content.fileId)
-    return repair.key
+    const ordinary = repair.convention === 'string' || repair.convention === 'binary'
+    if (ordinary && nameRepaired && isOwnerRepairReadOnly(content.fileId)) return repair.key
+    repair.key.fill(0)
+    return null
   } catch {
     return null
   }
+}
+
+type ContentDecryptor = Awaited<ReturnType<typeof startDecryptStream>>
+
+/**
+ * SF-0002: push chunk 0; when it does not authenticate, retry it ONCE under the
+ * owner repair key of that frame (see contentKeyFromFrame). Chunk 0 only: every
+ * later frame keeps the key chunk 0 proved. Both readers below use this, and so
+ * does the LD-0001 stream setup (contract 5.1).
+ *
+ * `pushFrame` transfers its frame to the crypto worker (Comlink.transfer), so
+ * the caller's copy is detached afterwards: a copy of chunk 0 is kept for the
+ * repair whenever a master key is held (round 2: without it the repair read an
+ * empty frame and never opened anything in a browser).
+ *
+ * Returns the decryptor to keep reading with (a new one after a repair; the
+ * old one is disposed) and chunk 0's plaintext.
+ */
+export async function pushHeadWithRepair(
+  decryptor: ContentDecryptor,
+  frame: Uint8Array,
+  fileKey: Uint8Array,
+  content: FileContentRef,
+  masterKey: Uint8Array | undefined,
+): Promise<{ decryptor: ContentDecryptor; plaintext: Uint8Array }> {
+  const head = masterKey ? frame.slice() : null
+  try {
+    return { decryptor, plaintext: await decryptor.pushFrame(frame) }
+  } catch (err) {
+    const repaired = head ? await contentKeyFromFrame(masterKey, fileKey, content, head) : null
+    if (!head || !repaired) throw err
+    await decryptor.dispose()
+    const next = await startDecryptStream(repaired, content.fileId, content.pin)
+    try {
+      return { decryptor: next, plaintext: await next.pushFrame(head) }
+    } catch (retryErr) {
+      await next.dispose()
+      throw retryErr
+    }
+  }
+}
+
+/** Constant-time equality of two keys; false when either is missing. */
+function sameKey(a: Uint8Array | undefined, b: Uint8Array): boolean {
+  if (!a || a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i]
+  return diff === 0
 }
 
 /** Does this key equal the owner's ordinary (string-convention) derivation? */
 async function isOwnerDerivedKey(masterKey: Uint8Array, fileId: string, key: Uint8Array): Promise<boolean> {
   const derived = await deriveFileKey(masterKey, fileId)
   try {
-    if (derived.length !== key.length) return false
-    let diff = 0
-    for (let i = 0; i < derived.length; i++) diff |= derived[i] ^ key[i]
-    return diff === 0
+    return sameKey(derived, key)
   } finally {
     derived.fill(0)
   }
@@ -203,15 +259,13 @@ export async function decryptEncryptedBytes(
       // The whole wire frame (nonce || ciphertext || tag), as a copy that owns
       // its buffer: the decryptor transfers it to the crypto worker.
       const frame = encryptedBytes.slice(offset, offset + encryptedChunkSize)
-      try {
-        decryptedParts.push(await decryptor.pushFrame(frame))
-      } catch (err) {
+      if (i === 0) {
         // SF-0002: only a first frame that fails may resolve as a repaired
         // version; every later frame keeps the key chunk 0 proved.
-        const repaired = i === 0 ? await contentKeyFromFrame(masterKey, fileKey, content, frame) : null
-        if (!repaired) throw err
-        await decryptor.dispose()
-        decryptor = await startDecryptStream(repaired, content.fileId, content.pin)
+        const head = await pushHeadWithRepair(decryptor, frame, fileKey, content, masterKey)
+        decryptor = head.decryptor
+        decryptedParts.push(head.plaintext)
+      } else {
         decryptedParts.push(await decryptor.pushFrame(frame))
       }
 
@@ -479,15 +533,13 @@ export async function pipeDecryptedChunks(
         : buffer.slice(encryptedChunkSize)
 
       let plaintext: Uint8Array
-      try {
-        plaintext = await decryptor.pushFrame(frame)
-      } catch (err) {
+      if (chunkIndex === 0) {
         // SF-0002: only chunk 0 may switch keys (to the repaired version's
         // owner key); later frames keep the key chunk 0 proved.
-        const repaired = chunkIndex === 0 ? await contentKeyFromFrame(masterKey, fileKey, content, frame) : null
-        if (!repaired) throw err
-        await decryptor.dispose()
-        decryptor = await startDecryptStream(repaired, content.fileId, content.pin)
+        const head = await pushHeadWithRepair(decryptor, frame, fileKey, content, masterKey)
+        decryptor = head.decryptor
+        plaintext = head.plaintext
+      } else {
         plaintext = await decryptor.pushFrame(frame)
       }
       await onChunk(plaintext)

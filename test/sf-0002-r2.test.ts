@@ -11,7 +11,8 @@ import {
   markOwnerRepairReadOnly,
 } from '../src/lib/owner-repair'
 
-await installWasmCryptoMirror()
+// transferFrames: a pushed frame is detached, as Comlink.transfer does in the app.
+const mirror = await installWasmCryptoMirror({ transferFrames: true })
 const { assertCurrentVersionWritable, OWNER_WRITE_CHECK_FAILED } = await import('../src/lib/owner-write-guard')
 
 const vectors = loadVectors()
@@ -558,5 +559,129 @@ describe('W5: transient errors and repeated cost', () => {
     } finally {
       net.restore()
     }
+  })
+})
+
+// ── W6: a split row (uppercase name, lowercase content) opens its content ───
+
+const { decryptEncryptedBytes, pipeDecryptedChunks } = await import('../src/lib/encrypted-download')
+const { rememberOwnerRepairKey } = await import('../src/lib/owner-repair')
+const SPLIT = vectors.upper_repair_split_v1
+const PIN_UNRECORDED = 0 as const
+
+function splitRow(): DriveFile {
+  return row({
+    id: SPLIT.file_id,
+    name_encrypted: SPLIT.name_encrypted,
+    acted_via_share_id: null,
+    uploaded_by: 'me',
+  })
+}
+
+function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(bytes)
+      c.close()
+    },
+  })
+}
+
+describe('W6 instrument: the worker hop detaches a pushed frame, as in the browser', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  test('a frame pushed into the decryptor is detached afterwards', async () => {
+    const { startDecryptStream } = await import('../src/lib/crypto')
+    const master = hexToBytes(V1.master_key_hex)
+    const derived = loadWasm().derive_file_key(master, enc.encode(V1.file_id))
+    const frame = v1Frame(derived, enc.encode('detach me'))
+    const dec = await startDecryptStream(derived, V1.file_id, PIN_UNRECORDED)
+    try {
+      await dec.pushFrame(frame)
+      expect(frame.byteLength).toBe(0)
+    } finally {
+      await dec.dispose()
+    }
+  })
+
+  test('upper_repair_v1 (derived key, uppercase content) still opens: chunk 0 survives the failed push', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const derived = loadWasm().derive_file_key(master, enc.encode(V1.file_id))
+    const plaintext = await decryptEncryptedBytes(
+      derived,
+      { fileId: V1.file_id, pin: PIN_UNRECORDED },
+      hexToBytes(V1.content_frame_hex),
+      1,
+      UPPER_PLAINTEXT_LEN,
+      undefined,
+      master,
+    )
+    expect(hex(plaintext)).toBe(V1.content_plaintext_hex)
+    expect(isOwnerRepairReadOnly(V1.file_id)).toBe(true)
+  })
+})
+
+describe('W6: the content fallback follows the owner key the caller resolved', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  test('uppercase name + lowercase content: the name key the row resolved to opens the content (buffered)', async () => {
+    const master = hexToBytes(SPLIT.master_key_hex)
+    // The real resolver: the name only opens under the uppercase key.
+    const nameKey = await resolveOwnerKeyForFile(master, splitRow(), 'me', null, async () => false)
+    expect(hex(nameKey)).toBe(SPLIT.expected_name_key_hex)
+    expect(isOwnerRepairReadOnly(SPLIT.file_id)).toBe(true)
+
+    const plaintext = await decryptEncryptedBytes(
+      nameKey,
+      { fileId: SPLIT.file_id, pin: PIN_UNRECORDED },
+      hexToBytes(SPLIT.content_v2_frame_hex),
+      1,
+      SPLIT.content_v2_plaintext_hex.length / 2,
+      undefined,
+      master,
+    )
+    expect(hex(plaintext)).toBe(SPLIT.content_v2_plaintext_hex)
+  })
+
+  test('uppercase name + lowercase content opens on the streamed path too', async () => {
+    const master = hexToBytes(SPLIT.master_key_hex)
+    const nameKey = await resolveOwnerKeyForFile(master, splitRow(), 'me', null, async () => false)
+    const frame = hexToBytes(SPLIT.content_v2_frame_hex)
+    const out: Uint8Array[] = []
+    await pipeDecryptedChunks(
+      streamOf(frame),
+      nameKey,
+      { fileId: SPLIT.file_id, pin: PIN_UNRECORDED },
+      1,
+      SPLIT.content_v2_plaintext_hex.length / 2,
+      frame.length - 28,
+      undefined,
+      async (chunk) => {
+        out.push(new Uint8Array(chunk))
+      },
+      undefined,
+      master,
+    )
+    expect(hex(out[0])).toBe(SPLIT.content_v2_plaintext_hex)
+  })
+
+  test('a WRITABLE row (binary-convention name) is never switched to a different content key', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const binaryKey = loadWasm().derive_file_key(master, hexToBytes(V1.file_id.replace(/-/g, '')))
+    const derived = loadWasm().derive_file_key(master, enc.encode(V1.file_id))
+    // The name resolved as binary (writable, cached); the content is string-sealed.
+    rememberOwnerRepairKey(V1.file_id, { fileKey: binaryKey, convention: 'binary' })
+    await expect(
+      decryptEncryptedBytes(
+        binaryKey,
+        { fileId: V1.file_id, pin: PIN_UNRECORDED },
+        v1Frame(derived, enc.encode('string content')),
+        1,
+        'string content'.length,
+        undefined,
+        master,
+      ),
+    ).rejects.toThrow()
+    expect(isOwnerRepairReadOnly(V1.file_id)).toBe(false)
   })
 })
