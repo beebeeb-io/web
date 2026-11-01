@@ -128,18 +128,17 @@ describe('SF-0002 review: writes', () => {
     const frame = hexToBytes(V1.content_frame_hex)
     const plaintext = hexToBytes(V1.content_plaintext_hex)
     const original = globalThis.fetch
-    globalThis.fetch = (async () =>
-      new Response(frame, {
-        status: 200,
-        headers: { 'X-Chunk-Size': String(plaintext.length), 'X-Chunk-Count': '1' },
-      })) as unknown as typeof fetch
+    const target = row({ size_bytes: plaintext.length, chunk_count: 1 })
+    globalThis.fetch = (async (input: RequestInfo | URL) =>
+      // SF-0002 round 3 (X7): the check reads the server's row first.
+      String(input).endsWith(`/api/v1/files/${target.id}`)
+        ? new Response(JSON.stringify(target), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        : new Response(frame, {
+            status: 200,
+            headers: { 'X-Chunk-Size': String(plaintext.length), 'X-Chunk-Count': '1' },
+          })) as unknown as typeof fetch
     try {
-      await expect(
-        assertCurrentVersionWritable(
-          row({ size_bytes: plaintext.length, chunk_count: 1 }),
-          master,
-        ),
-      ).rejects.toThrow(OWNER_REPAIR_READ_ONLY)
+      await expect(assertCurrentVersionWritable(target, master)).rejects.toThrow(OWNER_REPAIR_READ_ONLY)
       expect(isOwnerRepairReadOnly(V1.file_id)).toBe(true)
     } finally {
       globalThis.fetch = original
@@ -155,15 +154,16 @@ describe('SF-0002 review: writes', () => {
     body.set(frame.nonce, 0)
     body.set(frame.ciphertext, frame.nonce.length)
     const original = globalThis.fetch
-    globalThis.fetch = (async () =>
-      new Response(body, {
-        status: 200,
-        headers: { 'X-Chunk-Size': String(plaintext.length), 'X-Chunk-Count': '1' },
-      })) as unknown as typeof fetch
+    const target = row({ size_bytes: plaintext.length, chunk_count: 1 })
+    globalThis.fetch = (async (input: RequestInfo | URL) =>
+      String(input).endsWith(`/api/v1/files/${target.id}`)
+        ? new Response(JSON.stringify(target), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        : new Response(body, {
+            status: 200,
+            headers: { 'X-Chunk-Size': String(plaintext.length), 'X-Chunk-Count': '1' },
+          })) as unknown as typeof fetch
     try {
-      await expect(
-        assertCurrentVersionWritable(row({ size_bytes: plaintext.length, chunk_count: 1 }), master),
-      ).resolves.toBeUndefined()
+      await expect(assertCurrentVersionWritable(target, master)).resolves.toBeUndefined()
     } finally {
       globalThis.fetch = original
     }

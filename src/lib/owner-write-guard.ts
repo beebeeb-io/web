@@ -19,9 +19,11 @@
 // Round 2 (W5): the request is the shared download request (auth, a
 // `429 server_busy` retry, the caller's AbortSignal), and a writable verdict is
 // remembered per (file, content version) for the session, so repeated renames
-// of one row probe once. Cleared with the read-only marks on lock.
+// of one row probe once. Cleared with the read-only marks on lock. Round 3
+// (X7): the version is the server's current object version from a fresh
+// `GET /files/:id`, never the listing row.
 
-import { restoreVersion, type DriveFile, type FileVersion } from './api'
+import { getFile, restoreVersion, type DriveFile, type FileVersion } from './api'
 import { ownerRepairContentKey } from './crypto'
 import { parseHeaderInt, requestEncryptedBody } from './encrypted-download'
 import { isRequestUpload } from './file-request-crypto'
@@ -58,8 +60,7 @@ export type WriteTarget = Pick<
   | 'file_request_id'
   | 'sender_ephemeral_pubkey'
   | 'wrapped_content_key'
-> &
-  Partial<Pick<DriveFile, 'version_number' | 'updated_at'>>
+>
 
 export interface WriteCheckOptions {
   /**
@@ -76,14 +77,19 @@ function isAbort(err: unknown): boolean {
   return err instanceof Error && err.name === 'AbortError'
 }
 
+/** The row as `GET /files/:id` answers it: the listing type plus the server's current version. */
+type FreshRow = DriveFile & { download_version?: { object_version_id?: string | null } | null }
+
 /**
- * The session cache key of a row's CURRENT content version. A rename changes
- * `updated_at` but not `version_number`, so it is keyed on the version when the
- * row carries one; size and chunk count change with any new content too.
+ * Round 3 (X7): the session cache key of the row's CURRENT content version,
+ * from a FRESH read of the row, never the listing (a stale listing row would
+ * let a new version skip the probe). Keyed on the server's object version id;
+ * a row without one (legacy v1 rows; a legacy restore clears it) is not cached
+ * and is probed on every write.
  */
-function currentVersionKey(file: WriteTarget): string {
-  const version = file.version_number != null ? `v${file.version_number}` : `t${file.updated_at ?? ''}`
-  return `${file.id}|${version}|${file.size_bytes ?? 0}|${file.chunk_count ?? 0}`
+function freshVersionKey(fresh: FreshRow): string | null {
+  const id = fresh.download_version?.object_version_id
+  return id ? `${fresh.id}|ov:${id}` : null
 }
 
 /** The check needs the vault and does not have it (round 3, X2 and X4). */
@@ -275,15 +281,25 @@ export async function assertCurrentVersionWritable(
   // Round 3 (X2): a write that needs no key (a restore, a note clear) must not
   // pass unchecked because the vault is locked.
   if (!masterKey) throw needsUnlock()
-  const versionKey = currentVersionKey(file)
-  if (isKnownWritableVersion(versionKey)) return
+  // Round 3 (X7): the server's row now, not the listing's: its current version
+  // keys the cache, and its size and chunk count size the probe.
+  let fresh: FreshRow
+  try {
+    fresh = (await getFile(file.id)) as FreshRow
+  } catch (err) {
+    if (isAbort(err)) throw err
+    throw checkFailed(err)
+  }
+  if (fresh.is_folder || !isOwnerContentRow(fresh, opts.viewerId)) return
+  const versionKey = freshVersionKey(fresh)
+  if (versionKey && isKnownWritableVersion(versionKey)) return
   // The check only reports which owner convention authenticates chunk 0 and
   // refuses on `upper_repair`; it never switches the key a write uses.
   const verdict = await resolveVersion(
     `/api/v1/files/${file.id}/download`,
     file.id,
-    file.size_bytes ?? 0,
-    Math.max(1, file.chunk_count ?? 1),
+    fresh.size_bytes ?? 0,
+    Math.max(1, fresh.chunk_count ?? 1),
     masterKey,
     opts.signal,
   )
@@ -291,7 +307,7 @@ export async function assertCurrentVersionWritable(
     markOwnerRepairReadOnly(file.id)
     throw new Error(OWNER_REPAIR_READ_ONLY)
   }
-  rememberWritableVersion(versionKey)
+  if (versionKey) rememberWritableVersion(versionKey)
 }
 
 /**

@@ -35,13 +35,24 @@ interface Call {
   url: string
 }
 
-/** Replace fetch for one test; every request is recorded as METHOD + URL. */
-function installFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>) {
+/**
+ * Replace fetch for one test; every request is recorded as METHOD + URL. With
+ * `fresh`, GET /files/:id answers that row (round 3, X7: the write check reads
+ * the server's row before it probes).
+ */
+function installFetch(
+  handler: (url: string, init?: RequestInit) => Response | Promise<Response>,
+  fresh?: DriveFile,
+) {
   const original = globalThis.fetch
   const calls: Call[] = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-    calls.push({ method: (init?.method ?? 'GET').toUpperCase(), url })
+    const method = (init?.method ?? 'GET').toUpperCase()
+    calls.push({ method, url })
+    if (fresh && method === 'GET' && url.endsWith(`/api/v1/files/${fresh.id}`)) {
+      return new Response(JSON.stringify(fresh), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
     return handler(url, init)
   }) as unknown as typeof fetch
   return {
@@ -125,17 +136,18 @@ describe('W2: no verdict is a refusal, never "writable"', () => {
     // value) says 1000. Candidates: 1028, the 1 MiB / 4 MiB frames (longer than
     // the body) and the average (2061): none is frame 0's length.
     const { body, sizeBytes, chunkCount } = multiChunkBody(upperKey, 3000, 2, 100)
+    const target = row({ size_bytes: sizeBytes, chunk_count: chunkCount })
     const net = installFetch(
       () =>
         new Response(body, {
           status: 200,
           headers: { 'X-Chunk-Size': '1000', 'X-Chunk-Count': String(chunkCount) },
         }),
+      target,
     )
     try {
-      await expect(
-        assertCurrentVersionWritable(row({ size_bytes: sizeBytes, chunk_count: chunkCount }), master),
-      ).rejects.toThrow(OWNER_WRITE_CHECK_FAILED)
+      await expect(assertCurrentVersionWritable(target, master)).rejects.toThrow(OWNER_WRITE_CHECK_FAILED)
+      expect(net.downloads()).toHaveLength(1)
       // Unknown is not read-only: nothing is marked, a retry asks again.
       expect(isOwnerRepairReadOnly(V1.file_id)).toBe(false)
     } finally {
@@ -146,13 +158,14 @@ describe('W2: no verdict is a refusal, never "writable"', () => {
   test('a frame core cannot open under any owner convention (it throws for every candidate) is refused', async () => {
     const master = hexToBytes(V1.master_key_hex)
     const garbage = new Uint8Array(64).fill(0x42)
+    const target = row({ size_bytes: 36, chunk_count: 1 })
     const net = installFetch(
       () => new Response(garbage, { status: 200, headers: { 'X-Chunk-Size': '36', 'X-Chunk-Count': '1' } }),
+      target,
     )
     try {
-      await expect(
-        assertCurrentVersionWritable(row({ size_bytes: 36, chunk_count: 1 }), master),
-      ).rejects.toThrow(OWNER_WRITE_CHECK_FAILED)
+      await expect(assertCurrentVersionWritable(target, master)).rejects.toThrow(OWNER_WRITE_CHECK_FAILED)
+      expect(net.downloads()).toHaveLength(1)
       expect(isOwnerRepairReadOnly(V1.file_id)).toBe(false)
     } finally {
       net.restore()
@@ -161,11 +174,11 @@ describe('W2: no verdict is a refusal, never "writable"', () => {
 
   test('a failed download is refused with the retryable copy, never marked read-only', async () => {
     const master = hexToBytes(V1.master_key_hex)
-    const net = installFetch(() => new Response('{"error":"not_found"}', { status: 404 }))
+    const target = row({ size_bytes: 10, chunk_count: 1 })
+    const net = installFetch(() => new Response('{"error":"not_found"}', { status: 404 }), target)
     try {
-      await expect(
-        assertCurrentVersionWritable(row({ size_bytes: 10, chunk_count: 1 }), master),
-      ).rejects.toThrow(OWNER_WRITE_CHECK_FAILED)
+      await expect(assertCurrentVersionWritable(target, master)).rejects.toThrow(OWNER_WRITE_CHECK_FAILED)
+      expect(net.downloads()).toHaveLength(1)
       expect(isOwnerRepairReadOnly(V1.file_id)).toBe(false)
     } finally {
       net.restore()
@@ -176,17 +189,17 @@ describe('W2: no verdict is a refusal, never "writable"', () => {
     const master = hexToBytes(V1.master_key_hex)
     const derived = loadWasm().derive_file_key(master, enc.encode(V1.file_id))
     const { body, sizeBytes, chunkCount } = multiChunkBody(derived, 3000, 2, 100)
+    const target = row({ size_bytes: sizeBytes, chunk_count: chunkCount })
     const net = installFetch(
       () =>
         new Response(body, {
           status: 200,
           headers: { 'X-Chunk-Size': '3000', 'X-Chunk-Count': String(chunkCount) },
         }),
+      target,
     )
     try {
-      await expect(
-        assertCurrentVersionWritable(row({ size_bytes: sizeBytes, chunk_count: chunkCount }), master),
-      ).resolves.toBeUndefined()
+      await expect(assertCurrentVersionWritable(target, master)).resolves.toBeUndefined()
     } finally {
       net.restore()
     }
@@ -196,17 +209,17 @@ describe('W2: no verdict is a refusal, never "writable"', () => {
     const master = hexToBytes(V1.master_key_hex)
     const upperKey = hexToBytes(V1.expected_key_hex)
     const { body, sizeBytes, chunkCount } = multiChunkBody(upperKey, 3000, 2, 100)
+    const target = row({ size_bytes: sizeBytes, chunk_count: chunkCount })
     const net = installFetch(
       () =>
         new Response(body, {
           status: 200,
           headers: { 'X-Chunk-Size': '3000', 'X-Chunk-Count': String(chunkCount) },
         }),
+      target,
     )
     try {
-      await expect(
-        assertCurrentVersionWritable(row({ size_bytes: sizeBytes, chunk_count: chunkCount }), master),
-      ).rejects.toThrow(OWNER_REPAIR_READ_ONLY)
+      await expect(assertCurrentVersionWritable(target, master)).rejects.toThrow(OWNER_REPAIR_READ_ONLY)
       expect(isOwnerRepairReadOnly(V1.file_id)).toBe(true)
     } finally {
       net.restore()
@@ -506,7 +519,7 @@ describe('W5: transient errors and repeated cost', () => {
         })
       }
       return frameResponse(frame)
-    })
+    }, freshRow('1b2c3d4e-0000-4000-8000-0000000000a2'))
     try {
       await expect(assertCurrentVersionWritable(ordinaryRow(), master, ME)).resolves.toBeUndefined()
       expect(net.downloads()).toHaveLength(2)
@@ -517,7 +530,7 @@ describe('W5: transient errors and repeated cost', () => {
 
   test('a 503 is not retried by the server-busy helper: refused with the retryable copy, never read-only', async () => {
     const master = hexToBytes(V1.master_key_hex)
-    const net = installFetch(() => new Response('unavailable', { status: 503 }))
+    const net = installFetch(() => new Response('unavailable', { status: 503 }), freshRow('1b2c3d4e-0000-4000-8000-0000000000a2'))
     try {
       await expect(assertCurrentVersionWritable(ordinaryRow(), master, ME)).rejects.toThrow(OWNER_WRITE_CHECK_FAILED)
       expect(net.downloads()).toHaveLength(1)
@@ -530,18 +543,26 @@ describe('W5: transient errors and repeated cost', () => {
   test('a second rename of the same row (same version) makes no /download request', async () => {
     const master = hexToBytes(V1.master_key_hex)
     const frame = ordinaryFrame()
-    const net = installFetch(() => frameResponse(frame))
+    // Round 3 (X7): the version is the server's current object version.
+    let ov = '1b2c3d4e-0000-4000-8000-0000000000a2'
+    const net = installFetch((url) => {
+      if (url.endsWith(`/api/v1/files/${V1.file_id}`)) {
+        return new Response(JSON.stringify(freshRow(ov)), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return frameResponse(frame)
+    })
     try {
       await assertCurrentVersionWritable(ordinaryRow(), master, ME)
       // A rename changes updated_at but not the content version.
       await assertCurrentVersionWritable(ordinaryRow({ updated_at: '2026-10-31T01:00:00Z' }), master, ME)
       expect(net.downloads()).toHaveLength(1)
-      // A new content version is checked again.
-      await assertCurrentVersionWritable(ordinaryRow({ version_number: 3 }), master, ME)
+      // A new content version on the server is checked again.
+      ov = '1b2c3d4e-0000-4000-8000-0000000000a3'
+      await assertCurrentVersionWritable(ordinaryRow(), master, ME)
       expect(net.downloads()).toHaveLength(2)
       // Locking the vault forgets every verdict.
       clearOwnerRepairReadOnly()
-      await assertCurrentVersionWritable(ordinaryRow({ version_number: 3 }), master, ME)
+      await assertCurrentVersionWritable(ordinaryRow(), master, ME)
       expect(net.downloads()).toHaveLength(3)
     } finally {
       net.restore()
@@ -554,7 +575,7 @@ describe('W5: transient errors and repeated cost', () => {
     const net = installFetch((_url, init) => {
       if (init?.signal?.aborted) return Promise.reject(new DOMException('Cancelled', 'AbortError'))
       return frameResponse(frame)
-    })
+    }, freshRow('1b2c3d4e-0000-4000-8000-0000000000a2'))
     const ctl = new AbortController()
     ctl.abort()
     try {
@@ -1077,6 +1098,64 @@ describe('X6: an undecided current version does not block a restore', () => {
         restoreOwnerVersion({ file: contentOnlyUpperRow(), version, masterKey: hexToBytes(V1.master_key_hex), residentUserId: 'me' }),
       ).rejects.toThrow(OWNER_WRITE_CHECK_FAILED)
       expect(net.writes()).toHaveLength(0)
+    } finally {
+      net.restore()
+    }
+  })
+})
+
+// ── X7: the verdict cache is keyed on the server's current version ──────────
+
+/** The row as GET /files/:id answers it, with its current object version. */
+function freshRow(objectVersionId: string | null): DriveFile {
+  return {
+    ...row({ size_bytes: UPPER_PLAINTEXT_LEN, chunk_count: 1, uploaded_by: 'me', acted_via_share_id: null, version_number: 2 }),
+    download_version: objectVersionId ? { object_version_id: objectVersionId, chunk_count: 1 } : null,
+  } as unknown as DriveFile
+}
+
+describe('X7: a stale listing row never skips the probe', () => {
+  beforeEach(() => clearOwnerRepairReadOnly())
+
+  test('a new upper_repair version with the same size and chunk count is refused', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    // The listing row the page holds: it never changes in this test.
+    const listed = row({ size_bytes: UPPER_PLAINTEXT_LEN, chunk_count: 1, uploaded_by: 'me', acted_via_share_id: null, version_number: 2 })
+    let current = { ov: '1b2c3d4e-0000-4000-8000-000000000002', frame: ordinaryFrame() }
+    const net = installFetch((url) => {
+      if (url.endsWith(`/api/v1/files/${V1.file_id}`)) {
+        return new Response(JSON.stringify(freshRow(current.ov)), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(current.frame, { status: 200, headers: { 'X-Chunk-Count': '1', 'X-Chunk-Size': String(UPPER_PLAINTEXT_LEN) } })
+    })
+    try {
+      await assertCurrentVersionWritable(listed, master, { viewerId: 'me' })
+      // Same version on the server: no second probe.
+      await assertCurrentVersionWritable(listed, master, { viewerId: 'me' })
+      expect(net.downloads()).toHaveLength(1)
+      // The old iOS app writes a new version: same size, same chunk count.
+      current = { ov: '1b2c3d4e-0000-4000-8000-000000000003', frame: UPPER_FRAME }
+      await expect(assertCurrentVersionWritable(listed, master, { viewerId: 'me' })).rejects.toThrow(OWNER_REPAIR_READ_ONLY)
+      expect(net.downloads()).toHaveLength(2)
+    } finally {
+      net.restore()
+    }
+  })
+
+  test('a row with no object version (legacy) is probed on every write', async () => {
+    const master = hexToBytes(V1.master_key_hex)
+    const listed = row({ size_bytes: UPPER_PLAINTEXT_LEN, chunk_count: 1, uploaded_by: 'me', acted_via_share_id: null, version_number: 2 })
+    const frame = ordinaryFrame()
+    const net = installFetch((url) => {
+      if (url.endsWith(`/api/v1/files/${V1.file_id}`)) {
+        return new Response(JSON.stringify(freshRow(null)), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(frame, { status: 200, headers: { 'X-Chunk-Count': '1', 'X-Chunk-Size': String(UPPER_PLAINTEXT_LEN) } })
+    })
+    try {
+      await assertCurrentVersionWritable(listed, master, { viewerId: 'me' })
+      await assertCurrentVersionWritable(listed, master, { viewerId: 'me' })
+      expect(net.downloads()).toHaveLength(2)
     } finally {
       net.restore()
     }
