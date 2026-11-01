@@ -10,12 +10,13 @@
  *    the most recent pull;
  *  - stateless, offset-addressed reads that never cross a chunk boundary and
  *    never exceed 1 MiB;
- *  - terminal error classes (`auth`, `changed`, `network`) with wipes.
+ *  - terminal error classes (StreamErrorKind; only `auth` is a claim about
+ *    the bytes) with wipes.
  *
  * It knows nothing about the Service Worker or the player: no UI, no
  * `MessagePort`, no component. Keys never leave this module or the worker.
  */
-import type { ContentPin } from '../content-crypto'
+import { isChunkAuthenticationError, type ContentPin } from '../content-crypto'
 import {
   startDecryptStream,
   createChunkReader,
@@ -44,7 +45,25 @@ const MiB = 1024 * 1024
 const RETRY_ATTEMPTS = 3
 const RETRY_BACKOFF_MS = 400
 
-export type StreamErrorKind = 'auth' | 'changed' | 'network'
+/**
+ * Why a stream stopped (LD-0001 r4, A-R2). Only `auth` claims anything about
+ * the file's bytes; the UI copy follows these kinds.
+ *  - `auth`: a frame failed AEAD authentication at its index (or chunk 0 did
+ *    not authenticate as the last chunk, or the chunk format was downgraded);
+ *  - `changed`: the pinned version is gone (409);
+ *  - `unauthorized`: the session expired (401);
+ *  - `unavailable`: the server refused a part (403, 404, 410, other 4xx), or
+ *    served parts whose count or size disagree with the file's record;
+ *  - `network`: the transport failed (retries exhausted, idle timeouts);
+ *  - `internal`: the crypto worker or WASM failed (load, messaging).
+ */
+export type StreamErrorKind =
+  | 'auth'
+  | 'changed'
+  | 'unauthorized'
+  | 'unavailable'
+  | 'network'
+  | 'internal'
 
 /** A terminal session error. It carries a kind and at most a chunk index — never plaintext or keys (M6). */
 export class StreamSessionError extends Error {
@@ -245,17 +264,34 @@ function classify(err: unknown, index: number): StreamSessionError | null {
     if (err.status === 409) {
       return new StreamSessionError('changed', `chunk ${index}: the file changed`, index, { cause: err })
     }
-    if (err.status === 401 || err.status === 403) {
-      return new StreamSessionError('auth', `chunk ${index}: not authorized`, index, { cause: err })
+    if (err.status === 401) {
+      return new StreamSessionError('unauthorized', `chunk ${index}: the session expired`, index, { cause: err })
     }
     // Any other client refusal is permanent: retrying would not make the
-    // server serve a chunk it says does not exist (A3).
+    // server serve a chunk it says does not exist (A3). It is not a claim
+    // about the bytes, so it is never 'auth'.
     if (err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429) {
-      return new StreamSessionError('auth', `chunk ${index}: refused with ${err.status}`, index, { cause: err })
+      return new StreamSessionError('unavailable', `chunk ${index}: refused with ${err.status}`, index, { cause: err })
     }
     return null
   }
   return null
+}
+
+/**
+ * A-R2: what a failed crypto call (factory, openAt) means. Only a frame that
+ * failed authentication (core's error, tagged where it is thrown) is 'auth';
+ * an HTTP failure keeps its class; a worker, WASM or messaging failure is
+ * 'internal'.
+ */
+function classifyCryptoFailure(err: unknown, index: number, authMessage: string): StreamSessionError {
+  if (isTerminal(err)) return err
+  if (isChunkAuthenticationError(err)) {
+    return new StreamSessionError('auth', authMessage, index, { cause: err })
+  }
+  const http = classify(err, index)
+  if (http) return http
+  return new StreamSessionError('internal', `chunk ${index}: the crypto worker failed`, index, { cause: err })
 }
 
 export async function openStreamSession(opts: OpenStreamOptions): Promise<StreamSession> {
@@ -270,16 +306,16 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
 
   if (signal?.aborted) throw abortReason()
   if (!Number.isInteger(N) || N < 1) {
-    throw new StreamSessionError('auth', `invalid chunk count ${N}`)
+    throw new StreamSessionError('unavailable', `invalid chunk count ${N}`)
   }
   if (opts.row.download_version && opts.row.download_version.chunk_count !== N) {
     throw new StreamSessionError(
-      'auth',
+      'unavailable',
       'chunk count disagrees with download_version',
     )
   }
   if (opts.content.fileId !== opts.fileId) {
-    throw new StreamSessionError('auth', 'content file id disagrees with the stream file id')
+    throw new StreamSessionError('internal', 'content file id disagrees with the stream file id')
   }
 
   // ── Session state ──────────────────────────────────────────────────────────
@@ -442,7 +478,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
       const out = await fetchWithRetries(index, signal)
       if (expected < 0 || out.frame.length === expected) return out
       if (sizeAttempt >= 1) {
-        throw new StreamSessionError('auth', `chunk ${index} is not ${expected} bytes`, index)
+        throw new StreamSessionError('unavailable', `chunk ${index} is not ${expected} bytes`, index)
       }
     }
   }
@@ -491,12 +527,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
         fetched.frame,
       )
     } catch (err) {
-      throw new StreamSessionError(
-        'auth',
-        `chunk ${index} could not be authenticated`,
-        index,
-        { cause: err },
-      )
+      throw classifyCryptoFailure(err, index, `chunk ${index} could not be authenticated`)
     }
     if (closed) {
       plaintext.fill(0)
@@ -508,7 +539,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     }
     if (plaintext.length !== expectedPlaintextSize(index)) {
       plaintext.fill(0)
-      throw new StreamSessionError('auth', `chunk ${index} opened to the wrong size`, index)
+      throw new StreamSessionError('unavailable', `chunk ${index} opened to the wrong size`, index)
     }
     // Settled: drop this open's pending entry BEFORE the store can evict, so
     // no later read joins a promise whose buffer an eviction already wiped.
@@ -636,7 +667,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
   // has one frame). Anything shorter, or an empty head on a multi-chunk row,
   // is not a frame.
   if (headFrameLength < CHUNK_OVERHEAD || (headFrameLength === CHUNK_OVERHEAD && N > 1)) {
-    throw new StreamSessionError('auth', 'chunk 0 is too short to be a frame', 0)
+    throw new StreamSessionError('unavailable', 'chunk 0 is too short to be a frame', 0)
   }
   chunkSize = headFrameLength - CHUNK_OVERHEAD
   if (chunkSize > 0) bounds = streamBounds(chunkSize)
@@ -644,7 +675,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
   // §5.2: X-Chunk-Count on chunk 0 and the row's counts must agree.
   if (head.chunkCount !== null && head.chunkCount !== N) {
     throw new StreamSessionError(
-      'auth',
+      'unavailable',
       `chunk 0 says ${head.chunkCount} chunks, the row says ${N}`,
       0,
     )
@@ -660,7 +691,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     : chunkSize
   if (expectedChunkSize !== chunkSize) {
     throw new StreamSessionError(
-      'auth',
+      'unavailable',
       `chunk size ${chunkSize} disagrees with download_version`,
       0,
     )
@@ -681,8 +712,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     })
   } catch (err) {
     if (signal?.aborted) throw abortReason()
-    if (isTerminal(err)) throw err
-    throw new StreamSessionError('auth', 'chunk 0 could not be authenticated', 0, { cause: err })
+    throw classifyCryptoFailure(err, 0, 'chunk 0 could not be authenticated')
   }
   setupReader = setupHead.reader
   if (setupHead.repairedKey) setupHead.repairedKey.fill(0)
@@ -699,7 +729,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     // here (the catch below), so no reader or key copy outlives the open.
     if (signal?.aborted) throw abortReason()
     if (setupHead.headPlaintext.length !== chunkSize) {
-      throw new StreamSessionError('auth', 'chunk 0 decrypted to the wrong size', 0)
+      throw new StreamSessionError('unavailable', 'chunk 0 decrypted to the wrong size', 0)
     }
     if (headAsLastFrame) {
       // A-R1: with one chunk, chunk 0 must BE the last chunk. The sequential
@@ -711,9 +741,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
       try {
         asLast = await setupReader.openAt(0, true, headAsLastFrame)
       } catch (err) {
-        throw new StreamSessionError('auth', 'chunk 0 did not authenticate as the last chunk', 0, {
-          cause: err,
-        })
+        throw classifyCryptoFailure(err, 0, 'chunk 0 did not authenticate as the last chunk')
       }
       asLast.fill(0)
     }
@@ -726,15 +754,10 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
       try {
         tailPlaintext = await setupReader.openAt(N - 1, true, tail.frame)
       } catch (err) {
-        throw new StreamSessionError(
-          'auth',
-          `chunk ${N - 1} (the last chunk) could not be authenticated`,
-          N - 1,
-          { cause: err },
-        )
+        throw classifyCryptoFailure(err, N - 1, `chunk ${N - 1} (the last chunk) could not be authenticated`)
       }
       if (tailPlaintext.length === 0 || tailPlaintext.length > chunkSize) {
-        throw new StreamSessionError('auth', 'the last chunk has an invalid size', N - 1)
+        throw new StreamSessionError('unavailable', 'the last chunk has an invalid size', N - 1)
       }
       store(N - 1, tailPlaintext)
       tailStored = true
@@ -747,7 +770,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     tailSize = N > 1 ? tailPlaintext!.length : chunkSize
     totalSize = (N - 1) * chunkSize + tailSize
     if (dv && dv.plaintext_size_bytes !== totalSize) {
-      throw new StreamSessionError('auth', 'total plaintext disagrees with download_version', 0)
+      throw new StreamSessionError('unavailable', 'total plaintext disagrees with download_version', 0)
     }
 
     // The legacy "encrypted total stored in size_bytes" case (encrypted-download.ts).
@@ -759,7 +782,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
         ? opts.row.size_bytes - N * CHUNK_OVERHEAD
         : opts.row.size_bytes
     if (expectedFromRow !== totalSize) {
-      throw new StreamSessionError('auth', 'total plaintext disagrees with size_bytes', 0)
+      throw new StreamSessionError('unavailable', 'total plaintext disagrees with size_bytes', 0)
     }
     if (signal?.aborted) throw abortReason()
   } catch (err) {

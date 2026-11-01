@@ -135,3 +135,95 @@ describe('LD-0001 r4 A-R1: a one-chunk row must hold the last chunk', () => {
     await session.close()
   })
 })
+
+describe("LD-0001 r4 A-R2: 'auth' means a frame failed authentication, nothing else", () => {
+  const refusals: Array<[number, string]> = [
+    [401, 'unauthorized'],
+    [403, 'unavailable'],
+    [404, 'unavailable'],
+    [410, 'unavailable'],
+    [400, 'unavailable'],
+  ]
+
+  test('http_refusals_during_setup_are_never_auth', async () => {
+    for (const [status, kind] of refusals) {
+      const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+      const source = new FakeChunkSource(fx.frames)
+      source.fetchFrame = async () => {
+        throw new ApiError('refused', status)
+      }
+      await expect(open(fx, { source })).rejects.toMatchObject({ kind })
+    }
+  })
+
+  test('a_refused_part_mid_stream_is_unavailable_not_auth', async () => {
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const source = FakeChunkSource.lazy(
+      (index) => (index === 1 ? undefined : fx.frames[index]) as Uint8Array,
+      3,
+    )
+    const session = await open(fx, { source })
+    const errors: StreamEvent[] = []
+    session.onEvent((e) => {
+      if (e.type === 'error') errors.push(e)
+    })
+    await expect(session.read('r', 32, 4)).rejects.toMatchObject({ kind: 'unavailable', index: 1 })
+    expect(errors).toEqual([{ type: 'error', kind: 'unavailable', index: 1 }])
+    await session.close()
+  })
+
+  test('a_reader_factory_that_fails_to_load_is_internal', async () => {
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const factory: StreamReaderFactory = async () => {
+      throw new Error('the crypto worker failed to load')
+    }
+    await expect(open(fx, { readerFactory: factory })).rejects.toMatchObject({ kind: 'internal', index: 0 })
+  })
+
+  test('a_worker_failure_mid_stream_is_internal', async () => {
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const base = inProcessReaderFactory(createContentOps(wasm))
+    const factory: StreamReaderFactory = async (args) => {
+      const out = await base(args)
+      const inner = out.reader
+      return {
+        ...out,
+        reader: {
+          openAt: async (index, isLast, frame) => {
+            if (index === 1) throw new Error('postMessage to the crypto worker failed')
+            return inner.openAt(index, isLast, frame)
+          },
+          close: () => inner.close(),
+        },
+      }
+    }
+    const session = await open(fx, { readerFactory: factory })
+    await expect(session.read('r', 32, 4)).rejects.toMatchObject({ kind: 'internal', index: 1 })
+    await session.close()
+  })
+
+  test('a_frame_that_fails_aead_is_still_auth', async () => {
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(128) })
+    // The wrong key at setup (no repair): chunk 0 does not open.
+    await expect(open(fx, { fileKey: seededKey(99) })).rejects.toMatchObject({ kind: 'auth', index: 0 })
+    // A swapped frame mid-stream.
+    const swapped = [...fx.frames]
+    ;[swapped[1], swapped[2]] = [swapped[2], swapped[1]]
+    const source = new FakeChunkSource(swapped)
+    source.deferred.add(2)
+    const session = await open(fx, { source })
+    await expect(session.read('r', 32, 4)).rejects.toMatchObject({ kind: 'auth', index: 1 })
+    await session.close()
+  })
+
+  test('records_that_disagree_are_unavailable_not_auth', async () => {
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    // X-Chunk-Count disagrees with the row: no frame failed authentication.
+    await expect(open(fx, { source: new FakeChunkSource(fx.frames, 2) })).rejects.toMatchObject({
+      kind: 'unavailable',
+    })
+    await expect(open(fx, { row: { ...rowFor(fx), size_bytes: 95 } })).rejects.toMatchObject({
+      kind: 'unavailable',
+    })
+  })
+})

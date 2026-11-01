@@ -121,7 +121,7 @@ describe('LD-0001 r3 A1: a single-chunk file declares its upload stride', () => 
       open(fx, {
         row: { ...row, download_version: { ...row.download_version!, chunk_size_bytes: 256 * 1024 } },
       }),
-    ).rejects.toMatchObject({ kind: 'auth', index: 0 })
+    ).rejects.toMatchObject({ kind: 'unavailable', index: 0 })
   })
 })
 
@@ -229,17 +229,18 @@ describe('LD-0001 r3 A4: no setup failure leaves plaintext behind', () => {
     const dv = rowFor(fx).download_version!
     const tailSwapped = new FakeChunkSource(fx.frames)
     tailSwapped.overrides.set(2, fx.frames[1])
-    const cases: Array<{ extra: Partial<OpenStreamOptions>; cachedIndices: number[] }> = [
-      { extra: { row: { ...rowFor(fx), download_version: { ...dv, plaintext_size_bytes: 95 } } }, cachedIndices: [0, 2] },
-      { extra: { row: { ...rowFor(fx), size_bytes: 95 } }, cachedIndices: [0, 2] },
-      { extra: { source: tailSwapped }, cachedIndices: [0] },
+    // Round 4 (A-R2): size disagreements are 'unavailable'; the swapped tail is 'auth'.
+    const cases: Array<{ extra: Partial<OpenStreamOptions>; cachedIndices: number[]; kind: string }> = [
+      { extra: { row: { ...rowFor(fx), download_version: { ...dv, plaintext_size_bytes: 95 } } }, cachedIndices: [0, 2], kind: 'unavailable' },
+      { extra: { row: { ...rowFor(fx), size_bytes: 95 } }, cachedIndices: [0, 2], kind: 'unavailable' },
+      { extra: { source: tailSwapped }, cachedIndices: [0], kind: 'auth' },
     ]
     for (const c of cases) {
       const ops = createContentOps(wasm)
       const { log, observer } = observed()
       await expect(
         open(fx, { ...c.extra, observer, readerFactory: inProcessReaderFactory(ops) }),
-      ).rejects.toMatchObject({ kind: 'auth' })
+      ).rejects.toMatchObject({ kind: c.kind })
       expect(log.cached.map((e) => e.index)).toEqual(c.cachedIndices)
       for (const entry of log.cached) expect(allZero(entry.bytes)).toBe(true)
       expect(ops.liveReaderCount()).toBe(0)
@@ -260,7 +261,7 @@ describe('LD-0001 r3 A4: no setup failure leaves plaintext behind', () => {
       handed.bytes = padded
       return { ...out, headPlaintext: padded }
     }
-    await expect(open(fx, { readerFactory: factory })).rejects.toMatchObject({ kind: 'auth', index: 0 })
+    await expect(open(fx, { readerFactory: factory })).rejects.toMatchObject({ kind: 'unavailable', index: 0 })
     expect(handed.bytes).toBeDefined()
     expect(allZero(handed.bytes!)).toBe(true)
     expect(ops.liveReaderCount()).toBe(0)
@@ -330,7 +331,7 @@ describe('LD-0001 r3 A5: a zero-length file', () => {
         clock: new FakeClock(),
         readerFactory: inProcessReaderFactory(createContentOps(wasm)),
       }),
-    ).rejects.toMatchObject({ kind: 'auth', index: 0 })
+    ).rejects.toMatchObject({ kind: 'unavailable', index: 0 })
   })
 })
 
@@ -384,10 +385,10 @@ describe('LD-0001 r3 A6: a re-fetched tail', () => {
     short.fill(N, 28)
     source.overrides.set(N - 1, short)
     await expect(session.read('r', (N - 1) * S, 16)).rejects.toMatchObject({
-      kind: 'auth',
+      kind: 'unavailable',
       index: N - 1,
     })
-    expect(errors.map((e) => e.type === 'error' && e.kind)).toEqual(['auth'])
+    expect(errors.map((e) => e.type === 'error' && e.kind)).toEqual(['unavailable'])
     await session.close()
   })
 })
@@ -401,7 +402,7 @@ describe('LD-0001 r3 A7: an open can be abandoned', () => {
       3,
     )
     source.stalls.add(2)
-    await expect(open(fx, { source })).rejects.toMatchObject({ kind: 'auth', index: 0 })
+    await expect(open(fx, { source })).rejects.toMatchObject({ kind: 'unavailable', index: 0 })
     await settle(2)
     expect(source.aborted).toEqual([2])
   })

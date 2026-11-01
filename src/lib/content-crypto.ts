@@ -88,6 +88,26 @@ function pinnedFrom(raw: unknown): PinnedMetadata {
  * never leaves it: callers hold an opaque numeric handle (the same pattern as
  * the worker's `WasmChunkEncryptor` registry).
  */
+/**
+ * LD-0001 r4 (A-R2): the name of the ONE error that means "a frame (or the
+ * chunk format it claims) failed authentication". It is set where core
+ * throws, inside the worker, and survives Comlink (which keeps an Error's
+ * name). A worker, WASM-load or messaging failure never carries it.
+ */
+export const CHUNK_AUTH_ERROR_NAME = 'ChunkAuthenticationError'
+
+function chunkAuthError(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err)
+  const tagged = new Error(message)
+  tagged.name = CHUNK_AUTH_ERROR_NAME
+  return tagged
+}
+
+/** True for a frame that failed authentication (see CHUNK_AUTH_ERROR_NAME). */
+export function isChunkAuthenticationError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { name?: unknown }).name === CHUNK_AUTH_ERROR_NAME
+}
+
 export function createContentOps(wasm: ContentWasm) {
   interface LiveDecryptor {
     decryptor: Wasm.WasmChunkDecryptor
@@ -141,7 +161,13 @@ export function createContentOps(wasm: ContentWasm) {
 
     /** Open the next wire frame (`nonce || ciphertext || tag`), in order from chunk 0. */
     decryptorPushFrame(handle: number, frame: Uint8Array): Uint8Array {
-      return decryptor(handle).decryptor.pushFrame(frame)
+      const entry = decryptor(handle)
+      try {
+        return entry.decryptor.pushFrame(frame)
+      } catch (err) {
+        // Core refused the frame: an authentication (or downgrade) failure.
+        throw chunkAuthError(err)
+      }
     },
 
     /**
@@ -196,7 +222,8 @@ export function createContentOps(wasm: ContentWasm) {
         throw new Error(`decryptor reports unknown chunk format ${String(format)}`)
       }
       if (entry.pin === PIN_V2 && format === 1) {
-        throw new Error('refusing format 1 for a file whose pin says v2')
+        // A downgrade is an authentication failure of the claimed format.
+        throw chunkAuthError(new Error('refusing format 1 for a file whose pin says v2'))
       }
       const versionId = d.versionId ? d.versionId.slice() : new Uint8Array(0)
       const handle = nextHandle++
@@ -225,15 +252,20 @@ export function createContentOps(wasm: ContentWasm) {
      */
     openChunkAt(handle: number, index: number, isLast: boolean, frame: Uint8Array): Uint8Array {
       const r = reader(handle)
-      return wasm.decrypt_chunk_frame(
-        r.key,
-        r.fileId,
-        r.versionId.length ? r.versionId : new Uint8Array(0),
-        index,
-        isLast,
-        r.format,
-        frame,
-      )
+      try {
+        return wasm.decrypt_chunk_frame(
+          r.key,
+          r.fileId,
+          r.versionId.length ? r.versionId : new Uint8Array(0),
+          index,
+          isLast,
+          r.format,
+          frame,
+        )
+      } catch (err) {
+        // The frame did not open at this index (and last flag, for v2).
+        throw chunkAuthError(err)
+      }
     },
 
     /** Close a reader and wipe its key copy. Idempotent. */

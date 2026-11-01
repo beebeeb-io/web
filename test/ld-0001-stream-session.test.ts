@@ -118,21 +118,22 @@ describe('LD-0001 stream session setup', () => {
 
     // X-Chunk-Count says 2, the row says 3.
     const small = new FakeChunkSource(fx.frames, 2)
-    await expect(open(fx, { source: small })).rejects.toMatchObject({ kind: 'auth' })
+    // Round 4 (A-R2): a count that disagrees is 'unavailable'; 'auth' is only a frame that failed AEAD.
+    await expect(open(fx, { source: small })).rejects.toMatchObject({ kind: 'unavailable' })
 
     // X-Chunk-Count says 4, the row says 3.
     const large = new FakeChunkSource(fx.frames, 4)
-    await expect(open(fx, { source: large })).rejects.toMatchObject({ kind: 'auth' })
+    await expect(open(fx, { source: large })).rejects.toMatchObject({ kind: 'unavailable' })
 
     // download_version.chunk_count disagrees with the row.
     await expect(
       open(fx, { row: { download_version: { ...rowFor(fx).download_version!, chunk_count: 2 } } }),
-    ).rejects.toMatchObject({ kind: 'auth' })
+    ).rejects.toMatchObject({ kind: 'unavailable' })
 
     // v1 row, same rule.
     const v1 = encryptFixture({ pin: 0, chunkSize: 32, plaintext: patternBytes(96) })
     const v1Source = new FakeChunkSource(v1.frames, 2)
-    await expect(open(v1, { source: v1Source })).rejects.toMatchObject({ kind: 'auth' })
+    await expect(open(v1, { source: v1Source })).rejects.toMatchObject({ kind: 'unavailable' })
   })
 
   test('setup_cross_checks_total_plaintext_and_chunk_size (A7)', async () => {
@@ -142,15 +143,15 @@ describe('LD-0001 stream session setup', () => {
       open(fx, {
         row: { download_version: { ...rowFor(fx).download_version!, plaintext_size_bytes: 95 } },
       }),
-    ).rejects.toMatchObject({ kind: 'auth' })
+    ).rejects.toMatchObject({ kind: 'unavailable' })
 
     await expect(
       open(fx, {
         row: { download_version: { ...rowFor(fx).download_version!, chunk_size_bytes: 31 } },
       }),
-    ).rejects.toMatchObject({ kind: 'auth' })
+    ).rejects.toMatchObject({ kind: 'unavailable' })
 
-    await expect(open(fx, { row: { size_bytes: 95 } })).rejects.toMatchObject({ kind: 'auth' })
+    await expect(open(fx, { row: { size_bytes: 95 } })).rejects.toMatchObject({ kind: 'unavailable' })
 
     // The legacy "encrypted total stored in size_bytes" shape is tolerated.
     const encryptedTotal = rowFor(fx).download_version!.ciphertext_size_bytes
@@ -261,7 +262,7 @@ describe('LD-0001 stream integrity', () => {
     oversized.set(fx.frames[1])
     source.overrides.set(1, oversized)
     const session = await open(fx, { source })
-    await expect(session.read('r', 32, 32)).rejects.toMatchObject({ kind: 'auth', index: 1 })
+    await expect(session.read('r', 32, 32)).rejects.toMatchObject({ kind: 'unavailable', index: 1 })
     expect(source.calls.filter((i) => i === 1).length).toBe(2)
     await session.close()
 
@@ -594,7 +595,7 @@ describe('LD-0001 v2 vector full guarantee', () => {
 
     // Metadata count cross-check (§5.2): X-Chunk-Count 2 vs the row's 3.
     await expect(openVector(new FakeChunkSource(V2_FRAMES, 2))).rejects.toMatchObject({
-      kind: 'auth',
+      kind: 'unavailable',
     })
 
     // Swap: frame 1 served for frame 2 (the tail open fails before ready).
@@ -649,7 +650,7 @@ describe('LD-0001 v2 vector full guarantee', () => {
         size_bytes: S * 4,
         download_version: paddedDv,
       }),
-    ).rejects.toMatchObject({ kind: 'auth', index: 3 })
+    ).rejects.toMatchObject({ kind: 'unavailable', index: 3 })
 
     // A foreign upload's chunk for the same file id and key: same key, other
     // version id, so the position/version binding fails.
@@ -674,13 +675,14 @@ describe('LD-0001 v2 vector full guarantee', () => {
     await expect(foreignSession.read('r', S, S)).rejects.toMatchObject({ kind: 'auth', index: 1 })
     await foreignSession.close()
 
-    // A wrong-size frame: retried once, then an authentication error.
+    // A wrong-size frame: retried once, then refused ('unavailable': no frame
+    // failed authentication; it was never opened at the wrong framing).
     const wrongSizeSource = new FakeChunkSource(V2_FRAMES)
     const wrong = new Uint8Array(V2_FRAMES[1].length + 1)
     wrong.set(V2_FRAMES[1])
     wrongSizeSource.overrides.set(1, wrong)
     const wrongSession = await openVector(wrongSizeSource)
-    await expect(wrongSession.read('r', S, S)).rejects.toMatchObject({ kind: 'auth', index: 1 })
+    await expect(wrongSession.read('r', S, S)).rejects.toMatchObject({ kind: 'unavailable', index: 1 })
     expect(wrongSizeSource.calls.filter((i) => i === 1).length).toBe(2)
     await wrongSession.close()
 
