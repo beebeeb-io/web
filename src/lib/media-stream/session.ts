@@ -667,6 +667,9 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
   }
 
   if (signal?.aborted) throw abortReason()
+  // A-R1: a one-chunk row keeps its own copy of the head, to re-open it as the
+  // last chunk below (the factory transfers the frame it is given).
+  const headAsLastFrame = N === 1 ? head.frame.slice() : null
   let setupHead: StreamReaderSetup
   try {
     setupHead = await factory({
@@ -697,6 +700,22 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     if (signal?.aborted) throw abortReason()
     if (setupHead.headPlaintext.length !== chunkSize) {
       throw new StreamSessionError('auth', 'chunk 0 decrypted to the wrong size', 0)
+    }
+    if (headAsLastFrame) {
+      // A-R1: with one chunk, chunk 0 must BE the last chunk. The sequential
+      // open accepts a v2 frame with or without its last flag, and no finish()
+      // runs, so the head is opened once more at index 0 with is_last = true:
+      // a v2 file cut down to its first chunk fails here. Format 1 binds no
+      // last flag (the documented v1 weakness, as on the whole-file path).
+      let asLast: Uint8Array
+      try {
+        asLast = await setupReader.openAt(0, true, headAsLastFrame)
+      } catch (err) {
+        throw new StreamSessionError('auth', 'chunk 0 did not authenticate as the last chunk', 0, {
+          cause: err,
+        })
+      }
+      asLast.fill(0)
     }
     store(0, setupHead.headPlaintext)
     headStored = true

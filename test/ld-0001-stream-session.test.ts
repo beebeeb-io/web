@@ -622,6 +622,21 @@ describe('LD-0001 v2 vector full guarantee', () => {
       }),
     ).rejects.toMatchObject({ kind: 'auth', index: 1 })
 
+    // Truncation to ONE chunk (round 4, A-R1): the head is not the last chunk.
+    await expect(
+      openVector(new FakeChunkSource(V2_FRAMES.slice(0, 1), 1), {
+        chunk_count: 1,
+        size_bytes: S,
+        download_version: {
+          ...vectorRow().download_version!,
+          chunk_count: 1,
+          plaintext_size_bytes: S,
+          ciphertext_size_bytes: V2_FRAMES[0].length,
+          chunks: [{ index: 0, size_bytes: V2_FRAMES[0].length }],
+        },
+      }),
+    ).rejects.toMatchObject({ kind: 'auth', index: 0 })
+
     // Padding: count + 1, a frame served at an index past the real end.
     const paddedDv = {
       ...vectorRow().download_version!,
