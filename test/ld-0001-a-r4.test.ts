@@ -257,3 +257,74 @@ describe('LD-0001 r4 A-R3: a reader created before a failed reply is closed', ()
     expect(ops.liveDecryptorCount()).toBe(0)
   })
 })
+
+describe('LD-0001 r4 A-R4: aborts are honoured everywhere', () => {
+  test('close_removes_the_post_open_abort_listener', async () => {
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const controller = new AbortController()
+    const signal = controller.signal
+    const live = new Set<unknown>()
+    const add = signal.addEventListener.bind(signal)
+    const remove = signal.removeEventListener.bind(signal)
+    signal.addEventListener = ((type: string, listener: EventListener, options?: AddEventListenerOptions) => {
+      if (type === 'abort') live.add(listener)
+      add(type, listener, options)
+    }) as typeof signal.addEventListener
+    signal.removeEventListener = ((type: string, listener: EventListener, options?: EventListenerOptions) => {
+      if (type === 'abort') live.delete(listener)
+      remove(type, listener, options)
+    }) as typeof signal.removeEventListener
+    const session = await open(fx, { signal })
+    expect(live.size).toBe(1)
+    await session.close()
+    expect(live.size).toBe(0)
+  })
+
+  test('a_fetch_that_lands_after_its_abort_is_never_decrypted', async () => {
+    const S = 32
+    const N = 48
+    const fx = encryptFixture({ pin: 2, chunkSize: S, plaintext: patternBytes(S * N) })
+    const spies = { openAt: [] as Array<{ index: number; isLast: boolean }>, repairs: 0 }
+    let release7!: () => void
+    const gate7 = new Promise<void>((resolve) => {
+      release7 = resolve
+    })
+    const source = new FakeChunkSource(fx.frames)
+    const base = source.fetchFrame.bind(source)
+    // Chunk 7's request ignores its abort and answers late (a fetch already in
+    // the network stack when the read-ahead was superseded).
+    source.fetchFrame = async (index, signal) => {
+      if (index === 7) {
+        await gate7
+        return { frame: fx.frames[7].slice(), chunkCount: N }
+      }
+      return base(index, signal)
+    }
+    const session = await open(fx, { source, readerFactory: inProcessReaderFactory(createContentOps(wasm), spies) })
+    await session.read('a', 5 * S, 4)
+    await settle(2)
+    const far = session.read('b', 40 * S, 4)
+    release7()
+    await settle(6)
+    expect(spies.openAt.some((o) => o.index === 7)).toBe(false)
+    expect(await far).toEqual(fx.plaintext.slice(40 * S, 40 * S + 4))
+    await session.close()
+  })
+
+  test('an_abort_during_a_retry_backoff_ends_the_open_at_once', async () => {
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const source = new FakeChunkSource(fx.frames)
+    source.transientFailures.set(0, 1)
+    const clock = new FakeClock()
+    const controller = new AbortController()
+    const pending = open(fx, { source, clock, signal: controller.signal })
+    await settle(4)
+    // Chunk 0 failed once and now sleeps its 400 ms backoff on the fake clock.
+    expect(clock.pendingTimers).toBeGreaterThan(0)
+    controller.abort()
+    const result = await outcome(pending)
+    expect(result.state).toBe('rejected')
+    expect(((result as { error: { name?: string } }).error).name).toBe('AbortError')
+    expect(clock.pendingTimers).toBe(0)
+  })
+})

@@ -327,6 +327,8 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
   let retained = 0
   /** The last chunk's plaintext size, fixed by setup; −1 until then. */
   let tailSize = -1
+  /** The post-open abort listener (A7); close() removes it (A-R4). */
+  let onAbortAfterOpen: (() => void) | null = null
 
   const listeners = new Set<(event: StreamEvent) => void>()
   const cache = new Map<number, Uint8Array>()
@@ -422,9 +424,27 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
   }
 
   // ── Fetching ───────────────────────────────────────────────────────────────
-  const sleep = (ms: number): Promise<void> =>
-    new Promise((resolve) => {
-      clock.setTimeout(resolve, ms)
+  /**
+   * A-R4: the retry backoff races the fetch's abort. An abandoned open or a
+   * superseded read-ahead ends now, not after the backoff, and its timer is
+   * cleared.
+   */
+  const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const reason = () => signal.reason ?? new DOMException('Aborted', 'AbortError')
+      if (signal.aborted) {
+        reject(reason())
+        return
+      }
+      const onAbort = (): void => {
+        clock.clearTimeout(timer)
+        reject(reason())
+      }
+      const timer = clock.setTimeout(() => {
+        signal.removeEventListener('abort', onAbort)
+        resolve()
+      }, ms)
+      signal.addEventListener('abort', onAbort, { once: true })
     })
 
   async function fetchWithRetries(
@@ -446,7 +466,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
         const permanent = classify(err, index)
         if (permanent) throw permanent
         lastErr = err
-        if (attempt < RETRY_ATTEMPTS) await sleep(RETRY_BACKOFF_MS * attempt)
+        if (attempt < RETRY_ATTEMPTS) await sleep(RETRY_BACKOFF_MS * attempt, signal)
       }
     }
     throw new StreamSessionError(
@@ -517,6 +537,9 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
     emit({ type: 'received', bytes: fetched.frame.length })
     if (closed) throw closedError()
     if (terminal) throw terminal
+    // A-R4: a fetch that lands after its read-ahead was superseded is never
+    // decrypted.
+    if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
     const reader = setupReader
     if (!reader) throw closedError()
     let plaintext: Uint8Array
@@ -847,6 +870,11 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
   async function close(): Promise<void> {
     if (closed) return
     closed = true
+    // A-R4: the caller's signal no longer holds a reference to this session.
+    if (onAbortAfterOpen) {
+      signal?.removeEventListener('abort', onAbortAfterOpen)
+      onAbortAfterOpen = null
+    }
     for (const controller of controllers) {
       controller.abort(new DOMException('session closed', 'AbortError'))
     }
@@ -866,7 +894,10 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
 
   // An abort that lands after the open resolved (the caller moved on while the
   // promise was settling) closes the session instead of leaking it.
-  signal?.addEventListener('abort', () => void close(), { once: true })
+  if (signal) {
+    onAbortAfterOpen = () => void close()
+    signal.addEventListener('abort', onAbortAfterOpen, { once: true })
+  }
 
   return {
     totalSize,
