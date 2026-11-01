@@ -1181,10 +1181,19 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         <div className="flex flex-col items-center gap-3 text-center">
           <Icon name="shield" size={32} className="text-red" />
           <p className="max-w-[380px] text-sm font-medium text-ink">{stream.errorCopy}</p>
-          {stream.path !== 'changed' && (
+          {stream.errorAction === 'retry' && (
             <BBButton variant="default" size="sm" onClick={stream.retry}>
               Try again
             </BBButton>
+          )}
+          {/* Round 4 B-R1: an expired session signs in again; a retry cannot help. */}
+          {stream.errorAction === 'sign-in' && (
+            <a
+              href="/login"
+              className="inline-flex items-center rounded-md border border-line px-3 py-1.5 text-sm font-medium text-ink hover:bg-paper-2"
+            >
+              Sign in
+            </a>
           )}
         </div>
       )}

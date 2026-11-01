@@ -12,6 +12,9 @@ import React from 'react'
 import { preserveGlobals } from './helpers/scoped-global'
 import type { DriveFile } from '../src/lib/api'
 import { StreamSessionError, type StreamEvent, type StreamSession } from '../src/lib/media-stream/session'
+import { ApiError } from '../src/lib/api'
+import { UnverifiedFileMetadataError } from '../src/lib/content-crypto'
+import { UNVERIFIED_FILE_COPY } from '../src/lib/encrypted-download'
 import {
   useMediaStream,
   type MediaStreamHandle,
@@ -266,6 +269,9 @@ const AUTH = (part: number) =>
   `Part ${part} of this file couldn't be verified, so playback stopped there. Nothing unverified was played.`
 const NETWORK = (part: number) =>
   `The download stopped at part ${part}. Check your connection and try again.`
+const SESSION_EXPIRED = 'Your session has expired. Sign in again to play this file.'
+const UNAVAILABLE = "This file can't be streamed right now. Try again, or download it."
+const INTERNAL = 'Playback stopped because of a problem in this browser tab. Reload the page and try again.'
 
 describe('LD-0001 r3 B2: the stream id carries a per-session token', () => {
   test('stream_id_is_s_fileId_plus_128_random_bits_new_per_session', async () => {
@@ -433,5 +439,74 @@ describe('LD-0001 r3 B8: element errors after metadata, and before any range', (
     m.media.fire('error')
     await tick()
     expect(m.h.path).toBe('whole-file-fallback')
+  })
+})
+
+describe('LD-0001 r4 B-R1: the copy follows the session kinds; only auth says "verified"', () => {
+  const kinds: Array<{ name: string; overrides: Partial<UseMediaStreamArgs>; copy: string; action: 'retry' | 'sign-in' }> = [
+    {
+      name: 'unauthorized (401)',
+      overrides: { openSession: async () => { throw new StreamSessionError('unauthorized', 'chunk 0: the session expired', 0) } },
+      copy: SESSION_EXPIRED,
+      action: 'sign-in',
+    },
+    {
+      name: 'a 401 while resolving the key',
+      overrides: { resolveFileKey: async () => { throw new ApiError('Unauthorized', 401) } },
+      copy: SESSION_EXPIRED,
+      action: 'sign-in',
+    },
+    {
+      name: 'unavailable (404, or parts that disagree with the record)',
+      overrides: { openSession: async () => { throw new StreamSessionError('unavailable', 'chunk 0: refused with 404', 0) } },
+      copy: UNAVAILABLE,
+      action: 'retry',
+    },
+    {
+      name: 'internal (the crypto worker failed)',
+      overrides: { openSession: async () => { throw new StreamSessionError('internal', 'chunk 0: the crypto worker failed', 0) } },
+      copy: INTERNAL,
+      action: 'retry',
+    },
+    {
+      name: 'network',
+      overrides: { openSession: async () => { throw new StreamSessionError('network', 'chunk 0 failed after 3 attempts', 0) } },
+      copy: NETWORK(1),
+      action: 'retry',
+    },
+    {
+      name: 'metadata that does not verify',
+      overrides: { openMetadata: (async () => { throw new UnverifiedFileMetadataError(UNVERIFIED_FILE_COPY) }) as unknown as OpenMetadata },
+      copy: UNVERIFIED_FILE_COPY,
+      action: 'retry',
+    },
+  ]
+  for (const c of kinds) {
+    test(`setup_copy_by_kind: ${c.name}`, async () => {
+      const m = await mount(argsFor(fileRow('file-a'), c.overrides))
+      await waitFor(() => m.h.errorCopy !== null, 'error copy')
+      expect(m.h.errorCopy).toBe(c.copy)
+      expect(m.h.errorCopy).not.toContain("couldn't be verified")
+      expect(m.h.errorAction).toBe(c.action)
+    })
+  }
+
+  test('a_real_chunk_authentication_failure_keeps_its_part_copy', async () => {
+    const m = await mount(
+      argsFor(fileRow('file-a'), {
+        openSession: async () => { throw new StreamSessionError('auth', 'chunk 3 could not be authenticated', 3) },
+      }),
+    )
+    await waitFor(() => m.h.errorCopy !== null, 'error copy')
+    expect(m.h.errorCopy).toBe(AUTH(4))
+  })
+
+  test('a_mid_stream_refusal_shows_the_unavailable_copy', async () => {
+    const session = fakeSession(8)
+    const m = await mountStreaming(session)
+    session.emit({ type: 'error', kind: 'unavailable', index: 5 })
+    await waitFor(() => m.h.errorCopy !== null, 'error copy')
+    expect(m.h.errorCopy).toBe(UNAVAILABLE)
+    expect(m.h.errorCopy).not.toContain("couldn't be verified")
   })
 })

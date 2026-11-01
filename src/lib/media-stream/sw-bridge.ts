@@ -19,6 +19,7 @@
  * under `bun test` with no browser (test/ld-0001-media-stream-bridge.test.ts).
  */
 import type { Clock } from './source'
+import type { StreamErrorKind } from './session'
 
 export const PING_INTERVAL_MS = 20_000
 export const PROGRESS_INTERVAL_MS = 10_000
@@ -55,7 +56,7 @@ export interface CreateStreamBridgeOptions {
   /** The SW served the first range for `reqId`: the no-pull watchdog is disarmed. */
   onOpenRange?(reqId: string): void
   /** A terminal read failure: `auth` / `changed` / `network`, with a chunk index. */
-  onFatal?(code: 'auth' | 'changed' | 'network', index: number): void
+  onFatal?(code: StreamErrorKind, index: number): void
 }
 
 export interface StreamBridge {
@@ -74,11 +75,21 @@ interface PullState {
   timer: unknown
 }
 
-function describeError(err: unknown): { code: 'auth' | 'changed' | 'network'; index: number } {
+const BRIDGE_ERROR_CODES: ReadonlySet<string> = new Set([
+  'auth',
+  'changed',
+  'network',
+  'unauthorized',
+  'unavailable',
+  'internal',
+])
+
+/** A failed read's code (the session's kind, round 4) and chunk index only (M6). */
+function describeError(err: unknown): { code: StreamErrorKind; index: number } {
   const candidate = err as { kind?: unknown; index?: unknown } | null
   const kind = candidate?.kind
-  if (kind === 'auth' || kind === 'changed' || kind === 'network') {
-    return { code: kind, index: typeof candidate?.index === 'number' ? candidate.index : 0 }
+  if (typeof kind === 'string' && BRIDGE_ERROR_CODES.has(kind)) {
+    return { code: kind as StreamErrorKind, index: typeof candidate?.index === 'number' ? candidate.index : 0 }
   }
   return { code: 'network', index: 0 }
 }

@@ -36,10 +36,12 @@ import {
   reduceMediaState,
   statusCopy,
   streamErrorCopy,
+  errorActionFor,
   CHANGED_COPY,
   streamingInfoLine,
   type MediaEvent,
   type MediaState,
+  type SetupFailureKind,
   type NoPullWatchdog,
 } from './state'
 
@@ -73,8 +75,10 @@ export interface MediaStreamHandle {
   status: string | null
   /** The pill over the player: buffering / stalled only. */
   overlay: string | null
-  /** The auth/network error copy (with "Try again"), or null. */
+  /** The error copy for the failure's kind (round 4: only 'auth' says "verified"), or null. */
   errorCopy: string | null
+  /** What the error box offers: "Try again", "Sign in" (401), or nothing (changed). */
+  errorAction: 'retry' | 'sign-in' | null
   /** The info-rail line while streaming (part counts / all verified). */
   infoLine: string | null
   /** True iff every distinct chunk opened in this session (§7). */
@@ -121,7 +125,7 @@ function streamIdFor(fileId: string): string {
   return `s-${fileId.replace(/[^A-Za-z0-9._:-]/g, '_')}-${hex}`
 }
 
-type StreamFailure = { kind: 'auth' | 'changed' | 'network'; index: number }
+type StreamFailure = { kind: SetupFailureKind; index: number }
 
 /** What belongs to ONE file of the preview (B5): reset on Next/Prev. */
 interface PerFileState {
@@ -580,6 +584,13 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
     : mediaState && mediaState.transport === 'error'
       ? statusCopy(mediaState)
       : null
+  const errorAction: 'retry' | 'sign-in' | null = failed
+    ? failed.kind === 'changed'
+      ? null
+      : errorActionFor(failed.kind)
+    : mediaState && mediaState.transport === 'error' && mediaState.errorKind
+      ? errorActionFor(mediaState.errorKind)
+      : null
 
   return {
     path,
@@ -588,6 +599,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
     status: mediaState ? statusCopy(mediaState) : null,
     overlay: overlayCopy,
     errorCopy,
+    errorAction,
     infoLine: mediaState ? streamingInfoLine(mediaState) : null,
     tagsVerified: mediaState ? isFullyVerified(mediaState) : false,
     blockWholeFile: perFile.unsupported && mediaKind === 'video',

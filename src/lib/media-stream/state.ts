@@ -10,6 +10,8 @@
  * exist; it never says "complete", "intact" or "original" for a stream.
  */
 import type { Clock } from './source'
+import { ApiError } from '../api'
+import { UNVERIFIED_FILE_COPY } from '../encrypted-download'
 
 export type Transport =
   | 'preparing'
@@ -26,7 +28,12 @@ export type Transport =
   | 'error'
   | 'changed'
 
-export type ErrorKind = 'auth' | 'network'
+/**
+ * Why a stream stopped, as the UI tells it (round 4, B-R1). The session's
+ * kinds (PR-A A-R2) plus 'metadata': the file's encrypted details did not
+ * verify. Only 'auth' says a part "couldn't be verified".
+ */
+export type ErrorKind = 'auth' | 'network' | 'unauthorized' | 'unavailable' | 'internal' | 'metadata'
 
 export interface MediaState {
   transport: Transport
@@ -182,32 +189,83 @@ export function isFullyVerified(state: MediaState): boolean {
 }
 
 /** The two §7 error copies. They name a part index (0-based in, 1-based out). */
-export function streamErrorCopy(kind: ErrorKind, index: number): string {
-  if (kind === 'auth') {
-    return `Part ${index + 1} of this file couldn't be verified, so playback stopped there. Nothing unverified was played.`
-  }
-  return `The download stopped at part ${index + 1}. Check your connection and try again.`
-}
+/** 401: the session expired. The action is "Sign in", never a retry. */
+export const SESSION_EXPIRED_COPY = 'Your session has expired. Sign in again to play this file.'
+/** The server refused a part, or served parts that disagree with the file's record. */
+export const STREAM_UNAVAILABLE_COPY = "This file can't be streamed right now. Try again, or download it."
+/** The crypto worker or WASM failed in this tab. */
+export const STREAM_INTERNAL_COPY =
+  'Playback stopped because of a problem in this browser tab. Reload the page and try again.'
 
 /**
- * B6: what a failed streaming SETUP shows. Only an authentication failure the
- * PR-A session itself reports (`StreamSessionError` kind 'auth': a chunk that
- * did not open, or a count or size that disagrees with the metadata) may say
- * a part "couldn't be verified". A key or metadata fetch failure, a network
- * error, or anything else is a network error with "Try again" — never a
- * claim about the file.
+ * The error copy per kind. Only 'auth' (a part's authentication tag did not
+ * open) says "couldn't be verified"; nothing else claims anything about the
+ * file's bytes.
  */
-export function classifySetupFailure(err: unknown): {
-  kind: 'auth' | 'changed' | 'network'
-  index: number
-} {
+export function streamErrorCopy(kind: ErrorKind, index: number): string {
+  switch (kind) {
+    case 'auth':
+      return `Part ${index + 1} of this file couldn't be verified, so playback stopped there. Nothing unverified was played.`
+    case 'unauthorized':
+      return SESSION_EXPIRED_COPY
+    case 'unavailable':
+      return STREAM_UNAVAILABLE_COPY
+    case 'internal':
+      return STREAM_INTERNAL_COPY
+    case 'metadata':
+      return UNVERIFIED_FILE_COPY
+    case 'network':
+    default:
+      return `The download stopped at part ${index + 1}. Check your connection and try again.`
+  }
+}
+
+/** What the error box offers: "Sign in" for an expired session, else "Try again". */
+export function errorActionFor(kind: ErrorKind): 'retry' | 'sign-in' {
+  return kind === 'unauthorized' ? 'sign-in' : 'retry'
+}
+
+const STREAM_ERROR_KINDS: ReadonlySet<string> = new Set([
+  'auth',
+  'changed',
+  'network',
+  'unauthorized',
+  'unavailable',
+  'internal',
+])
+
+/** A setup failure as the UI tells it. */
+export type SetupFailureKind = ErrorKind | 'changed'
+
+/**
+ * B6 + round 4 B-R1: what a failed streaming SETUP shows.
+ *  - a PR-A `StreamSessionError` keeps its kind: only 'auth' (a frame failed
+ *    authentication) says a part "couldn't be verified";
+ *  - metadata that does not verify (`UnverifiedFileMetadataError`) is
+ *    'metadata', with the whole-file path's own copy;
+ *  - an HTTP failure resolving the key: 401 'unauthorized', another refusal
+ *    'unavailable', 409 'changed';
+ *  - anything else (a key or metadata fetch that never answered) is a
+ *    network error with "Try again".
+ */
+export function classifySetupFailure(err: unknown): { kind: SetupFailureKind; index: number } {
   const candidate = err as { name?: unknown; kind?: unknown; index?: unknown } | null
   if (candidate && typeof candidate === 'object' && candidate.name === 'StreamSessionError') {
     const index = typeof candidate.index === 'number' ? candidate.index : 0
-    if (candidate.kind === 'auth' || candidate.kind === 'changed') {
-      return { kind: candidate.kind, index }
+    const kind = typeof candidate.kind === 'string' && STREAM_ERROR_KINDS.has(candidate.kind)
+      ? (candidate.kind as SetupFailureKind)
+      : 'internal'
+    return { kind, index }
+  }
+  if (candidate && typeof candidate === 'object' && candidate.name === 'UnverifiedFileMetadataError') {
+    return { kind: 'metadata', index: 0 }
+  }
+  if (err instanceof ApiError) {
+    if (err.status === 401) return { kind: 'unauthorized', index: 0 }
+    if (err.status === 409) return { kind: 'changed', index: 0 }
+    if (err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429) {
+      return { kind: 'unavailable', index: 0 }
     }
-    return { kind: 'network', index }
   }
   return { kind: 'network', index: 0 }
 }
