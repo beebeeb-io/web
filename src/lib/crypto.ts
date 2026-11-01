@@ -514,7 +514,21 @@ export async function createChunkReader(
   port: ChunkReaderPort = workerChunkReaderPort,
 ): Promise<ChunkReader> {
   if (decryptor.handle < 0) throw new Error('decryptor is not live')
-  const handle = await port.createChunkReader(decryptor.handle)
+  let handle: number
+  try {
+    handle = await port.createChunkReader(decryptor.handle)
+  } catch (err) {
+    // LD-0001 r4 A-R3: the worker may have built the reader (and moved the
+    // key copy into it) before the reply failed. A reader takes its
+    // decryptor's handle, so close it by that handle; closing is idempotent
+    // and a no-op when no reader was built.
+    try {
+      await port.closeChunkReader(decryptor.handle)
+    } catch {
+      // Best effort: the original failure is what the caller needs.
+    }
+    throw err
+  }
   decryptor.release()
   return new ChunkReader(handle, port)
 }

@@ -226,7 +226,9 @@ export function createContentOps(wasm: ContentWasm) {
         throw chunkAuthError(new Error('refusing format 1 for a file whose pin says v2'))
       }
       const versionId = d.versionId ? d.versionId.slice() : new Uint8Array(0)
-      const handle = nextHandle++
+      // A-R3: the reader takes its decryptor's handle (retired here), so a
+      // page whose reply was lost can still close it by a handle it knows.
+      const handle = decryptorHandle
       liveReaders.set(handle, {
         key: entry.key,
         fileId: entry.fileId,

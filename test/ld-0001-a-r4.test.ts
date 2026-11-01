@@ -227,3 +227,33 @@ describe("LD-0001 r4 A-R2: 'auth' means a frame failed authentication, nothing e
     })
   })
 })
+
+describe('LD-0001 r4 A-R3: a reader created before a failed reply is closed', () => {
+  test('a_reader_created_before_a_rejected_create_reply_is_closed_by_handle', async () => {
+    const ops = createContentOps(wasm)
+    const fx = encryptFixture({ pin: 2, chunkSize: 32, plaintext: patternBytes(96) })
+    const decryptorPort: DecryptorPort = {
+      decryptorPushFrame: async (handle, frame) => ops.decryptorPushFrame(handle, frame),
+      decryptorFinish: async (handle) => ops.decryptorFinish(handle),
+      decryptorDispose: async (handle) => ops.decryptorDispose(handle),
+    }
+    const readerPort: ChunkReaderPort = {
+      // The worker builds the reader (and moves the key copy into it), then the
+      // reply never makes it back to the page.
+      createChunkReader: async (handle) => {
+        ops.createChunkReader(handle)
+        throw new Error('the reply from the crypto worker was lost')
+      },
+      openChunkAt: async (handle, index, isLast, frame) => ops.openChunkAt(handle, index, isLast, frame),
+      closeChunkReader: async (handle) => ops.closeChunkReader(handle),
+    }
+    const factory = createWorkerReaderFactory({
+      startDecryptStream: async (fileKey, fileId, pin) =>
+        new StreamingDecryptor(ops.createDecryptor(fileKey, fileId, pin), decryptorPort),
+      createChunkReader: (decryptor) => createChunkReader(decryptor, readerPort),
+    })
+    await expect(open(fx, { readerFactory: factory })).rejects.toThrow()
+    expect(ops.liveReaderCount()).toBe(0)
+    expect(ops.liveDecryptorCount()).toBe(0)
+  })
+})
