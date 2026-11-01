@@ -46,6 +46,10 @@
  * F2   a folder that committed while every try of one import call failed is
  *      adopted by the next call: same minted id, same sealed name, and the
  *      exact-folder check (owner-folder-create.test.ts) runs on any failure.
+ * F7   a paused upload whose parent is inside a folder shared TO this user is
+ *      restarted with that folder's upload context, so its key is wrapped for
+ *      the owner and members; if the context cannot be resolved, nothing is
+ *      uploaded and the record stays dismissable.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -778,5 +782,106 @@ describe('F2: a folder committed while every try of one call failed is adopted b
     // The folder name was sealed once for the run, not once per call.
     expect(cap.sealedPlaintexts.filter((p) => p === 'Photos')).toHaveLength(1)
     expect(cap.initCalls.map((c) => (c as { parent_id: string }).parent_id)).toEqual([first.folderId])
+  })
+})
+
+// ── F7: a banner restart into a folder shared with this user ─────────────────
+
+describe('F7: a paused upload into a folder shared with this user carries that folder\'s upload context', () => {
+  const SHARED_ROOT = 'shared-root-id'
+  const invite = { id: 'invite-1', file_id: SHARED_ROOT, is_folder_share: true, status: 'approved', sender_public_key: 'pk' }
+  const folderKey = new Uint8Array(32).fill(4)
+  /** Rows the walk sees: a subfolder of the shared root, the root (whose parent is the owner's), an own folder. */
+  const rows: Record<string, { id: string; parent_id: string | null }> = {
+    'shared-sub': { id: 'shared-sub', parent_id: SHARED_ROOT },
+    [SHARED_ROOT]: { id: SHARED_ROOT, parent_id: 'owners-folder' },
+    'own-folder': { id: 'own-folder', parent_id: null },
+  }
+  function ports(over: Record<string, unknown> = {}) {
+    const calls: string[] = []
+    return {
+      calls,
+      ports: {
+        getIncomingInvites: async () => { calls.push('invites'); return [invite] },
+        getFile: async (id: string) => {
+          calls.push(`file:${id}`)
+          const row = rows[id]
+          if (!row) throw Object.assign(new Error('Not found.'), { status: 404 })
+          return row
+        },
+        getFolderKeys: async (inviteId: string) => { calls.push(`keys:${inviteId}`); return [{ file_id: SHARED_ROOT, encrypted_file_key: 'k' }] },
+        memberFolderCustody: async (folderId: string) => { calls.push(`custody:${folderId}`); return { shared: { role: 'member' }, flagOn: true } },
+        resolveRecipientFolderKey: async () => ({ status: 'ok', folderKey, source: 'encrypted_folder_key' }),
+        markCustodySeen: (folderId: string) => { calls.push(`seen:${folderId}`) },
+        ...over,
+      },
+    }
+  }
+
+  test('a parent inside a folder shared with this user: the member context of that folder', async () => {
+    const { resolveParentUploadContext } = await import('../src/lib/shared-parent-context')
+    const { ports: p } = ports()
+    expect(await resolveParentUploadContext('shared-sub', MK, p as never)).toEqual({
+      kind: 'member',
+      context: { folderKey, format: 'l7', sharedFolderId: SHARED_ROOT, inviteId: 'invite-1' },
+    })
+  })
+
+  test('the user\'s own folder, no parent, or no folder shared with this user: the owner path', async () => {
+    const { resolveParentUploadContext } = await import('../src/lib/shared-parent-context')
+    expect(await resolveParentUploadContext('own-folder', MK, ports().ports as never)).toEqual({ kind: 'own' })
+    expect(await resolveParentUploadContext(null, MK, ports().ports as never)).toEqual({ kind: 'own' })
+    const none = ports({ getIncomingInvites: async () => [] })
+    expect(await resolveParentUploadContext('shared-sub', MK, none.ports as never)).toEqual({ kind: 'own' })
+    // Nothing to match against: no walk at all.
+    expect(none.calls.filter((c) => c.startsWith('file:'))).toEqual([])
+  })
+
+  test('the folder\'s key cannot be resolved: refused with honest copy (never an unwrapped upload)', async () => {
+    const { resolveParentUploadContext, SharedParentKeyUnavailableError, SHARED_PARENT_KEY_UNAVAILABLE_COPY } =
+      await import('../src/lib/shared-parent-context')
+    const p = ports({ resolveRecipientFolderKey: async () => ({ status: 'missing' }) })
+    const err = await caught(() => resolveParentUploadContext('shared-sub', MK, p.ports as never))
+    expect(err).toBeInstanceOf(SharedParentKeyUnavailableError)
+    expect((err as Error).message).toBe(SHARED_PARENT_KEY_UNAVAILABLE_COPY)
+  })
+
+  test('the walk cannot answer (a lookup fails): refused, it never guesses "own"', async () => {
+    const { resolveParentUploadContext, SharedParentCheckFailedError } = await import('../src/lib/shared-parent-context')
+    const p = ports({ getFile: async () => { throw Object.assign(new Error('Could not reach the server.'), { status: 0 }) } })
+    expect(await caught(() => resolveParentUploadContext('shared-sub', MK, p.ports as never))).toBeInstanceOf(SharedParentCheckFailedError)
+  })
+
+  test('with the member context, the restarted file\'s key is wrapped for the folder (owner and members)', async () => {
+    const { resolveParentUploadContext } = await import('../src/lib/shared-parent-context')
+    const parent = await resolveParentUploadContext('shared-sub', MK, ports().ports as never)
+    if (parent.kind !== 'member') throw new Error('expected a member context')
+    echo.stored = {
+      fingerprint: 'fingerprint', fileId: 'legacy-id', fileName: 'a.txt', fileSize: 1, totalChunks: 1,
+      upload_session_id: 'legacy-session', parentId: 'shared-sub', createdAt: 1,
+    }
+    // What the banner passes for a restart-new: a fresh id, the record's parent, the context.
+    const uploaded = await encryptedUpload(new File(['a'], 'a.txt'), 'fresh-own-id', FILE_KEY, MK, 'shared-sub',
+      undefined, undefined, parent.context)
+    expect(uploaded.id).toBe('fresh-own-id')
+    expect(cap.addFolderKeysCalls).toHaveLength(1)
+    expect(cap.addFolderKeysCalls[0].inviteId).toBe('invite-1')
+    expect((cap.addFolderKeysCalls[0].keys as Array<{ file_id: string }>)[0].file_id).toBe('fresh-own-id')
+  })
+
+  test('drive.tsx: the banner resolves the parent\'s context before uploading, passes it, and a failure keeps the record', () => {
+    const text = source('pages/drive.tsx')
+    const start = text.indexOf('async function handleResumeFile(')
+    const body = text.slice(start, text.indexOf('const { browse: browseResume', start))
+    const resolveAt = body.indexOf('resolveParentUploadContext(')
+    const uploadAt = body.indexOf('await encryptedUpload(')
+    expect(resolveAt).toBeGreaterThan(-1)
+    expect(resolveAt).toBeLessThan(uploadAt)
+    // The context is what reaches encryptedUpload's sharedFolderContext slot.
+    expect(body.slice(uploadAt, uploadAt + 2500)).toContain('sharedFolderContext')
+    const handler = body.slice(resolveAt, uploadAt)
+    expect(handler).toContain('sharedParentFailureMessage(err)')
+    expect(handler).toContain('setPausedUploads(')
+    expect(handler).not.toContain('removeUploadState')
   })
 })

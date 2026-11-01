@@ -85,7 +85,8 @@ import {
   StorageFullBanner,
   shouldShowUpgradeNudge,
 } from '../components/upgrade-nudge-modal'
-import { encryptedUpload } from '../lib/encrypted-upload'
+import { encryptedUpload, type SharedFolderUploadContext } from '../lib/encrypted-upload'
+import { resolveParentUploadContext, sharedParentFailureMessage } from '../lib/shared-parent-context'
 import { UploadRestartFailedError } from '../lib/upload-session-reinit'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../lib/bulk-download'
@@ -1192,6 +1193,22 @@ export function Drive() {
           showToast({ icon: 'upload', title: 'Upload not restarted', description: userFriendlyError(new PausedVersionRefusedError(plan.reason)), danger: true })
           continue
         }
+        // F7 (SF-0001 round 5): a paused upload into a folder shared WITH this
+        // user is a member's upload: it must carry that folder's upload
+        // context, so the file key is wrapped for the owner and members. When
+        // that context cannot be resolved, nothing is uploaded (never an
+        // unwrapped file in a shared folder): the record is KEPT, back on the
+        // paused banner (Dismiss removes it), and the toast says why.
+        let sharedFolderContext: SharedFolderUploadContext | undefined
+        try {
+          const parent = await resolveParentUploadContext(match.parentId, getMasterKey())
+          sharedFolderContext = parent.kind === 'member' ? parent.context : undefined
+        } catch (err) {
+          setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+          setPausedUploads((prev) => (prev.some((u) => u.fileId === match.fileId) ? prev : [...prev, match]))
+          showToast({ icon: 'upload', title: 'Upload not restarted', description: sharedParentFailureMessage(err), danger: true })
+          continue
+        }
         if (plan.kind !== 'resume') {
           showToast({
             icon: 'upload',
@@ -1236,7 +1253,8 @@ export function Drive() {
           // legacy replace restarting as a version of its row); none for a
           // fresh id (encryptedUpload then drops the old record as another id's).
           plan.resumeFileId,
-          undefined,
+          // A member's upload into a folder shared with this user (F7).
+          sharedFolderContext,
           undefined,
           // A version restart sends the row's own stored name, byte for byte.
           plan.kind === 'restart-version' ? { replaceOf: plan.replaceOf } : undefined,
