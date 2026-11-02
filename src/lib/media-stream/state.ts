@@ -10,6 +10,7 @@
  * exist; it never says "complete", "intact" or "original" for a stream.
  */
 import type { Clock } from './source'
+import type { StreamErrorKind } from './session'
 
 export type Transport =
   | 'preparing'
@@ -27,6 +28,18 @@ export type Transport =
   | 'changed'
 
 export type ErrorKind = 'auth' | 'network'
+
+/**
+ * The event boundary: the UI only separates an authentication failure (a part
+ * that could not be verified) from everything else ("check your connection").
+ * Every other session kind — `network`, `unavailable`, `unauthorized`,
+ * `internal` — is a network error, exactly the rule `classifySetupFailure`
+ * applies to a failed setup. `changed` never reaches here: it is the
+ * `changed` transport, not an error.
+ */
+export function errorKindOf(kind: StreamErrorKind): ErrorKind {
+  return kind === 'auth' ? 'auth' : 'network'
+}
 
 export interface MediaState {
   transport: Transport

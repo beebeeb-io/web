@@ -38,6 +38,7 @@ import {
   streamErrorCopy,
   CHANGED_COPY,
   streamingInfoLine,
+  errorKindOf,
   type MediaEvent,
   type MediaState,
   type NoPullWatchdog,
@@ -400,7 +401,7 @@ export function useMediaStream(args: UseMediaStreamArgs): MediaStreamHandle {
               if (event.kind === 'changed') return base
               return reduceMediaState(base, {
                 type: 'error',
-                kind: event.kind,
+                kind: errorKindOf(event.kind),
                 index: event.index,
               })
             }
