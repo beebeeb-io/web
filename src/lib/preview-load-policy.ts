@@ -95,12 +95,11 @@ export class TooLargeToPreviewError extends Error {
  * - anything else (thumbnail still showing, historical version) → `blob`
  *   via `decryptToBlob` / `decryptVersionToBlob`
  */
-/** Which save path a Download action takes (see `downloadRoute`). */
 export type DownloadRoute = 'blob' | 'stream'
 
-export function downloadRoute(facts: { hasOriginalBlob: boolean; overCap: boolean }): DownloadRoute {
-  if (facts.hasOriginalBlob) return 'blob'
-  return facts.overCap ? 'stream' : 'blob'
+export function downloadRoute(hasOriginalBlob: boolean, overCap: boolean): DownloadRoute {
+  if (hasOriginalBlob) return 'blob'
+  return overCap ? 'stream' : 'blob'
 }
 
 /** The parts of a version row the Download decision needs. */
@@ -129,7 +128,7 @@ export function chooseDownloadAction(facts: {
   file: { chunk_count: number; size_bytes: number }
   version: DownloadVersionFacts | null
 }): DownloadAction {
-  const route = downloadRoute(facts)
+  const route = downloadRoute(facts.hasOriginalBlob, facts.overCap)
   if (route === 'blob' && facts.hasOriginalBlob) return { kind: 'save-blob' }
   if (route === 'stream') {
     // C1: the over-cap card NEVER buffers the whole file, for the live file
