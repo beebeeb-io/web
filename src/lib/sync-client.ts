@@ -345,7 +345,7 @@ export class SyncClient {
   private mergeSnapshot(snap: SyncSnapshot): void {
     this.queue.confirmCoveredBy(snap)
     const pendingTargets = new Set<string>()
-    for (const p of this.queue.ops) {
+    for (const p of this.pendingOps) {
       if (p.target_id) pendingTargets.add(p.target_id)
     }
     const snapshotIds = new Set<string>()
@@ -360,7 +360,7 @@ export class SyncClient {
       if (pendingTargets.has(id)) continue
       this.tree.delete(id)
     }
-    for (const p of this.queue.ops) {
+    for (const p of this.pendingOps) {
       applyOpToTree(this.tree, this.knownAbsentIds, p.op_type, p.payload)
     }
     this.emit({ type: 'snapshot' })
