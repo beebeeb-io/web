@@ -1,4 +1,6 @@
 /**
+ * The billing flow state machine: its typed state, its events, and the one reducer that moves between them.
+ *
  * The billing page's UI state machines (task W run 5).
  *
  * Four small, independent slices — they used to be four `useState` calls in
@@ -10,6 +12,8 @@
  * The slices stay independent on purpose: starting a cancel flow must not
  * reset an open checkout-return banner, and vice versa. That is the behaviour
  * of the four separate `useState` calls this replaces.
+ *
+ * Must not: call the API, read the router, or hold any server state.
  */
 
 /** The cancel flow: link → "pause instead?" → final confirmation. */

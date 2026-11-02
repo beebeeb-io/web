@@ -1,4 +1,6 @@
 /**
+ * The billing page's data: server state, the money and plan math, and the load plus reconcile effects.
+ *
  * State, data and derived values for the billing page (task W run 5).
  *
  * The hook is the whole data half of the old single-component page: the router
@@ -6,6 +8,8 @@
  * reconcile/watchdog effects, the subscription state and every derived value
  * the views read. Server calls and their side-effect ordering are unchanged;
  * only the location moved.
+ *
+ * Must not: render, or own the checkout-return and cancel handlers.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'

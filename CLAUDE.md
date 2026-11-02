@@ -24,6 +24,8 @@ never by curl. A new spec is trusted only after it has been seen to fail against
 
 ## Module map
 
+Module map: MAP.md (generated; make map REPO=<repo>) — start here for "where does X live"; do not hand-edit.
+
 ```
 src/main.tsx, app.tsx      entry; routes (ProtectedRoute; pages render inside DriveLayout); WasmGuard blocks until crypto is ready
 src/pages/                 one file per route (drive, login, signup, choose-plan, settings/*, share recipient, ...)

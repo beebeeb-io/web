@@ -1,6 +1,10 @@
 /**
- *  The invoice-preferences card of the change view: email toggle, address and
- *  the save action. Moved verbatim out of the page (task W run 5).
+ * The invoice preferences panel: the delivery address and the save action.
+ *
+ * The invoice-preferences card of the change view: email toggle, address and
+ * the save action. Moved verbatim out of the page (task W run 5).
+ *
+ * Must not: own state or call the API.
  */
 
 import { BBButton } from '@beebeeb/shared'

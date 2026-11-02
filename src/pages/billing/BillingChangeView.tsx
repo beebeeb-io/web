@@ -1,10 +1,14 @@
 /**
- *  The /billing change-plan view: plan intent, the current plan card, the
- *  cycle prompts, the comparison table, storage and invoice preferences.
+ * The billing change view: the current plan card, cycle prompts, compare table, payment method, and storage and invoice panels.
  *
- *  The page shell renders it behind `view === 'change'`; the sections that
- *  own substantial state or markup live in their own files next to this one
- *  (task W run 5).
+ * The /billing change-plan view: plan intent, the current plan card, the
+ * cycle prompts, the comparison table, storage and invoice preferences.
+ *
+ * The page shell renders it behind `view === 'change'`; the sections that
+ * own substantial state or markup live in their own files next to this one
+ * (task W run 5).
+ *
+ * Must not: own state or call the API.
  */
 
 import { BBButton } from '@beebeeb/shared'

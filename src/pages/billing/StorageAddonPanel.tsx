@@ -1,7 +1,11 @@
 /**
- *  The "Manage storage" slider of the change view: the range input, the live
- *  price, the below-usage warning and the Update/Reset actions. Moved verbatim
- *  out of the page (task W run 5).
+ * The storage add-on panel: the slider, the live price, and the update and reset actions.
+ *
+ * The "Manage storage" slider of the change view: the range input, the live
+ * price, the below-usage warning and the Update/Reset actions. Moved verbatim
+ * out of the page (task W run 5).
+ *
+ * Must not: own state or call the API.
  */
 
 import { BBButton } from '@beebeeb/shared'

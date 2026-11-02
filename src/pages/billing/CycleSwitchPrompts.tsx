@@ -1,7 +1,11 @@
 /**
- *  The two billing-cycle prompts of the change view: annual savings for a
- *  monthly subscriber, and the switch-to-monthly card for an annual one. Each
- *  owns its confirm sub-state through the page model's reducer.
+ * The billing cycle prompts: the annual savings offer and the monthly switch offer, each with its confirm step.
+ *
+ * The two billing-cycle prompts of the change view: annual savings for a
+ * monthly subscriber, and the switch-to-monthly card for an annual one. Each
+ * owns its confirm sub-state through the page model's reducer.
+ *
+ * Must not: own state or call the API.
  */
 
 import { BBButton } from '@beebeeb/shared'

@@ -1,10 +1,14 @@
 /**
+ * The billing page's actions: every upgrade, cancel, pause, pay, storage add-on, and invoice-preference handler.
+ *
  * Handlers and server calls for the billing page (task W run 5).
  *
  * Every function here used to live in the page component; they take their data
  * from `useBillingData` through the `BillingData` object and own only the
  * action-in-flight state (pay-now, the upgrade dialogs, the post-redirect
  * return banners). Behaviour and call order are unchanged.
+ *
+ * Must not: render, or redefine the state and math the data hook owns.
  */
 
 import { useState, useEffect, useRef } from 'react'

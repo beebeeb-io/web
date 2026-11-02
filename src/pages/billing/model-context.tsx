@@ -1,9 +1,13 @@
 /**
+ * The billing model context: one provider and the hook each view uses to read the page model.
+ *
  * Shares the billing page model with its views.
  *
  * The page computes everything once (`useBillingPage`) and provides the typed
  * object here; each view destructures only what it draws. One model, one
  * provider, no prop drilling through the shell.
+ *
+ * Must not: create the model or change it.
  */
 
 import { createContext, useContext, type ReactNode } from 'react'

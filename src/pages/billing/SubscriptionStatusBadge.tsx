@@ -1,8 +1,12 @@
 /**
+ * The subscription status badge: one pill for the subscription's state.
+ *
  * The plan-state pill (Trial / Cancelling / Past due / Paused / Active).
  *
  * Extracted from the page's local `statusBadge()` helper (task W run 5) so the
  * summary card and the current-plan card share one renderer.
+ *
+ * Must not: own state or call the API.
  */
 
 import type { Subscription } from '../../lib/api'

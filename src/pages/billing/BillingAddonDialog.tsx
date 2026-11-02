@@ -1,7 +1,11 @@
 /**
- *  The storage add-on confirmation modal: preview of the prorated charge, the
- *  SEPA note and the instant-pay / confirm actions. Moved verbatim out of the
- *  page (task W run 5).
+ * The storage add-on confirmation dialog: the preview, the instant-pay choice, and the confirm action.
+ *
+ * The storage add-on confirmation modal: preview of the prorated charge, the
+ * SEPA note and the instant-pay / confirm actions. Moved verbatim out of the
+ * page (task W run 5).
+ *
+ * Must not: own state or call the API.
  */
 
 import { BBButton } from '@beebeeb/shared'

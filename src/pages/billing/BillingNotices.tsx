@@ -1,9 +1,13 @@
 /**
- *  Global billing notices and banners: the pay-return results, the upgrade
- *  checkout states, past-due/freeze banners and the trial cards.
+ * The billing page's notices: return and confirmation banners, the checkout watchdog, and the trial, held, and past-due cards.
  *
- *  Moved verbatim out of the page component (task W run 5); the model carries
- *  every value and handler they read.
+ * Global billing notices and banners: the pay-return results, the upgrade
+ * checkout states, past-due/freeze banners and the trial cards.
+ *
+ * Moved verbatim out of the page component (task W run 5); the model carries
+ * every value and handler they read.
+ *
+ * Must not: own state or call the API.
  */
 
 import { BBButton } from '@beebeeb/shared'

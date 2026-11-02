@@ -1,7 +1,11 @@
 /**
- *  The current-plan card of the change view: badge, usage meters, period,
- *  paused/cancelling/trial-cap notices, the pause/cancel/switch actions and the
- *  inline confirm flow. Moved verbatim out of the page (task W run 5).
+ * The current plan card: badge, usage, period, paused and cancelling states, and the plan actions.
+ *
+ * The current-plan card of the change view: badge, usage meters, period,
+ * paused/cancelling/trial-cap notices, the pause/cancel/switch actions and the
+ * inline confirm flow. Moved verbatim out of the page (task W run 5).
+ *
+ * Must not: own state or call the API.
  */
 
 import { ALLOWANCE_LINE, currentPlanName } from '../../lib/current-plan-display'

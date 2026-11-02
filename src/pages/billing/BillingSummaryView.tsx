@@ -1,7 +1,11 @@
 /**
- *  The /billing summary view: current plan, coupon, payment method,
- *  transactions, invoices and credit notes. Moved out of the page component
- *  verbatim (task W run 5).
+ * The billing summary view: plan, coupon, payment method, invoices, transactions, and credit notes.
+ *
+ * The /billing summary view: current plan, coupon, payment method,
+ * transactions, invoices and credit notes. Moved out of the page component
+ * verbatim (task W run 5).
+ *
+ * Must not: own state or call the API.
  */
 
 import { ALLOWANCE_LINE, currentPlanName } from '../../lib/current-plan-display'
