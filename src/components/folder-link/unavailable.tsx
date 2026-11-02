@@ -1,3 +1,4 @@
+// The guest screen for a folder link that cannot be opened.
 import { Icon } from '@beebeeb/shared'
 import { GuestShell } from './guest-shell'
 

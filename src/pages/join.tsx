@@ -1,3 +1,4 @@
+// The /join route: accept a transfer or share invite by code.
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { SplitAuthScreen } from '../components/split-auth-screen'

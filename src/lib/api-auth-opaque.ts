@@ -1,3 +1,4 @@
+// OPAQUE signup and login endpoints: the client half of the password-authenticated key exchange.
 import { resetFinalizeRequest, type ResetFinalizeResult } from './api-reset-finalize'
 import { ApiError, clearToken, clearSessionConfirmed, request, setToken } from '@beebeeb/shared'
 import type { LoginResult } from '@beebeeb/shared'

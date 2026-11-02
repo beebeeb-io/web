@@ -1,3 +1,4 @@
+// The dismissible account notice shown above the drive for billing/security prompts.
 import { useRef, useState } from 'react'
 import { Icon } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'

@@ -1,3 +1,4 @@
+// The zip archive listing preview.
 import { useEffect, useState } from 'react'
 import { Icon, BBButton } from '@beebeeb/shared'
 import { readZipListing, type ZipListing } from '../../lib/zip-listing'

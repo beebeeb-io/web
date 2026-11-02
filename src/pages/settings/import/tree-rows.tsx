@@ -1,3 +1,4 @@
+// The import tree row renderers for Dropbox and Google Drive.
 import {
   Icon,} from '@beebeeb/shared'
 import type { GDriveTreeNode, TreeNode } from './tree-model'

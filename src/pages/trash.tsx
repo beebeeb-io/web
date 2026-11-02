@@ -1,3 +1,4 @@
+// The /trash route: deleted files and restore.
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'

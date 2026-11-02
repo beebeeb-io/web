@@ -1,3 +1,4 @@
+// The shared-item union and its type guards.
 import type { DriveFile } from '../../lib/api'
 
 /**

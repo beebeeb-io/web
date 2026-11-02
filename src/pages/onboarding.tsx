@@ -1,3 +1,4 @@
+// The /onboarding route: the signup and account-setup flow.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'

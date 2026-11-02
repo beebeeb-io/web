@@ -1,3 +1,4 @@
+// Formatting helpers for bytes, storage, dates, and relative time.
 export function formatStorageSI(bytes: number): string {
   if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '—'
   if (bytes < 1_000) return `${bytes} B`

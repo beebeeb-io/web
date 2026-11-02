@@ -1,3 +1,4 @@
+// The upgrade dialog with plan selection and checkout entry.
 import { useState, useCallback } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'

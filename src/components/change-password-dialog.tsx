@@ -1,3 +1,4 @@
+// The change-password dialog: current/new password with ceremony feedback.
 import { useState, useCallback, useEffect } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'

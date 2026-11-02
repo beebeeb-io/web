@@ -1,3 +1,4 @@
+// Standalone Playwright config for the storage addon confirm 0943 spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

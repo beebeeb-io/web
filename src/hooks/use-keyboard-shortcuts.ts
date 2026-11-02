@@ -1,3 +1,4 @@
+// Registers app keyboard shortcuts and exposes platform-aware modifier labels.
 import { useEffect, useCallback } from 'react'
 
 /** Detect macOS for modifier key display */

@@ -1,3 +1,4 @@
+// Decides whether a MIME type can be previewed in the app.
 const PREVIEWABLE_EXTENSIONS = new Set([
   // Images (native browser + HEIC via heic2any)
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif', 'heic', 'heif', 'tiff', 'tif',

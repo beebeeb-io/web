@@ -1,3 +1,4 @@
+// The shared types facade: named re-exports of every domain type module.
 export * from './auth'
 export * from './drive'
 export * from './shares'

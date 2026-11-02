@@ -1,3 +1,4 @@
+// The empty state for an expired or revoked share link.
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { BBLogo } from '@beebeeb/shared'

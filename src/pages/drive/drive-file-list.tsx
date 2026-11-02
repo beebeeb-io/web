@@ -1,3 +1,4 @@
+// The drive's file-list view wired to the drive data and actions.
 import type { ComponentProps } from 'react'
 import { BBButton, Icon } from '@beebeeb/shared'
 import { FileList } from '../../components/file-list'

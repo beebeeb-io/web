@@ -1,3 +1,4 @@
+// Shared billing types: plans, subscriptions, invoices, and storage usage.
 export interface Plan {
   id: string
   name: string

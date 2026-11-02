@@ -1,3 +1,4 @@
+// The empty state for the recent-files view.
 import { EmptyState } from './empty-state'
 
 interface EmptyRecentProps {

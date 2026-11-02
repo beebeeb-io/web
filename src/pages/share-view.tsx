@@ -1,3 +1,4 @@
+// The share-link route that resolves and renders a share.
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { BBLogo } from '@beebeeb/shared'

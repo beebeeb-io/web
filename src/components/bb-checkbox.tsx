@@ -1,3 +1,4 @@
+// The web checkbox primitive with its label and focus styles.
 import { useId } from 'react'
 import { Icon } from './icons'
 

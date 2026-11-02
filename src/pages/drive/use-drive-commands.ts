@@ -1,3 +1,4 @@
+// The drive's command-palette command list.
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
 import type { NavigateFunction } from 'react-router-dom'
 import type { DriveFile } from '../../lib/api'

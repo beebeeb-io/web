@@ -1,3 +1,4 @@
+// The trust-details panel that lists a share's files and sizes.
 import { useEffect, useState } from 'react'
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'

@@ -1,3 +1,4 @@
+// The empty state for a drive with no files yet.
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import type { ReactNode } from 'react'

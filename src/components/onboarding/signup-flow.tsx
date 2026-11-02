@@ -1,3 +1,4 @@
+// The pre-account onboarding flow and its terminal screens.
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { BBButton, BBCheckbox, BBInput, Icon } from '@beebeeb/shared'
 import { runBreachCheck } from '../../lib/onboarding/breach-step'

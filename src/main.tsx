@@ -1,3 +1,4 @@
+// The app entry point: mounts the provider tree and router.
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { initTelemetry } from '@beebeeb/shared'

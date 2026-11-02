@@ -1,3 +1,4 @@
+// The settings security page: password, 2FA, and passkeys.
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { SettingsShell, SettingsHeader, SettingsRow } from '../../components/settings-shell'

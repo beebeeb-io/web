@@ -1,3 +1,4 @@
+// File and folder listing plus upload-init API calls, including the hard pagination cap.
 import { collectPaged } from './paginate'
 import { buildUploadInitV2Body, type UploadInitMetadata } from './upload-init-body'
 import { assertEchoedItemId } from './item-id-echo'

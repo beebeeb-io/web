@@ -1,3 +1,4 @@
+// The reusable positioned context menu for file and folder actions.
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'

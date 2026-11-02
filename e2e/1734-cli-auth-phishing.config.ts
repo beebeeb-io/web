@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 1734 cli auth phishing spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

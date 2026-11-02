@@ -1,3 +1,4 @@
+// The share-link card used in the shared views.
 import { BBButton, BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import type { MyShare } from '../../lib/api'

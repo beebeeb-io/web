@@ -1,3 +1,4 @@
+// Drive E2E helpers: open a row menu, upload a text file, create a share link.
 import { type Page, expect } from '@playwright/test'
 
 /**

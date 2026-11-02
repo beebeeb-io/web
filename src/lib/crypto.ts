@@ -1,3 +1,4 @@
+// The crypto facade: named re-exports of the key, chunk, and folder-link primitives.
 import * as Comlink from 'comlink'
 import type { ContentPin, DecryptSummary, PinnedMetadata } from './content-crypto'
 import { withProxy } from './crypto/service'

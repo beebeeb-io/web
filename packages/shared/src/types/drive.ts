@@ -1,3 +1,4 @@
+// Shared drive types: files, uploads, sync nodes, ops, and snapshots.
 import type { DownloadVersion } from './auth'
 
 export interface DriveFile {

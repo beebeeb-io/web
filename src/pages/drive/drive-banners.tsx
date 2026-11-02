@@ -1,3 +1,4 @@
+// The drive's notice banners: dedup warning and folder suggestion.
 import { BBButton, Icon } from '@beebeeb/shared'
 import type { StorageUsage, Subscription } from '../../lib/api'
 import { StorageFullBanner } from '../../components/upgrade-nudge-modal'

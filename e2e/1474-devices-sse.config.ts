@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 1474 devices sse spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

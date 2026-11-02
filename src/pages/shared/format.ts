@@ -1,3 +1,4 @@
+// Formatting helpers shared by the shared views.
 import type { MyShare } from '../../lib/api'
 
 export function timeAgo(dateStr: string): string {

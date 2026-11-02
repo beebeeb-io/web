@@ -1,3 +1,4 @@
+// The drive's per-file overlays: preview, details, share, and versions.
 import type { ComponentProps } from 'react'
 import { FileDetailsPanel } from '../../components/file-details-panel'
 import { TrustDetailsPanel } from '../../components/trust-details-panel'

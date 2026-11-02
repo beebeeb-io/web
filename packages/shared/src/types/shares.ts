@@ -1,3 +1,4 @@
+// Shared share types: options, share views, items, and bundle requests.
 export interface ShareOptions {
   expires_in_hours?: number | null
   max_opens?: number | null

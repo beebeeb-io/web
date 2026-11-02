@@ -1,3 +1,4 @@
+// Unauthenticated API calls: announcements and public profile shares.
 import { ApiError, request } from '@beebeeb/shared'
 import { API_URL, STATUS_URL } from './api-session'
 

@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 2106 confirm payment spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

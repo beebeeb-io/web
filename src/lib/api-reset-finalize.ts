@@ -1,3 +1,4 @@
+// The capability-gated 2FA-reset finalize request and its result types.
 import { clearLegacyBearer, clearSessionConfirmed, request } from '@beebeeb/shared'
 import { isPasswordSetSignInRequired } from './reset-2fa'
 

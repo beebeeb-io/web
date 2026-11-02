@@ -1,3 +1,4 @@
+// Payment API calls: promo validation, coupons, and offered payment methods.
 import { request } from '@beebeeb/shared'
 import type { Invoice, Subscription } from '@beebeeb/shared'
 import { parsePitch } from './coupon'

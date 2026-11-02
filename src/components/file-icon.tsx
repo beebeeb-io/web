@@ -1,3 +1,4 @@
+// Maps a file type to its icon and accent color.
 import { Icon, type IconName } from '@beebeeb/shared'
 
 export type FileType =

@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 1828 billing success flag spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

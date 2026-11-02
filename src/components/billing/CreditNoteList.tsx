@@ -1,3 +1,4 @@
+// The credit-note list, one downloadable row per issued credit note.
 import { useState, useCallback } from 'react'
 import { BBButton, BBChip, Icon } from '@beebeeb/shared'
 import { downloadCreditNotePdf, type BillingCreditNote } from '../../lib/api'

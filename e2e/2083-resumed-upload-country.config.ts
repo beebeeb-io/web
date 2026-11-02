@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 2083 resumed upload country spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

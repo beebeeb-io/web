@@ -1,3 +1,4 @@
+// Injects a password-reset token into the page for reset E2E specs.
 import { execFileSync } from 'child_process'
 import crypto from 'crypto'
 

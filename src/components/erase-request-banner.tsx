@@ -1,3 +1,4 @@
+// The banner for an in-progress account erase request, with cancel entry.
 import { useEffect, useRef, useSyncExternalStore, type Ref } from 'react'
 import { BBButton, Icon } from '@beebeeb/shared'
 import { cancelEraseRequest, createEraseRequest, getEraseRequest } from '../lib/api'

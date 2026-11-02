@@ -1,3 +1,4 @@
+// The two-factor code prompt used during login and step-up.
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'

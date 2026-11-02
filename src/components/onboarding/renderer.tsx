@@ -1,3 +1,4 @@
+// Renders an onboarding document step by step.
 import { useMemo } from 'react'
 import { planScreen } from '../../lib/onboarding/plan'
 import type { OnboardingPorts } from '../../lib/onboarding/ports'

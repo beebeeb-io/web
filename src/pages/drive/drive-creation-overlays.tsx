@@ -1,3 +1,4 @@
+// The drive's create/move/delete overlays.
 import type { ComponentProps } from 'react'
 import { NewFolderDialog } from '../../components/new-folder-dialog'
 import { NewDocumentDialog } from '../../components/new-document-dialog'

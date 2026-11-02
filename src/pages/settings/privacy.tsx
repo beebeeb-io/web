@@ -1,3 +1,4 @@
+// The settings privacy page, including the data-export request.
 import { ActivityTrackingSettings } from '../../components/settings/activity-tracking'
 /**
  * Privacy tools page — GDPR Articles 15-22 self-service UI (spec 025).

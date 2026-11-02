@@ -1,3 +1,4 @@
+// Decrypts file names for the list and caches them by file id.
 import { useEffect, useState } from 'react'
 import { useKeys } from '../../lib/key-context'
 import { decryptManyNames } from '../../lib/crypto'

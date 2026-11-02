@@ -1,3 +1,4 @@
+// The centered auth card used by login, reset, and unlock screens.
 import { AuthShellFrame, type AuthShellFrameProps } from './auth-shell-frame'
 import { AnnouncementBanner } from './announcement-banner'
 import { SignedOutInactiveNotice } from './account-inactive'

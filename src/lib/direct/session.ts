@@ -1,3 +1,4 @@
+// Holds the per-session direct-transport state so transports can be switched safely.
 import type * as Wasm from 'beebeeb-wasm'
 import { getApiUrl, getAuthStamp, isCurrentAuthStamp } from '@beebeeb/shared'
 import { directWasm } from './wasm'

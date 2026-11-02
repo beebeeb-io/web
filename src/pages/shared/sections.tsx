@@ -1,3 +1,4 @@
+// The shared views' loading skeleton and section header.
 import { SharedRowSkeleton } from '@beebeeb/shared'
 
 /** The pending tab's loading placeholder. */

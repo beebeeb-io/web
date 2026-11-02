@@ -1,3 +1,4 @@
+// The guest folder-link search field and its no-results state.
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../icons'
 import { noResultsText, partialBannerText } from '../../lib/guest-search'

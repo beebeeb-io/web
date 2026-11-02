@@ -1,3 +1,4 @@
+// The shared design tokens and Tailwind preset.
 export const beebeebTailwindPreset = {
   theme: {
     extend: {

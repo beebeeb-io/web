@@ -1,3 +1,4 @@
+// The video preview player with frame-fit handling.
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 interface VideoPreviewProps {

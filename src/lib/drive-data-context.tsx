@@ -1,3 +1,4 @@
+// Shares the drive's file data with panels rendered outside the drive page.
 import { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {

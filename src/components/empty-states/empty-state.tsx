@@ -1,3 +1,4 @@
+// The shared empty-state layout (icon, title, action) the views build on.
 import type { ReactNode } from 'react'
 import { Icon, type IconName } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'

@@ -1,3 +1,4 @@
+// Direct-transport download geometry and chunk framing with API fallback.
 import type { DirectPoll } from 'beebeeb-wasm'
 import { configuredPairs, pairsAllowed, type Discovery, type Pair } from './allowlist'
 import { getDirectSession, type DirectSession } from './session'

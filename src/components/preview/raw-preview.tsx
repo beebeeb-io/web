@@ -1,3 +1,4 @@
+// The fallback preview for unknown binary types.
 import { useEffect, useState } from 'react'
 import { extractRawPreview } from '../../lib/raw-preview-worker-client'
 import type { RawExifInfo } from '../../lib/raw-embedded-jpeg'

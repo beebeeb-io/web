@@ -1,3 +1,4 @@
+// The settings data-residency page.
 import { useState, useCallback } from 'react'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { Icon, BBToggle } from '@beebeeb/shared'

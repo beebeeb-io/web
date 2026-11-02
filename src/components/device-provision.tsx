@@ -1,3 +1,4 @@
+// The device-provision screen: pairs a new device and shows its keys.
 import { type FormEvent, type KeyboardEvent, useCallback, useRef, useState } from 'react'
 import { AuthShell } from './auth-shell'
 import { BBButton } from '@beebeeb/shared'

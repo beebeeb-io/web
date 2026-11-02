@@ -1,3 +1,4 @@
+// Decides which storage pairs may use the direct (non-API) transport.
 import type * as Wasm from 'beebeeb-wasm'
 import allowlist from '../../../config/storage-allowlist.json'
 

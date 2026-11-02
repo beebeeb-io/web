@@ -1,3 +1,4 @@
+// The sidebar quick-access list of pinned folders.
 import { useState, useEffect, useCallback } from 'react'
 import {
   DndContext,

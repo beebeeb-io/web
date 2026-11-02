@@ -1,3 +1,4 @@
+// Fetches the server's feature-flag evaluation for the current user.
 import { request } from '@beebeeb/shared'
 
 /** Runtime feature flags for this session (cached by useFeatureFlag). */

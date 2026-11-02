@@ -1,3 +1,4 @@
+// Request-keypair crypto for encrypted file requests: generate, wrap, unwrap.
 import { withProxy } from './service'
 
 // ─── File requests (sealed-box / ECIES per request) ─────────────────────────

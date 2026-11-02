@@ -1,3 +1,4 @@
+// Auth state provider: session restore, login/logout callbacks, and useAuth.
 import { resetDirectSession } from './direct/session'
 import {
   createContext,

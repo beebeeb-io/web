@@ -1,3 +1,4 @@
+// Account-recovery API calls: password change, forgot/reset, and opaque set-password.
 import { resetFinalizeRequest } from './api-reset-finalize'
 import { clearToken, request, setToken } from '@beebeeb/shared'
 import { postEraseRequestOnce } from './erase-request-transport'

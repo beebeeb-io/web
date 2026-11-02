@@ -1,3 +1,4 @@
+// The share-view card for an unrecognized share type.
 import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 

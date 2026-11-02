@@ -1,3 +1,4 @@
+// Prod-smoke helpers: strip ANSI, read verification codes, and manage smoke credentials.
 import { spawn, execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'

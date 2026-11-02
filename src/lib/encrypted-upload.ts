@@ -1,3 +1,4 @@
+// Encrypts and uploads one file, reporting honest progress and shared-folder context.
 import { WorkQueue } from './work-queue'
 import { expectedUserHeaders } from '@beebeeb/shared'
 // ─── Encrypted chunked upload ──────────────────────

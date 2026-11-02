@@ -1,3 +1,4 @@
+// Shared admin-ops types: file versions, notifications, sessions, impersonation.
 export interface FileVersion {
   id: string
   version_number: number

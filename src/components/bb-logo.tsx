@@ -1,3 +1,4 @@
+// The web logo mark used in the header and auth screens.
 export function BBLogo({ size = 16 }: { size?: number }) {
   return (
     <span style={{ fontSize: size }} className="font-bold tracking-tight text-ink">

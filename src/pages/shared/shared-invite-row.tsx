@@ -1,3 +1,4 @@
+// The invite row used in the shared views.
 import type { MouseEvent } from 'react'
 import { BBButton, BBChip, Icon } from '@beebeeb/shared'
 import type { ShareInvite } from '../../lib/api'

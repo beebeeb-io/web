@@ -1,3 +1,4 @@
+// The post-checkout return route that resolves the pending intent.
 import { Link } from 'react-router-dom'
 import { Icon } from '@beebeeb/shared'
 import { AuthShell } from '../components/auth-shell'

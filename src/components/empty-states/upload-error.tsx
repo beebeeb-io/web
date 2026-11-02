@@ -1,3 +1,4 @@
+// The failed-upload card and its retry/remove actions.
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'

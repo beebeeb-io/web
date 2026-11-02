@@ -1,3 +1,4 @@
+// The shared BBLogo mark.
 export function BBLogo({ size = 16, light = false }: { size?: number; light?: boolean }) {
   return (
     <span

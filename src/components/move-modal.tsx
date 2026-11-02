@@ -1,3 +1,4 @@
+// The move dialog: pick a destination folder for the selected items.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'

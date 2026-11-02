@@ -1,3 +1,4 @@
+// Reads signup codes from the local mail-sink log for E2E specs.
 import { readFileSync } from 'node:fs'
 
 /**

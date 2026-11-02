@@ -1,3 +1,4 @@
+// The guest folder-link grid layout.
 import type { ReactNode } from 'react'
 import { FileIcon, getFileType } from '../file-icon'
 import { formatBytes } from '../../lib/format'

@@ -1,3 +1,4 @@
+// The HEIC image preview with browser-support fallback.
 import { useEffect, useState } from 'react'
 import { ImagePreview } from './image-preview'
 import { UnsupportedPreview } from './unsupported-preview'

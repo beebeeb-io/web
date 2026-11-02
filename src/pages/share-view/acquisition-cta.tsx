@@ -1,3 +1,4 @@
+// The signup call-to-action shown to guests viewing a share.
 import { useState, useEffect } from 'react'
 import { getPlans } from '../../lib/api'
 import { formatEur } from '../../lib/trial-checkout'

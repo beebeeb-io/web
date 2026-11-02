@@ -1,3 +1,4 @@
+// Shared-folder membership, per-folder keys, and folder preference API calls.
 import { ApiError, request } from '@beebeeb/shared'
 import type { DriveFile } from '@beebeeb/shared'
 

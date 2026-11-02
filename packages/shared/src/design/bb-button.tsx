@@ -1,3 +1,4 @@
+// The shared BBButton design-system button.
 import type { ButtonHTMLAttributes } from 'react'
 
 type Variant = 'amber' | 'default' | 'ghost' | 'danger'

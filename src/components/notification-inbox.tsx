@@ -1,3 +1,4 @@
+// The notification inbox and its polling hook.
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'

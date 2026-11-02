@@ -1,3 +1,4 @@
+// The guard that blocks crypto UI until the wasm bundle is verified.
 import { type ReactNode } from 'react'
 import { useKeys } from '../lib/key-context'
 import { BBLogo } from '@beebeeb/shared'

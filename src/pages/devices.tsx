@@ -1,3 +1,4 @@
+// The /devices route: signed-in sessions and their live SSE updates.
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { AuthUser } from '@beebeeb/shared'
 import { DriveLayout } from '../components/drive-layout'

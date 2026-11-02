@@ -1,3 +1,4 @@
+// Fetches one pinned chunk for the direct transport with integrity checking.
 import type { DirectSession } from './session'
 import { getDirectSession } from './session'
 import { directApi, wait } from './api'

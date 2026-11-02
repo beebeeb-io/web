@@ -1,3 +1,4 @@
+// The empty state shown while the app is offline.
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 

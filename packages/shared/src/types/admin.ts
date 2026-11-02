@@ -1,3 +1,4 @@
+// Shared admin types: tokens, webhooks, audit events, and role changes.
 export interface PersonalAccessToken {
   id: string
   name: string

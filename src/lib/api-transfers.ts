@@ -1,3 +1,4 @@
+// Device-to-device transfer API calls: join, poll, download, and acknowledge.
 import { readError } from './api-read-error'
 import { ApiError, getToken, readErrorResponse } from '@beebeeb/shared'
 import type { JoinTransferResponse, TransferProof, TransferStatus } from '@beebeeb/shared'

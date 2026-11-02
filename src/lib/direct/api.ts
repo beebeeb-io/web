@@ -1,3 +1,4 @@
+// The small API surface the direct transport needs: session assertion and bounded reads.
 import { ApiError, getToken, provenanceHeaders, expectedUserHeaders } from '@beebeeb/shared'
 import { fireSessionExpired } from '../../../packages/shared/src/api/notifiers'
 import type { DirectSession } from './session'

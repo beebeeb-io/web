@@ -1,3 +1,4 @@
+// The re-authentication modal shown before sensitive account actions.
 import { useState, useCallback, useEffect } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'

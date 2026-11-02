@@ -1,3 +1,4 @@
+// The rename dialog for a file or folder.
 import { useState, useRef, useEffect } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'

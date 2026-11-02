@@ -1,3 +1,4 @@
+// Shared storage-pool and migration types.
 import type { LifecyclePhase } from './admin-ops'
 
 export interface StoragePool {

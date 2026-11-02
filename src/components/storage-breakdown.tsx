@@ -1,3 +1,4 @@
+// The storage breakdown bar by file category.
 import { useEffect, useState } from 'react'
 import { formatBytes } from '../lib/format'
 

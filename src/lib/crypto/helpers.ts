@@ -1,3 +1,4 @@
+// Shared crypto primitives: chunking, base64, zeroize, and X25519 agreement.
 import { withProxy } from './service'
 
 // ─── Helpers ────────────────────────────────────────

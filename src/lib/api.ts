@@ -1,3 +1,4 @@
+// The web API facade: one named re-export per endpoint module, no endpoint logic here.
 import { setClientInfo, registerOnTokenCleared, setApiUrl } from '@beebeeb/shared'
 import { API_URL, clearEmail } from './api-session'
 

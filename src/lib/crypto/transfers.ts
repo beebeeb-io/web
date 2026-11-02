@@ -1,3 +1,4 @@
+// Transfer crypto: keypair generation, SAS words, and blob encrypt/decrypt.
 import { x25519SharedSecret } from './helpers'
 import { withProxy } from './service'
 

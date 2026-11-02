@@ -1,3 +1,4 @@
+// Generates, encrypts, uploads, and decrypts file thumbnails.
 import { provenanceHeaders } from '@beebeeb/shared'
 import { getToken, getApiUrl, uploadThumbnail, uploadThumbnailLarge } from './api'
 import { getOfflineCacheScope, isCurrentOfflineCacheScope } from './offline-cache'

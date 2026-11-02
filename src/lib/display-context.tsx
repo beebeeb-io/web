@@ -1,3 +1,4 @@
+// Display preferences (font size, sidebar density) and their provider.
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 

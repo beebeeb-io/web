@@ -1,3 +1,4 @@
+// Merges recently changed files from several sources without duplicates.
 import type { DriveFile } from './api'
 
 function updatedAtMs(file: DriveFile): number {

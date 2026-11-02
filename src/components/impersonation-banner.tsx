@@ -1,3 +1,4 @@
+// The persistent banner shown while an admin is impersonating the account.
 import { Icon } from '@beebeeb/shared'
 import { useImpersonation } from '../lib/impersonation-context'
 

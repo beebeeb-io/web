@@ -1,3 +1,4 @@
+// Shared account types: passkeys, activity, and recovery state.
 export interface PasskeyInfo {
   id: string
   name: string

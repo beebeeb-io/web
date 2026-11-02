@@ -1,3 +1,4 @@
+// The shared-folder route: member access, files, and uploads.
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'

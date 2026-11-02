@@ -1,3 +1,4 @@
+// The command palette: file search, navigation commands, and keyboard actions.
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Icon } from '@beebeeb/shared'

@@ -1,3 +1,4 @@
+// Shared notification and sign-in-history types.
 import type { ActivityEncryptedNameSnapshot } from './account'
 
 export interface OnboardingState {

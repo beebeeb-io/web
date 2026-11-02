@@ -1,3 +1,4 @@
+// The drive's guide/tour overlays.
 import type { ComponentProps } from 'react'
 import { ShortcutsCheatsheet } from '../../components/shortcuts-cheatsheet'
 import { WelcomeTour } from '../../components/welcome-tour'

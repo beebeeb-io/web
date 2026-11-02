@@ -1,3 +1,4 @@
+// The empty state for the photos view.
 import { EmptyState } from './empty-state'
 
 interface EmptyPhotosProps {

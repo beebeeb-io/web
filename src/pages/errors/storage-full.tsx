@@ -1,3 +1,4 @@
+// The storage-full route shown when the quota blocks uploads.
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'

@@ -1,3 +1,4 @@
+// The coupon card: redeem field and the active-coupon summary.
 import { useState } from 'react'
 import { ApiError, BBButton, BBInput, Icon } from '@beebeeb/shared'
 import { redeemCoupon } from '../../lib/api'

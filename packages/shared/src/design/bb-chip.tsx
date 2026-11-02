@@ -1,3 +1,4 @@
+// The shared BBChip design-system chip.
 import type { ReactNode } from 'react'
 
 type Variant = 'default' | 'amber' | 'green' | 'red'

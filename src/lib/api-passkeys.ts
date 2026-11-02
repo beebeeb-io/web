@@ -1,3 +1,4 @@
+// WebAuthn passkey helpers: base64url and credential conversion.
 import { request, setToken } from '@beebeeb/shared'
 import type { LoginResult, PasskeyInfo, PasskeyLoginStartResponse, PasskeyRegisterStartResponse } from '@beebeeb/shared'
 

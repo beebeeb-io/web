@@ -1,3 +1,4 @@
+// The blocking overlay shown when billing suspension locks the account.
 import { BBButton } from '@beebeeb/shared'
 import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'

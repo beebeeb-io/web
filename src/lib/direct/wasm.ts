@@ -1,3 +1,4 @@
+// Loads the core wasm exports the direct transport depends on.
 import type * as Wasm from 'beebeeb-wasm'
 let loading: Promise<typeof Wasm> | undefined
 /** This instance holds transport state only. Keys and decryption stay in the crypto worker. */

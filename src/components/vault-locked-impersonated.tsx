@@ -1,3 +1,4 @@
+// The vault-locked screen shown to an impersonating admin.
 import { AuthShell } from './auth-shell'
 import { Icon } from '@beebeeb/shared'
 

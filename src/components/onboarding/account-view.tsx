@@ -1,3 +1,4 @@
+// The account steps of onboarding: verify email, accept terms, finish.
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { BBButton, BBInput, Icon } from '@beebeeb/shared'

@@ -1,3 +1,4 @@
+// The share-view debug panels (URL annotation and server view).
 import { useState, useEffect } from 'react'
 import { Icon } from '@beebeeb/shared'
 import { fetchShareCiphertextPreview } from '../../lib/api'

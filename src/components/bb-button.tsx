@@ -1,3 +1,4 @@
+// The web button primitive: variant/size classes over a native button.
 import type { ButtonHTMLAttributes } from 'react'
 
 type Variant = 'amber' | 'default' | 'ghost' | 'danger'

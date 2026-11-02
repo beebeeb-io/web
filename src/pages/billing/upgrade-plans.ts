@@ -1,3 +1,4 @@
+// Plan metadata and date/price helpers shared by the billing views.
 import { formatStorageSI } from '../../lib/format'
 import { PLAN_META, PLAN_RANK } from '../../lib/plan-constants'
 import type { Plan } from '../../lib/api'

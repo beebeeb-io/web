@@ -1,3 +1,4 @@
+// Loads and decrypts the bytes a preview needs, with cancel and error state.
 import { useCallback, useState } from 'react'
 import type { DriveFile } from '../lib/api'
 

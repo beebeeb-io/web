@@ -1,3 +1,4 @@
+// The web text-input primitive with its label, hint, and error styles.
 import { type InputHTMLAttributes, type ReactNode, useId } from 'react'
 import { Icon } from './icons'
 import type { IconName } from './icons'

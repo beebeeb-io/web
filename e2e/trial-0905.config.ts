@@ -1,3 +1,4 @@
+// Standalone Playwright config for the trial 0905 spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 import path from 'path'
 import { WEB_URL } from './trial-0905-web-url'

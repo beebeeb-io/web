@@ -1,3 +1,4 @@
+// The share permission controls (view/download/edit) used by share dialogs.
 import { useState, useEffect, useRef } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { BBToggle } from '@beebeeb/shared'

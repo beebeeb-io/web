@@ -1,3 +1,4 @@
+// The /shared route: shares received and sent.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'

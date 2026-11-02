@@ -1,3 +1,4 @@
+// The first-run welcome tour.
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Icon } from '@beebeeb/shared'

@@ -1,3 +1,4 @@
+// The /scan route: the document scanner.
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DriveLayout } from '../components/drive-layout'

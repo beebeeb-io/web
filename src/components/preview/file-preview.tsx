@@ -1,3 +1,4 @@
+// The preview overlay that picks and hosts the right renderer for a file.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listVersions, type DriveFile, type FileVersion } from '../../lib/api'
 import { decryptToBlob, decryptVersionToBlob, streamOverCapDownload, type TransferProgress } from '../../lib/encrypted-download'

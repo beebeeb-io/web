@@ -1,3 +1,4 @@
+// Checks the built app's CSP header against the storage endpoints it must reach.
 import { readFileSync, writeFileSync } from 'node:fs'
 import { storageSource } from '../src/lib/direct/allowlist'
 import allowlist from '../config/storage-allowlist.json'

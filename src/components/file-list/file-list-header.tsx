@@ -1,3 +1,4 @@
+// The file-list header row with sort and selection controls.
 import { BBCheckbox } from '@beebeeb/shared'
 import { Icon } from '../icons'
 import { FILE_HEADER_BAR, FILE_HEADER_LABEL } from '../file-browser-row'

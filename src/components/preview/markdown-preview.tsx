@@ -1,3 +1,4 @@
+// The rendered markdown preview.
 import { useEffect, useState } from 'react'
 import Markdown from 'react-markdown'
 import { MarkdownSafeLink } from './markdown-safe-link'

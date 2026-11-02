@@ -1,3 +1,4 @@
+// The settings activity page.
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'

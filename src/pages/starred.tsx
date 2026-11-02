@@ -1,3 +1,4 @@
+// The /starred route: starred files and folders.
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DriveLayout } from '../components/drive-layout'

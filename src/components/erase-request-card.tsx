@@ -1,3 +1,4 @@
+// The erase-request card: status, timing, and the cancel action.
 import { useEffect, useRef, type ReactNode } from 'react'
 import { BBButton, BBInput, Icon } from '@beebeeb/shared'
 import { formatDue, itemsLabel, typedCountMatches, type EraseCard } from '../lib/erase-request'

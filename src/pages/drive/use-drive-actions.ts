@@ -1,3 +1,4 @@
+// The drive's action handlers: rename, move, delete, star, and share.
 import { useEffect, useCallback, type Dispatch, type SetStateAction } from 'react'
 import type { DriveFile } from '../../lib/api'
 import type { BackupsDeleteRequest } from './drive-creation-overlays'

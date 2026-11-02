@@ -1,3 +1,4 @@
+// The guest folder-link list layout.
 import type { ReactNode } from 'react'
 import { FileBrowserRow, FILE_HEADER_BAR, FILE_HEADER_LABEL, FILE_ROW_PADDING } from '../file-browser-row'
 import { FileIcon, getFileType } from '../file-icon'

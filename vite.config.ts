@@ -1,3 +1,4 @@
+// The Vite build config: wasm preload/emission, aliases, and the dev proxy.
 import { storageSource } from './src/lib/direct/allowlist'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'

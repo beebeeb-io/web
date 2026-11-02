@@ -1,3 +1,4 @@
+// The import tree model: node creation, updates, and lookup.
 import type { DbxEntry } from './dropbox-model'
 
 

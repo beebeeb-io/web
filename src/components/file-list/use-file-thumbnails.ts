@@ -1,3 +1,4 @@
+// Loads and decrypts thumbnails for visible file rows.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useKeys } from '../../lib/key-context'
 import { fetchAndDecryptThumbnail } from '../../lib/thumbnail'

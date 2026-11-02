@@ -1,3 +1,4 @@
+// Session token/email storage plus the small auth helpers the API client shares.
 export const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 export const STATUS_URL = import.meta.env.VITE_STATUS_URL || 'https://status.beebeeb.io'
 

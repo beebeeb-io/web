@@ -1,3 +1,4 @@
+// The bundle-share view and its known share types.
 import { useState, useEffect, useCallback } from 'react'
 import { BBLogo } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'

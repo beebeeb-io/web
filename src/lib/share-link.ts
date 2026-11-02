@@ -1,3 +1,4 @@
+// Builds and rebuilds share links from a share's context.
 import type { MyShare } from '@beebeeb/shared'
 import { fromBase64, toBase64url, unwrapKeyFromShare, initCrypto } from './crypto'
 

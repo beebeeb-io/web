@@ -1,3 +1,4 @@
+// Share API calls: create, fetch, passphrase-verify, and download shared items.
 import { ApiError, readErrorResponse, request } from '@beebeeb/shared'
 import type { CreateBundleShareRequest, InviteActivity, MyShare, ShareInfo, ShareInvite, ShareOptions, ShareStats, ShareView, SharedFileDownload } from '@beebeeb/shared'
 import { API_URL } from './api-session'

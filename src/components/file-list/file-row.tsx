@@ -1,3 +1,4 @@
+// One file-list row: name, metadata, and action handlers.
 import type { ReactNode, RefObject } from 'react'
 import { BBCheckbox } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'

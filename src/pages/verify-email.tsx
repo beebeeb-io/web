@@ -1,3 +1,4 @@
+// The /verify-email route.
 import {
   type ClipboardEvent,
   type KeyboardEvent,

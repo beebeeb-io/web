@@ -1,3 +1,4 @@
+// The in-page billing banner for trial, payment, and plan notices.
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'

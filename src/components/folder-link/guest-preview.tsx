@@ -1,3 +1,4 @@
+// The guest folder-link preview overlay for one file.
 import { useEffect, useState } from 'react'
 import { PreviewChrome } from '../preview/preview-chrome'
 import { ImagePreview } from '../preview/image-preview'

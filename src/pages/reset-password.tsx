@@ -1,3 +1,4 @@
+// The /reset-password route: forgot-password and recovery flow.
 import { Link } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '@beebeeb/shared'

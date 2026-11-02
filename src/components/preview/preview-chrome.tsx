@@ -1,3 +1,4 @@
+// The shared preview chrome: title bar, actions, and close.
 import type { ReactNode } from 'react'
 import { Icon } from '@beebeeb/shared'
 

@@ -1,3 +1,4 @@
+// The /survey route: the post-signup survey.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'

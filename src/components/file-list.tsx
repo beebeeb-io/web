@@ -1,3 +1,4 @@
+// The drive file list: rows, selection, and per-row actions.
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { BBButton } from '@beebeeb/shared'

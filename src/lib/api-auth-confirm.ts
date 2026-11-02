@@ -1,3 +1,4 @@
+// Step-up confirmation and email/account unlock endpoints used before sensitive actions.
 import { opaqueLoginStart as wasmOpaqueLoginStart, opaqueLoginFinish as wasmOpaqueLoginFinish, toBase64, fromBase64 } from './crypto'
 import { ApiError, IncorrectPasswordError, SessionTooOldForConfirmationError, getToken, markSessionConfirmed, readErrorResponse, request, setToken } from '@beebeeb/shared'
 import type { AuthUser, LoginResult, TotpSetupResponse } from '@beebeeb/shared'

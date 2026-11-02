@@ -1,3 +1,4 @@
+// The drive breadcrumb trail with folder navigation and overflow collapse.
 import { Icon } from '@beebeeb/shared'
 
 export interface BreadcrumbItem {

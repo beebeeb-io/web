@@ -1,3 +1,4 @@
+// Folder-link (guest share) API calls: create, update, revoke, and resolve.
 import { request } from '@beebeeb/shared'
 import type { CreateFolderLinkRequest, FolderAccessLevel, FolderLink, FolderLinkCreated, SharedFolderActivityResponse, UpdateFolderLinkRequest } from './folder-link-types'
 

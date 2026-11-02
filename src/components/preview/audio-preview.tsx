@@ -1,3 +1,4 @@
+// The audio preview player.
 import { useEffect, useRef, useState } from 'react'
 
 interface AudioPreviewProps {

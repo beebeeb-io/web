@@ -1,3 +1,4 @@
+// The first-share guide shown once after onboarding.
 import { useEffect, useMemo, useState } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'

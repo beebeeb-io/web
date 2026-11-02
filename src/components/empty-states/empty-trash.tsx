@@ -1,3 +1,4 @@
+// The empty state for the trash view.
 import { EmptyState } from './empty-state'
 
 interface EmptyTrashProps {

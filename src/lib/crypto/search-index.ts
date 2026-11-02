@@ -1,3 +1,4 @@
+// Encrypted search-index construction and querying over core-provided shards.
 import { withProxy } from './service'
 
 // ─── Search index (shared core WasmSearchIndex, handle-addressed) ───────────

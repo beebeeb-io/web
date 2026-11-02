@@ -1,3 +1,4 @@
+// Folder-key crypto for shared folders: generate, wrap for recipients, seal custody.
 import {
   encryptChunk,
   decryptChunk,

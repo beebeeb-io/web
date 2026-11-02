@@ -1,3 +1,4 @@
+// The billing transaction list with amount, status, and date per charge.
 import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import type { BillingTransaction } from '../../lib/api'

@@ -1,3 +1,4 @@
+// The create-share dialog: link options, recipients, and permissions.
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'

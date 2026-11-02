@@ -1,3 +1,4 @@
+// The restore-from-erase screen: re-authenticate and recover the vault.
 import { useEffect, useRef, useState, useSyncExternalStore, type Ref } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { getEraseRequest, restoreEraseRequest } from '../lib/api'

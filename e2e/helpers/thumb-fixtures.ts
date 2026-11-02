@@ -1,3 +1,4 @@
+// Writes image/text/PDF fixtures and finds list rows/preview overlays in E2E specs.
 import zlib from 'zlib'
 import fs from 'fs'
 import path from 'path'

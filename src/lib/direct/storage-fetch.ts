@@ -1,3 +1,4 @@
+// One direct storage GET with the answer shape the transport switch expects.
 import type { WasmSignedUrl } from 'beebeeb-wasm'
 import type * as Wasm from 'beebeeb-wasm'
 import { directWasm } from './wasm'

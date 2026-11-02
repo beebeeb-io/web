@@ -1,3 +1,4 @@
+// The drive's upload queue, conflict resolution, and progress.
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useToast } from '../../components/toast'
 import { useBrowseFiles, type FolderFile } from '../../components/upload-zone'

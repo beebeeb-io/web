@@ -1,3 +1,4 @@
+// Share-view meta tags and expiry formatting.
 import { useEffect } from 'react'
 
 // ─── Meta tag helpers ─────────────────────────────────────────────────────────

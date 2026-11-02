@@ -1,3 +1,4 @@
+// The in-app feedback dialog.
 import { useState, useEffect, useRef } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'

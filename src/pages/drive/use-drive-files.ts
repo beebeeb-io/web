@@ -1,3 +1,4 @@
+// The drive's file state: listing, selection, sorting, and refresh.
 import {useCallback, useEffect, useRef, useState} from 'react'
 
 import {listAllFiles, getFile, listMyShares, getFolderMembers, type DriveFile, type MyShare, type SyncNode} from '../../lib/api'

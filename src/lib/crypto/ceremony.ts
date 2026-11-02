@@ -1,3 +1,4 @@
+// Password-ceremony evaluation: strength scoring and breach checks for signup/reset.
 import {
   CeremonyOps,
   CeremonyResult,

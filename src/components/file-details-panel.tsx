@@ -1,3 +1,4 @@
+// The file details side panel: metadata, access, and activity.
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'

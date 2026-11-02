@@ -1,3 +1,4 @@
+// The /login route: password, passkey, and provisioning branches.
 import { type FormEvent, useState, useCallback, useRef } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'

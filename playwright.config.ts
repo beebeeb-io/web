@@ -1,3 +1,4 @@
+// The default Playwright config: dev server, authenticated project, and saved storage state.
 import { defineConfig } from '@playwright/test'
 import { config as dotenv } from 'dotenv'
 import path from 'path'

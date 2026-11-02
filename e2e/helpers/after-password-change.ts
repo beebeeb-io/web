@@ -1,3 +1,4 @@
+// Signs in after a password change and probes the vault/2FA state for reset specs.
 import { expect, type Page, type Download } from '@playwright/test'
 import fs from 'fs'
 import { totp } from './reset-2fa'

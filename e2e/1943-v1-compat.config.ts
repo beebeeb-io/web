@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 1943 v1 compat spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

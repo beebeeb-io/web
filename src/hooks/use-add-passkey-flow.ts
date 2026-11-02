@@ -1,3 +1,4 @@
+// Drives the add-passkey flow: WebAuthn ceremony, naming, and error state.
 import { useCallback, useRef, useState } from 'react'
 import {
   startPasskeyRegistration,

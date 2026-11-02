@@ -1,3 +1,4 @@
+// The dialog that confirms deleting a folder's encrypted backups.
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton, Icon } from '@beebeeb/shared'
 
