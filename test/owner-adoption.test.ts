@@ -52,7 +52,20 @@ const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) =>
     wasm.decrypt_chunk(key, nonce, ciphertext),
 }))
 
+// The id class and resolver are core's (L12); run them in process here.
+const { createOwnedItemOps } = await import('../src/lib/owned-item')
+await mockModuleScoped('../src/lib/owned-item', import.meta.dir, {
+  ownedItem: createOwnedItemOps(wasm),
+})
+
+let keyIndex: Map<string, string> = new Map()
+let files: Map<string, { id: string; parent_id: string | null; name_encrypted?: string; owner_wrapped_file_key?: string | null }> = new Map()
 await mockModuleScoped('../src/lib/api', import.meta.dir, {
+  getFile: async (id: string) => {
+    const row = files.get(id)
+    if (!row) throw Object.assign(new Error('not found'), { status: 404 })
+    return row
+  },
   getSharedFolder: async () => {
     // A definitive "no custody record" is the server's 404 (anything else is
     // an error the client must not read as "not shared": rv-web198c P1-1).
@@ -68,6 +81,9 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
   },
   adoptOwnerFileKey: async (fileId: string, wrapped: string) => {
     adoptCalls.push({ fileId, wrapped })
+    const row = files.get(fileId)
+    // Write-once on the server: the first accepted wrap is the stored one.
+    if (adoptResult.adopted && row && !row.owner_wrapped_file_key) row.owner_wrapped_file_key = wrapped
     return adoptResult
   },
 })
@@ -104,7 +120,8 @@ function l7(fileId: string, key: Uint8Array = FILE_KEY): string {
 
 function seedFile() {
   return {
-    id: '22222222-2222-4222-8222-222222222222',
+    // An F id (UUIDv8): what a guest's or member's create mints (L12).
+    id: '22222222-2222-8222-8222-222222222222',
     parent_id: FOLDER_ID,
     name_encrypted: wasm.encrypt_name_for(FILE_KEY, 'guest.txt', 'text/plain', 2),
     acted_via_share_id: 'share-1',
@@ -112,7 +129,12 @@ function seedFile() {
   }
 }
 
-const { needsOwnership, adoptGuestFile, resolveSharedFileKey, openOwnerFile, unwrapOwnerFileKey, folderKeyForRoot, clearSharedFolderLookups } =
+// A19 needs the root's key index; serve it from this file's map.
+await mockModuleScoped('../src/lib/api-folder-links', import.meta.dir, {
+  listSharedFolderKeys: async () => ({ keys: Array.from(keyIndex, ([file_id, encrypted_file_key]) => ({ file_id, encrypted_file_key })), next_cursor: null }),
+})
+
+const { needsOwnership, classifyItemIds, adoptGuestFile, resolveSharedFileKey, openOwnerFile, unwrapOwnerFileKey, folderKeyForRoot, clearSharedFolderLookups } =
   await import(
   '../src/lib/owner-adoption'
 )
@@ -128,6 +150,8 @@ beforeEach(() => {
   inviteFolderKey = null
   adoptCalls.length = 0
   adoptResult = { adopted: true }
+  keyIndex = new Map()
+  files = new Map()
   clearSharedFolderLookups()
 })
 
@@ -157,11 +181,15 @@ describe('folderKeyForRoot', () => {
 })
 
 describe('needsOwnership', () => {
-  test('a guest or member row needs owning, a plain row does not', () => {
-    expect(needsOwnership({ id: 'a', parent_id: null, acted_via_share_id: 's' })).toBe(true)
-    expect(needsOwnership({ id: 'a', parent_id: null, uploaded_by: 'u' })).toBe(true)
-    expect(needsOwnership({ id: 'a', parent_id: null })).toBe(false)
-    expect(needsOwnership({ id: 'a', parent_id: null, acted_via_share_id: null })).toBe(false)
+  // L12 (2275): the id class decides the key path; attribution columns are a
+  // server-supplied hint and must lose to the class once it is known.
+  test('the id class wins over the attribution hint', async () => {
+    const o = '55555555-5555-4555-8555-555555555555'
+    const f = '55555555-5555-8555-8555-555555555555'
+    await classifyItemIds([o, f])
+    expect(needsOwnership({ id: f })).toBe(true)
+    expect(needsOwnership({ id: o, acted_via_share_id: 's' })).toBe(false)
+    expect(needsOwnership({ id: o, uploaded_by: 'someone-else' })).toBe(false)
   })
 })
 
@@ -366,5 +394,31 @@ describe('L8: an owner wrap is core\'s purpose-bound record, and nothing else op
     const bytes = real.fromBase64(adoptCalls[0].wrapped) as Uint8Array
     expect(Array.from(wasm.unwrapOwnerFileKey(MASTER, file.id, bytes) as Uint8Array)).toEqual(Array.from(FILE_KEY))
     expect(() => wasm.unwrapOwnerFileKey(MASTER, '66666666-6666-4666-8666-666666666666', bytes)).toThrow()
+  })
+})
+
+
+describe('A19: F descendants are adopted before a move out of the root (L12)', () => {
+  test('an F child with a root wrap is adopted and read back before the move', async () => {
+    seedCustody()
+    const file = seedFile()
+    keyIndex.set(file.id, l7(file.id))
+    files.set(file.id, { id: file.id, parent_id: FOLDER_ID, name_encrypted: file.name_encrypted })
+    const { adoptForeignTreeBeforeMove } = await import('../src/lib/owner-adoption')
+    // The server stores what was posted, so the read-back finds the wrap.
+    adoptResult = { adopted: true }
+    const res = await adoptForeignTreeBeforeMove({ masterKey: MASTER, rootId: FOLDER_ID, itemIds: [file.id] })
+    expect(res.adopted).toBe(1)
+    expect(adoptCalls.map((c) => c.fileId)).toEqual([file.id])
+  })
+
+  test('an F child with no key row refuses the whole move, and posts nothing', async () => {
+    seedCustody()
+    const file = seedFile()
+    files.set(file.id, { id: file.id, parent_id: FOLDER_ID, name_encrypted: file.name_encrypted })
+    const { adoptForeignTreeBeforeMove, MoveNeedsAdoptionError } = await import('../src/lib/owner-adoption')
+    await expect(adoptForeignTreeBeforeMove({ masterKey: MASTER, rootId: FOLDER_ID, itemIds: [file.id] }))
+      .rejects.toBeInstanceOf(MoveNeedsAdoptionError)
+    expect(adoptCalls).toHaveLength(0)
   })
 })

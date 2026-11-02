@@ -705,17 +705,22 @@ describe('core vectors KAT — the link passphrase stretch (2237b)', () => {
 })
 
 describe('core vectors KAT — owned-key resolution (2237d, v11)', () => {
-  test('owner_wrapped_file_key — L8: unwrapOwnerFileKey (src/lib/owner-adoption.ts) opens the pinned record for its item only', () => {
+  test('owner_wrapped_file_key — L8: F ids only, and the pinned record opens for its item only', () => {
     const v = vectors.owner_wrapped_file_key
     const master = hexToBytes(v.master_key_hex)
     const frame = hexToBytes(v.expected_frame_hex)
-    expect(toHex(unwrapOwnerFileKey(master, v.file_id, frame))).toBe(v.child_key_hex)
-    expect(() => unwrapOwnerFileKey(master, v.folder_id, frame)).toThrow(/decryption failed/)
+    // Contract 2275 L12: "Adoption writes an L8 envelope only for an F id;
+    // core's wrap_owner_file_key and unwrap_owner_file_key refuse an O id."
+    // The vector's id is an O id, so the pinned frame must now be refused.
+    expect(() => unwrapOwnerFileKey(master, v.file_id, frame)).toThrow(/foreign item id/)
+    // The same record round-trips under an F id, and still binds that id.
+    const fId = '22222222-2222-8222-8222-222222222222'
+    const again = wrapOwnerFileKey(master, fId, hexToBytes(v.child_key_hex))
+    expect(toHex(unwrapOwnerFileKey(master, fId, again))).toBe(v.child_key_hex)
+    expect(() => unwrapOwnerFileKey(master, '33333333-3333-8333-8333-333333333333', again)).toThrow(/decryption failed/)
     // The pre-L8 shape (no purpose key: decrypt under derive_file_key) does not open it.
-    const derived = derive_file_key(master, new TextEncoder().encode(v.file_id)) as Uint8Array
-    expect(() => decrypt_chunk(derived, frame.slice(0, 12), frame.slice(12))).toThrow()
-    const again = wrapOwnerFileKey(master, v.file_id, hexToBytes(v.child_key_hex))
-    expect(toHex(unwrapOwnerFileKey(master, v.file_id, again))).toBe(v.child_key_hex)
+    const derived = derive_file_key(master, new TextEncoder().encode(fId)) as Uint8Array
+    expect(() => decrypt_chunk(derived, again.slice(0, 12), again.slice(12))).toThrow()
   })
 
   test('owner_wrapped_folder_key — the L6 custody record opens with unwrapFolderCustody for its folder only', () => {

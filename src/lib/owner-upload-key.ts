@@ -10,7 +10,7 @@
  */
 import { ApiError, createFolder, getFile, publishSharedFolderKeys, updateFile, type DriveFile } from './api'
 import { collectAllChildItems, sealChildKey } from './folder-share-crypto'
-import { assertNoSeenCustodyAbove, folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
+import { adoptForeignTreeBeforeMove, assertNoSeenCustodyAbove, folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
 import { deriveFileKey, zeroize } from './crypto'
 import { sharedFoldersEnabled } from './use-feature-flag'
 import { withNetworkRetry } from './net-retry'
@@ -165,6 +165,9 @@ export async function moveOwnerItems(args: {
   masterKey?: Uint8Array
   viewerId?: string | null
 }): Promise<void> {
+  // L12 (2275): moving out of a shared root adopts every F item it takes along
+  // FIRST, and a failed adoption refuses the move entirely (before any update).
+  if (args.masterKey) await adoptBeforeLeavingRoot(args)
   await Promise.all(args.ids.map((id) => updateFile(id, { parent_id: args.destinationId })))
   if (!args.destinationId || !args.masterKey) return
   try {
@@ -174,6 +177,24 @@ export async function moveOwnerItems(args: {
       status: error instanceof ApiError ? error.status : undefined,
     })
     throw new Error(MOVED_BUT_UNPUBLISHED)
+  }
+}
+
+/** The source root an item is leaving, when the move crosses a root boundary. */
+async function adoptBeforeLeavingRoot(args: {
+  ids: string[]
+  destinationId: string | null
+  masterKey?: Uint8Array
+}): Promise<void> {
+  if (!args.masterKey) return
+  // Only with the flag reading ON: an unanswered read must not add requests
+  // (rv-web198e P3), and with it off there is no custody to adopt out of.
+  if (!(await sharedFoldersEnabled())) return
+  const destinationRoot = args.destinationId ? await sharedRootFor(args.destinationId, args.destinationId) : null
+  for (const id of args.ids) {
+    const source = await sharedRootFor(null, id)
+    if (!source || source === destinationRoot) continue
+    await adoptForeignTreeBeforeMove({ masterKey: args.masterKey, rootId: source, itemIds: [id] })
   }
 }
 

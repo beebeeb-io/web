@@ -29,7 +29,8 @@ const MEMBER = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 const MASTER = new Uint8Array(32).fill(7)
 const ROOT = '11111111-1111-4111-8111-111111111111'
 const SUB = '33333333-3333-4333-8333-333333333333'
-const FILE_ID = '22222222-2222-4222-8222-222222222222'
+// A member-created row carries an F id (L12); adoption and owner wraps are F-only.
+const FILE_ID = '22222222-2222-8222-8222-222222222222'
 const LEGACY_KEY = new Uint8Array(32).fill(0x5a)
 const CUSTODY_KEY = new Uint8Array(32).fill(0x77)
 const CHILD_KEY = new Uint8Array(32).fill(0x11)
@@ -76,6 +77,12 @@ const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) =>
   deriveFileKey: async (m: Uint8Array, id: string) => wasm.derive_file_key(m, encoder.encode(id)),
   readFileMetadata: async (k: Uint8Array, n: string) => ops.readFileMetadata(k, n),
 }))
+// The id class and resolver are core's (L12), run in process here.
+const { createOwnedItemOps } = await import('../src/lib/owned-item')
+await mockModuleScoped('../src/lib/owned-item', import.meta.dir, {
+  ownedItem: createOwnedItemOps(wasm),
+})
+
 const api = await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => {
   const ApiErrorClass = r.ApiError as unknown as new (m: string, s: number, code?: string) => Error
   return {
