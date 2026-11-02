@@ -16,8 +16,35 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { installMocks, cap, echo, resetCaptures, resetEchoes } from './helpers/upload-share-mocks'
+import { loadWasm } from './helpers/wasm-crypto-mirror'
 
 await installMocks()
+// T5.1 moved id minting into core behind a worker crossing. The worker cannot
+// load under bun, so the port runs the very same core calls in process; the
+// member-write row below proves the caller, not the transport.
+const wasm = loadWasm()
+await mockModuleScoped('../src/lib/owned-item', import.meta.dir, (real) => ({
+  ...real,
+  ownedItem: {
+    ...real.ownedItem,
+    async mint(masterKey: Uint8Array, idClass: 'owner' | 'foreign') {
+      const minted =
+        idClass === 'foreign' ? wasm.newForeignItemId(masterKey) : wasm.newOwnerItemId(masterKey)
+      return { idText: minted.idText, tag: Uint8Array.from(minted.tag), idClass }
+    },
+    async resume(masterKey: Uint8Array, idText: string, tag: Uint8Array) {
+      const resumed = wasm.resumeNewItemId(masterKey, idText, tag)
+      return {
+        idText: resumed.idText,
+        tag: Uint8Array.from(resumed.tag),
+        idClass: wasm.isForeignItemId(resumed.idText) ? 'foreign' : 'owner',
+      }
+    },
+    async isForeign(itemId: string) {
+      return wasm.isForeignItemId(itemId)
+    },
+  },
+}))
 // owner-adoption is the shared-root reader the publish path asks (real WASM in
 // a worker; the straight mirror is enough to say "not a shared root" here).
 await mockModuleScoped('../src/lib/owner-adoption', import.meta.dir, {
