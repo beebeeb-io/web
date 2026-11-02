@@ -4,7 +4,6 @@
  * Pure: no React, no fetch. The caller owns the bar; this owns the words.
  */
 import type { TransferProgress } from './encrypted-download'
-import { formatSize } from './format-size'
 
 function unitFor(bytes: number): { div: number; label: string; decimals: number } {
   if (bytes < 1024) return { div: 1, label: 'B', decimals: 0 }
@@ -20,7 +19,12 @@ export function progressCopy(p: TransferProgress): string {
   }
   if (p.phase === 'done') return 'Download complete'
 
-  if (p.totalBytes === null) return `Downloading ${formatSize(p.receivedBytes)}`
+  if (p.totalBytes === null) {
+    // No total yet: the received count still names its own unit in the same
+    // MB-style wording ("Downloading 12.4 MB").
+    const own = unitFor(p.receivedBytes)
+    return `Downloading ${(p.receivedBytes / own.div).toFixed(own.decimals)} ${own.label}`
+  }
   // One unit for both numbers, chosen by the total: "12.4 of 48.0 MB".
   const u = unitFor(p.totalBytes)
   const received = (p.receivedBytes / u.div).toFixed(u.decimals)
