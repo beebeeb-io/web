@@ -352,9 +352,33 @@ const cryptoWorker = {
     ;(await content()).decryptorDispose(handle)
   },
 
+  /**
+   * Turn a decryptor that opened chunk 0 into a random-access reader handle.
+   * The reader owns the key in the worker; the page never sees it.
+   */
+  async createChunkReader(decryptorHandle: number): Promise<number> {
+    return (await content()).createChunkReader(decryptorHandle)
+  },
+
+  /** Open ONE frame at its own index; the plaintext buffer is transferred back. */
+  async openChunkAt(handle: number, index: number, isLast: boolean, frame: Uint8Array): Promise<Uint8Array> {
+    const plaintext = (await content()).openChunkAt(handle, index, isLast, frame)
+    return Comlink.transfer(plaintext, [plaintext.buffer])
+  },
+
+  /** Close a reader and wipe its key. Idempotent. */
+  async closeChunkReader(handle: number): Promise<void> {
+    ;(await content()).closeChunkReader(handle)
+  },
+
   /** Live decryptors: the owner never recycles this worker while one is live. */
   liveDecryptorCount(): number {
     return contentOps ? contentOps.liveDecryptorCount() : 0
+  },
+
+  /** Live random-access readers: also never recycled while one is open. */
+  liveReaderCount(): number {
+    return contentOps ? contentOps.liveReaderCount() : 0
   },
 
   /** Seal a note of an existing file under the rule of its recorded pin. */
