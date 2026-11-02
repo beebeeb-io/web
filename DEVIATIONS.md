@@ -88,7 +88,7 @@ review, not decided silently:
 
 ## Task 1690 — share dialog: always ONE full link (split presentation removed)
 
-**Design:** `design/hifi/hifi-upload-share.jsx` (`HiShare`) shows the share
+**Design:** `../../design/hifi/hifi-upload-share.jsx` (workspace root) (`HiShare`) shows the share
 result as two separate items: a bare link input plus a "Decryption key" box
 badged "Send via a different channel" (the code added a
 "Full link / Link + key (extra secure)" toggle on top of it).

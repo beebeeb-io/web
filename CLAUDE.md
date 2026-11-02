@@ -84,3 +84,5 @@ Knowledge graph at `graphify-out/`. Architecture question: `graphify query "<que
 Run `graphify update .` for your own navigation; never commit `graphify-out/` on a feature branch (the lead regenerates it on main).
 When you add/change/remove endpoints, types, build commands or dependencies, update the matching skill in the workspace
 `.claude/skills/` (beebeeb-api.md, beebeeb-designs.md, beebeeb-stack.md, beebeeb-dev.md).
+
+- **Design files** live in the workspace root `../../design/hifi/` — never copy them into this public repo (a snapshot once published a false external-audit claim).

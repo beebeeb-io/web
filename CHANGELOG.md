@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- `design/hifi/`: a stale snapshot of UI mockups committed with the initial import (46 files). Its mockup
+  copy claimed that this code had been externally audited (naming a security firm and a date). That was
+  never true: no external audit has taken place. The mockups live in the private design workspace
+  (`../../design/hifi/`); this repo is the web client. (task 1365; same removal as `core`)
+
 ## [1.1.0] - 2026-10-24
 
 Collect the current web client into a named minor release. The package version
