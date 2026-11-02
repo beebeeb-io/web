@@ -6,12 +6,41 @@
   "buildCmd": "bunx @tailwindcss/cli@4.3.0 -i .design-sync/tailwind-entry.css -o packages/shared/.ds-css/beebeeb.css --minify",
   "cssEntry": ".ds-css/beebeeb.css",
   "extraFonts": [
-    "../../node_modules/@fontsource/inter/400.css",
-    "../../node_modules/@fontsource/inter/500.css",
-    "../../node_modules/@fontsource/inter/600.css",
-    "../../node_modules/@fontsource/inter/700.css",
-    "../../node_modules/@fontsource/jetbrains-mono/400.css",
-    "../../node_modules/@fontsource/jetbrains-mono/500.css"
+    "../../@fontsource/inter/400.css",
+    "../../@fontsource/inter/500.css",
+    "../../@fontsource/inter/600.css",
+    "../../@fontsource/inter/700.css",
+    "../../@fontsource/jetbrains-mono/400.css",
+    "../../@fontsource/jetbrains-mono/500.css"
   ],
-  "readmeHeader": ".design-sync/conventions.md"
+  "readmeHeader": ".design-sync/conventions.md",
+  "componentSrcMap": {
+    "ApiError": null,
+    "IncorrectPasswordError": null,
+    "SessionTooOldForConfirmationError": null
+  },
+  "docsDir": "../../../.design-sync/docs",
+  "overrides": {
+    "BBLogo": {
+      "cardMode": "column"
+    },
+    "Icon": {
+      "cardMode": "column"
+    },
+    "CardSkeleton": {
+      "cardMode": "column"
+    },
+    "FileRowSkeleton": {
+      "cardMode": "column"
+    },
+    "PhotoGroupSkeleton": {
+      "cardMode": "column"
+    },
+    "SharedRowSkeleton": {
+      "cardMode": "column"
+    },
+    "TrashRowSkeleton": {
+      "cardMode": "column"
+    }
+  }
 }
