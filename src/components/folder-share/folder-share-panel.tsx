@@ -31,6 +31,14 @@ import { useFeatureFlag } from '../../lib/use-feature-flag'
 import { createDisabledReason, CreateLinkForm } from './create-link-form'
 import { FolderActivityTab } from './folder-activity-tab'
 import { FolderLinkRow } from './folder-link-row'
+import { ShareMissingItemsAction } from './share-missing-items-action'
+import {
+  collectShareCandidates,
+  disposeShareCandidates,
+  publishShareCandidates,
+  type ShareCandidate,
+  type ShareCandidatesResult,
+} from '../../lib/share-missing-items'
 
 export interface FolderSharePanelProps {
   open: boolean
@@ -58,6 +66,8 @@ export interface FolderSharePanelBodyProps {
   copiedId: string | null
   confirmingRevokeId: string | null
   createSlot?: ReactNode
+  /** L15: "Share N items with this folder", for the owner. */
+  shareSlot?: ReactNode
   loading?: boolean
   error?: string | null
   now?: number
@@ -108,6 +118,7 @@ export function FolderSharePanelBody({
   copiedId,
   confirmingRevokeId,
   createSlot,
+  shareSlot,
   loading,
   error,
   now,
@@ -176,6 +187,8 @@ export function FolderSharePanelBody({
         </ul>
       )}
 
+      {shareSlot}
+
       {createSlot}
     </div>
   )
@@ -205,6 +218,13 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [confirmingRevokeId, setConfirmingRevokeId] = useState<string | null>(null)
   const [tab, setTab] = useState<'people' | 'activity'>('people')
+  // L15: the owner's "Share N items with this folder" list, from the resolver.
+  const [folderKey, setFolderKey] = useState<Uint8Array | null>(null)
+  const [isOwner, setIsOwner] = useState(false)
+  const [share, setShare] = useState<ShareCandidatesResult | null>(null)
+  const [shareLoading, setShareLoading] = useState(false)
+  const [sharing, setSharing] = useState(false)
+  const [shareMessage, setShareMessage] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -243,18 +263,36 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
           })
         }
 
-        const folderKey = custody?.owner_wrapped_folder_key
+        const openedFolderKey = custody?.owner_wrapped_folder_key
           ? await openFolderCustody(key, folderId, fromBase64(custody.owner_wrapped_folder_key))
           : null
-        if (folderKey) {
+        if (openedFolderKey) {
           const entries = await Promise.all(
             linkRows.map(async (link) => {
               if (!link.label_encrypted) return [link.id, null] as const
-              return [link.id, await decryptActorName(folderKey, link.label_encrypted)] as const
+              return [link.id, await decryptActorName(openedFolderKey, link.label_encrypted)] as const
             }),
           )
-          if (live) setLabels(Object.fromEntries(entries))
-          folderKey.fill(0)
+          if (live) {
+            setLabels(Object.fromEntries(entries))
+            setFolderKey(openedFolderKey)
+            // L15: only the owner publishes; the list is the client's proof of
+            // what has no L14-passing wrap, shown by name before confirming.
+            if (custody?.role === 'owner') {
+              setIsOwner(true)
+              setShareLoading(true)
+              void collectShareCandidates({ rootId: folderId, masterKey: key, folderKey: openedFolderKey })
+                .then((result) => {
+                  if (live) setShare(result)
+                })
+                .catch((e) => {
+                  if (live) setError(errorText(e))
+                })
+                .finally(() => {
+                  if (live) setShareLoading(false)
+                })
+            }
+          }
         }
       } catch (e) {
         if (live) setError(errorText(e))
@@ -308,6 +346,47 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
     },
     [confirmingRevokeId],
   )
+
+  // L15: publish exactly the tuples the owner confirmed, then re-read the list.
+  const confirmShare = useCallback(
+    async (confirmed: ShareCandidate[]) => {
+      if (!folderKey) return
+      setSharing(true)
+      setShareMessage(null)
+      try {
+        const { written } = await publishShareCandidates({ rootId: folderId, folderKey, confirmed })
+        setShareMessage(`Shared ${written} item${written === 1 ? '' : 's'}. Everyone with access can open them now.`)
+        disposeShareCandidates(share?.candidates ?? [])
+        setShare(null)
+        setShareLoading(true)
+        setShare(await collectShareCandidates({ rootId: folderId, masterKey: masterKey ?? new Uint8Array(), folderKey }))
+      } catch (e) {
+        setError(errorText(e))
+      } finally {
+        setShareLoading(false)
+        setSharing(false)
+      }
+    },
+    [folderId, folderKey, masterKey, share],
+  )
+
+  const shareSlot =
+    isOwner && folderKey ? (
+      <div className="px-1">
+        <ShareMissingItemsAction
+          result={share}
+          loading={shareLoading}
+          publishing={sharing}
+          rootLabel={folderName}
+          onConfirm={(confirmed) => void confirmShare(confirmed)}
+        />
+        {shareMessage && (
+          <p role="status" className="mt-2 text-[11px] text-ink-3">
+            {shareMessage}
+          </p>
+        )}
+      </div>
+    ) : null
 
   const createSlot = masterKey ? (
     <div className="mt-4">
@@ -385,6 +464,7 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
         copiedId={copiedId}
         confirmingRevokeId={confirmingRevokeId}
         createSlot={createSlot}
+        shareSlot={shareSlot}
         loading={loading}
         error={error}
         onTogglePause={togglePause}
