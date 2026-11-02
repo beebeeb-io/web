@@ -388,7 +388,7 @@ function handlerBody(text: string, name: string): string {
 
 /** The two UI sites that create a folder from a typed name, with the sealer each uses. */
 const NAMED_FOLDER_SITES = [
-  { site: 'drive.tsx handleCreateFolder', file: 'pages/drive.tsx', handler: 'handleCreateFolder', seal: 'encryptFileMetadata' },
+  { site: 'drive.tsx handleCreateFolder', file: 'pages/drive/use-drive-commands.ts', handler: 'handleCreateFolder', seal: 'encryptFileMetadata' },
   { site: 'move-modal.tsx handleNewFolder', file: 'components/move-modal.tsx', handler: 'handleNewFolder', seal: 'encryptFilename' },
 ] as const
 
@@ -731,7 +731,7 @@ describe('R4-5: the Drive banner says why a row check failed and keeps the recor
   })
 
   test('drive.tsx: a failed row check keeps the record, puts it back on the paused banner, and says why', () => {
-    const text = source('pages/drive.tsx')
+    const text = source('pages/drive/use-drive-uploads.ts')
     const start = text.indexOf('async function handleResumeFile(')
     expect(start).toBeGreaterThan(-1)
     const body = text.slice(start, text.indexOf('const { browse: browseResume', start))
@@ -870,7 +870,7 @@ describe('F7: a paused upload into a folder shared with this user carries that f
   })
 
   test('drive.tsx: the banner resolves the parent\'s context before uploading, passes it, and a failure keeps the record', () => {
-    const text = source('pages/drive.tsx')
+    const text = source('pages/drive/use-drive-uploads.ts')
     const start = text.indexOf('async function handleResumeFile(')
     const body = text.slice(start, text.indexOf('const { browse: browseResume', start))
     const resolveAt = body.indexOf('resolveParentUploadContext(')

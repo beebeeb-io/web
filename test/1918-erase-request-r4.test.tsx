@@ -218,7 +218,7 @@ describe('2. the erase request is POSTed exactly once', () => {
   })
 
   test('createEraseRequest goes through the single-shot transport, not the retrying client', () => {
-    const api = read('lib/api.ts')
+    const api = read('lib/api-account.ts')
     const start = api.indexOf('export async function createEraseRequest(')
     const body = api.slice(start, api.indexOf('\n}\n', start))
     expect(body).toContain('postEraseRequestOnce(')
@@ -529,12 +529,13 @@ describe('5. "Restore everything from the erase on <date>"', () => {
     expect(screen).toMatch(/<RestoreFromErase\s+key=\{slotExecuted\.id\}\s+executed=\{slotExecuted\}\s+gate=\{eraseGate\.current\}\s+onStatus=\{applyRestoreStatus\}\s+onDone=\{reloadAfterRestore\}/)
     expect(screen).toContain('restore={restoreSlot}')
     expect(read('pages/trash.tsx')).toContain('<RestoreFromEraseOffer className="px-5 pt-3" onDone={fetchTrash} />')
-    expect(read('pages/drive.tsx')).toContain('notice={<RestoreFromEraseOffer className="mb-6" />}')
+    expect(read('pages/drive/drive-file-list.tsx')).toContain('notice={<RestoreFromEraseOffer className="mb-6" />}')
   })
   test('the transport: POST /account/erase-request/{id}/restore; a 202 folder restore is "in the background"', () => {
-    const api = read('lib/api.ts')
-    expect(api).toContain('/api/v1/account/erase-request/${encodeURIComponent(requestId)}/restore')
-    expect(api).toContain('complete: b.complete !== false')
+    const account = read('lib/api-account.ts')
+    expect(account).toContain('/api/v1/account/erase-request/${encodeURIComponent(requestId)}/restore')
+    // The folder-restore body is the files API's: its `complete` default lives there.
+    expect(read('lib/api-files.ts')).toContain('complete: b.complete !== false')
     expect(read('pages/trash.tsx')).toContain("title: 'Restoring in the background'")
   })
 })

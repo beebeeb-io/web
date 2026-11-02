@@ -28,7 +28,7 @@ test('2236 each request envelope field changes the drive row signature', () => {
   }
 })
 test('2236 drive projection carries each request envelope field', () => {
-  const source = readFileSync(new URL('../src/pages/drive.tsx',import.meta.url),'utf8')
+  const source = readFileSync(new URL('../src/pages/drive/use-drive-files.ts',import.meta.url),'utf8')
   const mapper = source.slice(source.indexOf('const syncNodeToDriveFile'),source.indexOf('// refreshFromSync'))
   for (const field of Object.keys(envelope)) expect(mapper.includes(`${field}: n.${field}`)).toBe(true)
 })
