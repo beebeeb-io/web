@@ -152,7 +152,7 @@ describe('every owner folder-create goes through createOwnerFolder', () => {
   // subfolder whose name guests and members cannot read.
   const ALLOWED: Record<string, string> = {
     'src/lib/owner-upload-key.ts': 'createOwnerFolder itself',
-    'src/lib/api.ts': 'the definition',
+    'src/lib/api-files.ts': 'the definition (api.ts is a facade over the endpoint modules)',
   }
 
   function sources(dir: string): string[] {

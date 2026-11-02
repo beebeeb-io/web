@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url'
 import * as wasm from 'beebeeb-wasm'
 import { createContentOps, type ContentOps, type ContentPin } from '../../src/lib/content-crypto'
 import type { DecryptorPort, StreamingDecryptor } from '../../src/lib/crypto'
+import { decodeEnvelope, encodeEnvelope } from '../../src/lib/metadata-envelope'
 import { mockModuleScoped } from './scoped-module-mock'
 
 let initialised = false
@@ -91,6 +92,11 @@ export async function installWasmCryptoMirror(
         mirror.decryptStreams.push({ fileId, pin })
         return new RealDecryptor(ops.createDecryptor(fileKey, fileId, pin), inProcessPort(ops, opts.transferFrames))
       },
+      // The envelope writer/reader are worker crossings (W-P3-2); run core's
+      // codec in-process so a rename that re-seals a name does not hang.
+      serializeEncryptedBlob: async (nonce: Uint8Array, ciphertext: Uint8Array) =>
+        encodeEnvelope(w, nonce, ciphertext),
+      parseEncryptedBlob: async (payload: string) => decodeEnvelope(w, payload),
       encryptNoteFor: async (fileKey: Uint8Array, text: string, pin: ContentPin) =>
         ops.encryptNoteFor(fileKey, text, pin),
       decryptNote: async (fileKey: Uint8Array, noteEncrypted: string) => ops.decryptNote(fileKey, noteEncrypted),
