@@ -9,6 +9,7 @@ import { createNamedOwnerFolder, folderCreateFailureToast } from '../lib/new-fol
 import { useToast } from './toast'
 import { useKeys } from '../lib/key-context'
 import { decryptFileMetadata, encryptFilename } from '../lib/crypto'
+import { pickerFolderLabel } from '../lib/display-markers'
 
 interface MoveModalProps {
   open: boolean
@@ -233,13 +234,15 @@ export function MoveModal({
                   <Icon name="chevron-right" size={11} className="text-ink-4" />
                 )}
                 {isLast ? (
-                  <span className="font-semibold text-ink">{crumb.name}</span>
+                  <span className="font-semibold text-ink">
+                    {crumb.id ? pickerFolderLabel(crumb.id, crumb.name) : crumb.name}
+                  </span>
                 ) : (
                   <button
                     onClick={() => handleBreadcrumbNav(i)}
                     className="text-amber-deep font-medium hover:underline cursor-pointer"
                   >
-                    {crumb.name}
+                    {crumb.id ? pickerFolderLabel(crumb.id, crumb.name) : crumb.name}
                   </button>
                 )}
               </span>
@@ -310,7 +313,7 @@ export function MoveModal({
                   <span
                     className={`flex-1 text-[13px] ${isSelected ? 'font-semibold' : ''}`}
                   >
-                    {displayName(folder)}
+                    {pickerFolderLabel(folder.id, displayName(folder))}
                   </span>
                   {isMoved ? (
                     <span className="text-[10.5px] text-ink-4 whitespace-nowrap">

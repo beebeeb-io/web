@@ -7,7 +7,7 @@ import { FileRow, type FileRowProps } from './file-list/file-row'
 import { FileListHeader } from './file-list/file-list-header'
 import { displayNameFrom, useDecryptedNames } from './file-list/use-decrypted-names'
 import { useFileThumbnails } from './file-list/use-file-thumbnails'
-import { needsOwnership } from '../lib/owner-adoption'
+import { needsOwnership, classifyItemIds, isForeignItemById } from '../lib/owner-adoption'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
@@ -527,6 +527,20 @@ export function FileList({
   const allSelected = sortedFiles.length > 0 && selectedIds.size === sortedFiles.length
   const someSelected = selectedIds.size > 0 && selectedIds.size < sortedFiles.length
 
+  // T5.5: ask core for the id class of every listed row once per id. The F
+  // marker then reads this client's answer (`isForeignItemById`), never the
+  // server-supplied attribution columns.
+  const foreignClassKey = sortedFiles.map((f) => f.id).join(',')
+  const [foreignClassTick, setForeignClassTick] = useState(0)
+  useEffect(() => {
+    if (!foreignClassKey) return
+    let cancelled = false
+    void classifyItemIds(foreignClassKey.split(',')).then(() => {
+      if (!cancelled) setForeignClassTick((n) => n + 1)
+    })
+    return () => { cancelled = true }
+  }, [foreignClassKey])
+
   // ─── Row click handler ─────────────────────────────
   // Branching + the pending-select-timer clear/schedule decision live in
   // src/lib/pending-select-timer.ts (unit-tested there, framework-free) —
@@ -768,6 +782,7 @@ export function FileList({
         isUnlocked,
         hasActiveShare: (file.share_count ?? 0) > 0 || !!sharedFileIds?.has(file.id),
         canShowTrustDetails: !!onShowTrustDetails && !file.is_folder,
+        isForeign: foreignClassTick >= 0 && isForeignItemById(file.id),
       },
       thumbnail: {
         enabled: !!(file.has_thumbnail && isUnlocked),

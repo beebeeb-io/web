@@ -44,6 +44,11 @@ export interface FileRowProps {
     hasActiveShare: boolean
     /** The viewer gets the trust-details button (unlocked, non-folder, handler present). */
     canShowTrustDetails: boolean
+    /**
+     * This row's id is of the foreign class (core's answer). Set from the id
+     * class, never from `uploaded_by`/`acted_via_share_id` (spec 2275).
+     */
+    isForeign: boolean
   }
   thumbnail: {
     /** A thumbnail exists and the vault is unlocked. */
@@ -237,6 +242,16 @@ export function FileRow({
                 aria-label="Loading…"
               />
           }
+          {/* F row marker — from the id class only, never a member or link label. */}
+          {flags.isForeign && (
+            <span
+              data-testid="foreign-row-marker"
+              className="inline-flex items-center shrink-0 rounded border border-line bg-paper-2 px-1 py-px font-mono text-[9px] text-ink-3"
+              title="Added by someone else"
+            >
+              Added by someone else
+            </span>
+          )}
           {/* Star toggle — filled when starred, outline when not */}
           <button
             type="button"

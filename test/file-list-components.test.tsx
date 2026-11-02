@@ -47,6 +47,7 @@ function props(over: Partial<FileRowProps> = {}): FileRowProps {
       isUnlocked: true,
       hasActiveShare: false,
       canShowTrustDetails: false,
+      isForeign: false,
     },
     thumbnail: { enabled: false, url: undefined, folderColor: null, viewerCount: undefined },
     inlineRename: {
@@ -108,6 +109,14 @@ describe('FileRow rendering per kind', () => {
     expect(out).not.toContain('ciphertext')
   })
 
+  test('T5.5: an F row carries the id-class marker next to its name', () => {
+    const base = props()
+    const out = html(<FileRow {...props({ flags: { ...base.flags, isForeign: true } })} />)
+    expect(out).toContain('data-testid="foreign-row-marker"')
+    expect(out).toContain('Added by someone else')
+    expect(html(<FileRow {...props()} />)).not.toContain('foreign-row-marker')
+  })
+
   test('selected and current rows keep their distinct classes', () => {
     const selected = html(
       <FileRow {...props({ selection: { selectable: true, isSelected: true, isCurrent: false, anySelected: true } })} />,
@@ -140,6 +149,7 @@ describe('FileRow rendering per kind', () => {
             isUnlocked: true,
             hasActiveShare: true,
             canShowTrustDetails: false,
+            isForeign: false,
           },
         })}
       />,
@@ -164,6 +174,7 @@ describe('FileRow rendering per kind', () => {
             isUnlocked: true,
             hasActiveShare: false,
             canShowTrustDetails: true,
+            isForeign: false,
           },
         })}
       />,
