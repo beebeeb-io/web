@@ -22,7 +22,7 @@
 
 ## Findings in the shipped code (not fixed here)
 - `BBButton` and `BBInput` have no disabled styles.
-- ~~The `key` icon draws a stray line~~ (design PR beebeeb-io/workspace#488, `_shots/defect-key-icon-split.png`): fixed in the shared `Icon` by task 2322 (one `<path>` per glyph; the split at `z` cut the relative `m0 0` loose from its start point). The web app's own `src/components/icons.tsx` is a divergent copy with the same split and still draws the line; it is not part of the sync and was not touched.
+- ~~The `key` icon draws a stray line~~ (design PR beebeeb-io/workspace#488, `_shots/defect-key-icon-split.png`): fixed in the shared `Icon` by task 2322 (one `<path>` per glyph; the split at `z` cut the relative `m0 0` loose from its start point). The web app's own `src/components/icons.tsx` is a divergent copy with the same split, so its `key` would still draw the line; none of its 10 importers renders `key` today (checked 2026-11-02), it is not part of the sync and was not touched.
 - `BBLogo` renders the wordmark as live text, while the brand rule says the mark comes from `repos/core/brand/` as paths.
 - `BBProductIcon` / `BBProductLockup` (task 2322) restate the geometry of `repos/core/brand/products/build.py` as constants; the web test run does not read core, so a change to the generator needs the same numbers here (checked once, 2026-11-02: all 10 icons pixel-identical at 512).
 
