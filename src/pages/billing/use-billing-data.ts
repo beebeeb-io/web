@@ -12,7 +12,7 @@
  * Must not: render, or own the checkout-return and cancel handlers.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useReducer, useRef } from 'react'
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { isCheckoutReturn } from '../../lib/checkout-return'
 import { useToast } from '../../components/toast'
@@ -84,7 +84,6 @@ import {
   upgradeCardFromFallback,
   upgradeCardFromPlanMeta,
 } from './upgrade-plans'
-import { useReducer } from 'react'
 import {
   billingFlowReducer,
   initialBillingFlow,

@@ -10,8 +10,7 @@
  * Must not: own state or call the API.
  */
 
-import { BBButton } from '@beebeeb/shared'
-import { Icon } from '@beebeeb/shared'
+import { BBButton, Icon } from '@beebeeb/shared'
 import { cardTrialCancelCopy } from '../../lib/no-card-trial'
 import { TrialEndedCard, TrialStartCard, TrialUnavailableNote } from '../../components/no-card-trial'
 import { formatStorageSI } from '../../lib/format'

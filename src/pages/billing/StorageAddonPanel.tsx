@@ -8,8 +8,7 @@
  * Must not: own state or call the API.
  */
 
-import { BBButton } from '@beebeeb/shared'
-import { Icon } from '@beebeeb/shared'
+import { BBButton, Icon } from '@beebeeb/shared'
 import { formatStorageSI } from '../../lib/format'
 import { formatCentsAsEur } from '../../lib/billing/money'
 import { useBillingModel } from './model-context'

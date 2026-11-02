@@ -9,9 +9,7 @@
  */
 
 import { ALLOWANCE_LINE, currentPlanName } from '../../lib/current-plan-display'
-import { BBButton } from '@beebeeb/shared'
-import { BBChip } from '@beebeeb/shared'
-import { Icon } from '@beebeeb/shared'
+import { BBButton, BBChip, Icon } from '@beebeeb/shared'
 import {
   cancelDowngrade,
 } from '../../lib/api'

@@ -11,9 +11,7 @@
  * Must not: own state or call the API.
  */
 
-import { BBButton } from '@beebeeb/shared'
-import { BBChip } from '@beebeeb/shared'
-import { Icon } from '@beebeeb/shared'
+import { BBButton, BBChip, Icon } from '@beebeeb/shared'
 import { StorageBreakdown } from '../../components/storage-breakdown'
 import { Card, SectionLabel } from './ui'
 import { PaymentMethodPanel } from './PaymentMethodPanel'

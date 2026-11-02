@@ -7,9 +7,7 @@
  * Must not: own state or call the API.
  */
 
-import { BBButton } from '@beebeeb/shared'
-import { BBToggle } from '@beebeeb/shared'
-import { BBInput } from '@beebeeb/shared'
+import { BBButton, BBToggle, BBInput } from '@beebeeb/shared'
 import { useBillingModel } from './model-context'
 
 export function InvoicePreferencesPanel() {

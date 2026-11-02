@@ -8,8 +8,7 @@
  * Must not: own state or call the API.
  */
 
-import { BBButton } from '@beebeeb/shared'
-import { Icon } from '@beebeeb/shared'
+import { BBButton, Icon } from '@beebeeb/shared'
 import { useBillingModel } from './model-context'
 
 export function BillingAddonDialog() {
