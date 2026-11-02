@@ -23,6 +23,11 @@ import {
 } from './crypto'
 import type { IndexTransport, ShardCoord, ShardRef } from './shared-folder-index-shards'
 import { IndexVersionConflictError } from './shared-folder-index-shards'
+import {
+  filterIndexRowsForSharing,
+  type IndexCandidateRow,
+  type IndexRowSkipCounts,
+} from './shared-index-writer'
 
 export const SEARCH_INDEX_MAX_ENTRIES = 20_000
 
@@ -171,6 +176,10 @@ export interface PushSharedIndexDeltaArgs {
  * Encrypt and PUT the dirty buckets. A 409 re-reads the server's current
  * version and retries (at most `INDEX_CONFLICT_RETRIES` attempts per page);
  * a bucket that never lands is returned in `dirtyBuckets`.
+ *
+ * L14/T5.6: the index behind this call must have been built through
+ * `rebuildSharedIndexFromListing`, whose filter is the only way an entry
+ * enters a written index.
  */
 export async function pushSharedIndexDelta(
   args: PushSharedIndexDeltaArgs,
@@ -211,18 +220,51 @@ export async function pushSharedIndexDelta(
 }
 
 export interface RebuildSharedIndexArgs {
-  entries: IndexFileEntry[]
+  /** The listing rows to consider; the L14 filter decides which are indexed. */
+  rows: readonly IndexCandidateRow[]
+  rootId: string
+  folderKey: Uint8Array
+  masterKey: Uint8Array
+  /** R's inventory wraps (item id -> L7 wrap). */
+  wraps: ReadonlyMap<string, Uint8Array>
   numShards?: number
 }
 
+export interface RebuildSharedIndexResult {
+  index: SharedSearchIndex
+  truncated: boolean
+  fileCount: number
+  /** What the L14 filter dropped, by reason. */
+  skipped: IndexRowSkipCounts
+  /** The verified entries that were indexed. */
+  entries: IndexFileEntry[]
+}
+
 /**
- * Build a fresh index from decrypted listing entries. Entries past
- * `SEARCH_INDEX_MAX_ENTRIES` are dropped and reported as `truncated`, so a
- * hostile or enormous listing can never grow the index without bound.
+ * T5.6 / L14: build the shared index from a listing, keeping ONLY rows that
+ * pass every L14 check (`filterIndexRowsForSharing`). Request rows and
+ * plaintext names are never indexed; a failing row is skipped and counted.
+ * Entries past `SEARCH_INDEX_MAX_ENTRIES` are dropped and reported.
  */
 export async function rebuildSharedIndexFromListing(
   args: RebuildSharedIndexArgs,
-): Promise<{ index: SharedSearchIndex; truncated: boolean; fileCount: number }> {
+): Promise<RebuildSharedIndexResult> {
+  const { entries, skipped } = await filterIndexRowsForSharing(args)
+  const built = await assembleVerifiedSharedIndex({ entries, numShards: args.numShards })
+  return { ...built, skipped, entries }
+}
+
+/**
+ * Assemble an index from entries the L14 filter already verified. Not a
+ * listing writer: callers must go through `rebuildSharedIndexFromListing`.
+ * Entries past `SEARCH_INDEX_MAX_ENTRIES` are dropped and reported as
+ * `truncated`, so a hostile or enormous listing can never grow the index
+ * without bound.
+ */
+export async function assembleVerifiedSharedIndex(args: {
+  entries: IndexFileEntry[]
+  numShards?: number
+}): Promise<{ index: SharedSearchIndex; truncated: boolean; fileCount: number }> {
   const numShards = args.numShards ?? SHARED_INDEX_NUM_SHARDS
   const kept = args.entries.slice(0, SEARCH_INDEX_MAX_ENTRIES)
   const truncated = args.entries.length > SEARCH_INDEX_MAX_ENTRIES

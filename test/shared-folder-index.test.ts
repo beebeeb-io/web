@@ -56,7 +56,7 @@ const {
   SharedSearchIndex,
   loadSharedIndex,
   pushSharedIndexDelta,
-  rebuildSharedIndexFromListing,
+  assembleVerifiedSharedIndex,
 } = await import('../src/lib/shared-folder-index')
 const { publicIndexTransport, ownerIndexTransport, IndexVersionConflictError } = await import(
   '../src/lib/shared-folder-index-shards'
@@ -185,13 +185,13 @@ describe('pushSharedIndexDelta', () => {
   })
 })
 
-describe('rebuildSharedIndexFromListing', () => {
+describe('assembleVerifiedSharedIndex', () => {
   test('stops at the bound and reports the overflow', async () => {
     const entries = Array.from({ length: SEARCH_INDEX_MAX_ENTRIES + 1 }, (_, i) => ({
       fileId: `id-${i}`,
       name: `name-${i}`,
     }))
-    const result = await rebuildSharedIndexFromListing({ entries })
+    const result = await assembleVerifiedSharedIndex({ entries })
     expect(result.truncated).toBe(true)
   })
 
@@ -200,7 +200,7 @@ describe('rebuildSharedIndexFromListing', () => {
       fileId: `id-${i}`,
       name: `name-${i}`,
     }))
-    const result = await rebuildSharedIndexFromListing({ entries })
+    const result = await assembleVerifiedSharedIndex({ entries })
     expect(result.truncated).toBe(false)
   })
 })
