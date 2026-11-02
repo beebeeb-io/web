@@ -26,7 +26,7 @@ never by curl. A new spec is trusted only after it has been seen to fail against
 
 ## Module map
 
-Module map: MAP.md (generated; make map REPO=<repo>) — start here for "where does X live"; do not hand-edit.
+Module map: MAP.md is the index of the generated directory maps — start here for "where does X live"; read the directory `MAP.md` for the modules.
 
 ```
 src/main.tsx, app.tsx      entry; routes (ProtectedRoute; pages render inside DriveLayout); WasmGuard blocks until crypto is ready
