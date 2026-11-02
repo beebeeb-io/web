@@ -1,3 +1,4 @@
+import { resetDirectSession } from './direct/session'
 import {
   createContext,
   useCallback,
@@ -89,7 +90,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // moves the shared login stamp, so a request issued under the previous login can
   // no longer sign the new one out when its 403 arrives late.
   const setUser = useCallback((u: AuthUser | null) => {
+    const before = getAuthStamp()
     setAuthIdentity(u?.user_id ?? null)
+    if (getAuthStamp().generation !== before.generation) resetDirectSession()
     setUserState(u)
   }, [])
 
@@ -226,7 +229,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (event.data?.type === 'logout' || event.data?.type === 'login') {
         // 1948 (web#169 review): the shared cookie jar now holds another login (or
         // none); anything this tab still has in flight belongs to the old one.
-        bumpAuthGeneration()
+        bumpAuthGeneration(); resetDirectSession()
       }
       if (event.data?.type === 'logout') {
         // Task 1814: another tab signed the account out; a coupon held here goes with it.
@@ -289,7 +292,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     // 1948 (web#169 review): a new login starts; a refusal of anything issued
     // before it is about the previous login.
-    bumpAuthGeneration()
+    bumpAuthGeneration(); resetDirectSession()
     const result = await apiLogin(email, password)
     if (!result.requires_2fa) {
       clearSignedOutInactive() // 1948: a working login replaces the dead one
@@ -305,7 +308,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [broadcastLogin, setUser])
 
   const verify2fa = useCallback(async (partialToken: string, code: string): Promise<LoginResult> => {
-    bumpAuthGeneration() // 1948: see login()
+    bumpAuthGeneration(); resetDirectSession() // 1948: see login()
     const result = await apiVerify2fa(partialToken, code)
     clearSignedOutInactive() // 1948: a working login replaces the dead one
     clearHeldCoupon() // an existing account, not the signup the coupon was held for (1814)
@@ -324,7 +327,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [setUser])
 
   const logout = useCallback(async () => {
-    bumpAuthGeneration() // 1948: nothing issued before the sign-out may act after it
+    bumpAuthGeneration(); resetDirectSession() // 1948: nothing issued before the sign-out may act after it
     // Notify other tabs first so they can clear their master key in parallel
     // with this tab's local cleanup. Receivers run the same local logout
     // path but do NOT re-broadcast (see the channel onMessage handler).

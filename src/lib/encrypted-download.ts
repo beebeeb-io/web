@@ -414,8 +414,22 @@ export async function pipeDecryptedChunks(
     throw err
   } finally {
     if (signal) signal.removeEventListener('abort', onAbort)
+    await reader.cancel().catch(() => {})
     try { reader.releaseLock() } catch {}
   }
+}
+
+// Import/init failures only select the legacy transport before any bytes arrive.
+// Negotiation/auth/version failures retain their existing terminal semantics.
+async function directResponse(fileKey: Uint8Array, content: FileContentRef, signal: AbortSignal) {
+  let transport: typeof import('./direct/download')
+  try { transport = await import('./direct/download') }
+  catch (error) {
+    if (signal.aborted) throw signal.reason ?? error
+    return null
+  }
+  return transport.directResponse(content.fileId, content.pin, signal,
+    () => startDecryptStream(fileKey, content.fileId, content.pin))
 }
 
 // ─── Public API ─────────────────────────────────────
@@ -459,7 +473,8 @@ export async function encryptedDownload(
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, {
+  const direct = await directResponse(fileKey, meta.content, opts?.signal ?? new AbortController().signal)
+  const res = direct ?? await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, {
     headers,
     signal: opts?.signal,
     credentials: 'include',
@@ -476,7 +491,7 @@ export async function encryptedDownload(
   // streaming path sees the same plaintext size the buffered path does.
   const contentLengthHeader = parseHeaderInt(res.headers.get('Content-Length'))
   const overhead = effectiveChunkCount * CHUNK_OVERHEAD
-  const effectivePlaintextSize = (contentLengthHeader !== null && contentLengthHeader === sizeBytes)
+  const effectivePlaintextSize = direct ? contentLengthHeader ?? sizeBytes : (contentLengthHeader !== null && contentLengthHeader === sizeBytes)
     ? sizeBytes - overhead
     : sizeBytes
 
@@ -498,7 +513,16 @@ export async function encryptedDownload(
       if (opts?.signal) opts.signal.addEventListener('abort', onAbortHandler, { once: true })
 
       try {
-        await pipeDecryptedChunks(
+        if (direct) {
+          let written = 0
+          await res.body.pipeTo(new WritableStream<Uint8Array>({
+            async write(chunk) {
+              await writer.write(chunk)
+              written += chunk.length
+              opts?.onProgress?.(written, effectivePlaintextSize)
+            },
+          }), { signal: opts?.signal })
+        } else await pipeDecryptedChunks(
           res.body,
           fileKey,
           meta.content,
@@ -523,6 +547,7 @@ export async function encryptedDownload(
       // Tear down the partial download and propagate the error so callers
       // see the same contract regardless of which path was taken.
       try { await handles?.abort(err) } catch {}
+      await res.body?.cancel().catch(() => {})
       throw err
     }
   }
@@ -541,7 +566,7 @@ export async function encryptedDownload(
   const encryptedBlob = await res.arrayBuffer()
   const encryptedBytes = new Uint8Array(encryptedBlob)
 
-  const decrypted = await decryptEncryptedBytes(
+  const decrypted = direct ? encryptedBytes : await decryptEncryptedBytes(
     fileKey,
     meta.content,
     encryptedBytes,
@@ -586,14 +611,15 @@ export async function decryptToBlob(
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, { headers, credentials: 'include' })
+  const direct = await directResponse(fileKey, meta.content, new AbortController().signal)
+  const res = direct ?? await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, { headers, credentials: 'include' })
   if (!res.ok) throw new ApiError(res.statusText, res.status)
 
   const encryptedBytes = new Uint8Array(await res.arrayBuffer())
   const effectiveChunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? chunkCount
   const effectiveChunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size')) ?? CHUNK_SIZE
 
-  const decrypted = await decryptEncryptedBytes(
+  const decrypted = direct ? encryptedBytes : await decryptEncryptedBytes(
     fileKey,
     meta.content,
     encryptedBytes,

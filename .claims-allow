@@ -33,6 +33,14 @@ src/lib/google-import.ts|www.googleapis.com|Google Drive import: user-initiated 
 src/pages/settings/import.tsx|www.googleapis.com|same Google import flow, settings entry point (OAuth scope string)
 src/pages/settings/import.tsx|accounts.google.com|Google OAuth consent screen redirect, user-initiated
 
+# Direct-download storage origins — exact production pool hosts from the W5
+# read-only export; used only for browser connect-src and direct object reads.
+index.html|hel1.your-objectstorage.com|Task 2173 direct-download storage origin from the lead-supplied W5 pool export
+index.html|nbg1.your-objectstorage.com|Task 2173 direct-download storage origin from the lead-supplied W5 pool export
+index.html|your-objectstorage.com|Task 2173 storage-origin suffix in the CSP for the lead-supplied W5 pool export
+nginx.conf|hel1.your-objectstorage.com|Task 2173 direct-download storage origin from the lead-supplied W5 pool export
+nginx.conf|nbg1.your-objectstorage.com|Task 2173 direct-download storage origin from the lead-supplied W5 pool export
+
 # Our own docs subdomain.
 src/pages/forgot-password.tsx|docs.beebeeb.io|link to our own recovery docs page
 src/pages/onboarding.tsx|docs.beebeeb.io|link to our own docs, onboarding welcome copy
