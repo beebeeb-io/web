@@ -28,4 +28,4 @@
 - `buildCmd` pins Tailwind 4.3.0 by hand: when `bun.lock` moves, update it, or the compiled classes drift from the product.
 - The previews and docs quote product copy; when the product copy changes they go stale silently.
 - `tokens.css` is the shared source; web's `src/index.css` repeats the same theme plus `--color-canvas-dark` and app-only classes (`.auth-bg`, `.upload-glow`) that are NOT in the sync.
-- The project held hand-made files before the first sync (preview/, ui_kits/, assets/, ...); the first upload's deletes were reviewed with Guus, see the git log of this file.
+- First sync, 2026-11-02 (re-adopted project, no anchor): Guus approved deleting 69 hand-made files that predate the sync (SKILL.md, colors_and_type.css with old `--paper`-style names, preview/, ui_kits/, _temp/, the source copies in assets/). Kept on purpose: the 11 brand images in `assets/` (logo, icon, favicons, app screenshots, X header PNGs) and `uploads/`. They are not produced by this build: never put them in a delete list.
