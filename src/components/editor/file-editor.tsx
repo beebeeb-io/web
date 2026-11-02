@@ -236,7 +236,6 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
       undefined,
       undefined,
       signal,
-      getFileKey,
       {
         conflictCreated,
         // Same file id = a new version of THIS file: its recorded pin decides

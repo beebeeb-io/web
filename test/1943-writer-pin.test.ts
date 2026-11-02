@@ -24,6 +24,8 @@ import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { hexToBytes, inProcessPort, loadVectors, loadWasm, toHex } from './helpers/wasm-crypto-mirror'
 import { applyRecordedPinInRegistry, createContentOps } from '../src/lib/content-crypto'
 
+import { ServerChangedItemIdError, assertEchoedItemId } from '../src/lib/item-id-echo'
+
 const wasm = loadWasm()
 const ops = createContentOps(wasm)
 const V = loadVectors()
@@ -86,6 +88,9 @@ await mockModuleScoped('../src/lib/net-retry', import.meta.dir, {
 await mockModuleScoped('../src/lib/api', import.meta.dir, {
   initUpload: async (metadata: { file_id: string; name_encrypted: string }) => {
     cap.initCalls.push(metadata)
+    // L13: the real initUpload (api.ts) checks the answer against the id it
+    // proposed; this mock answers like the server and checks like the primitive.
+    assertEchoedItemId(metadata.file_id, serverFileId(metadata.file_id))
     return {
       protocol: 'v2', file_id: serverFileId(metadata.file_id), tenant_id: 't',
       object_version_id: 'ov', upload_session_id: 'us', chunk_size_bytes: 4, chunk_count: 1,
@@ -138,7 +143,7 @@ function v1Name(fileKey: Uint8Array, name: string): string {
 async function upload(fileId: string, fileKey: Uint8Array, options?: { replaceOf?: { nameEncrypted: string } }) {
   return encryptedUpload(
     textFile(), fileId, fileKey, new Uint8Array(32).fill(1), undefined, undefined, undefined, undefined,
-    undefined, async () => fileKey, options,
+    undefined, options,
   )
 }
 
@@ -184,10 +189,12 @@ describe('replace: the pin is read from the existing file’s authenticated meta
     expect(cap.initCalls).toEqual([])
   })
 
-  test('if the server answers with ANOTHER file id, that is a new file: no pin is applied', async () => {
+  test('L13: a replace init answered with ANOTHER id aborts — nothing pinned or written', async () => {
     serverFileId = () => '1943cafe-0000-4000-8000-0000000000ff'
-    await upload(V2_FILE_ID, V2_KEY, { replaceOf: { nameEncrypted: V2_NAME } })
-    expect(cap.events.filter((e) => e.startsWith('pin:'))).toEqual([])
+    await expect(upload(V2_FILE_ID, V2_KEY, { replaceOf: { nameEncrypted: V2_NAME } })).rejects.toBeInstanceOf(
+      ServerChangedItemIdError,
+    )
+    expect(cap.events).toEqual([])
   })
 })
 
@@ -271,11 +278,9 @@ describe('replace init sends the replaced file’s name_encrypted unchanged', ()
     expect(meta.mime_type).toStartWith('text/plain')
   })
 
-  test('a replace answered with ANOTHER id is a new file: that id gets a fresh name of its own', async () => {
+  test('L13: no rename ever lands on an answered id (a substitute is an abort)', async () => {
     serverFileId = () => '1943cafe-0000-4000-8000-0000000000ff'
-    await upload(V2_FILE_ID, V2_KEY, { replaceOf: { nameEncrypted: V2_NAME } })
-    expect(cap.nameUpdates).toHaveLength(1)
-    expect(cap.nameUpdates[0].id).toBe('1943cafe-0000-4000-8000-0000000000ff')
-    expect(cap.nameUpdates[0].name_encrypted).not.toBe(V2_NAME)
+    await expect(upload(V2_FILE_ID, V2_KEY, { replaceOf: { nameEncrypted: V2_NAME } })).rejects.toThrow()
+    expect(cap.nameUpdates).toEqual([])
   })
 })

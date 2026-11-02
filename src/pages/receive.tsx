@@ -283,7 +283,7 @@ export function Receive() {
       const file = new File([savedBlob], savedFilename, {
         type: savedBlob.type || 'application/octet-stream',
       })
-      await encryptedUpload(file, fileId, fileKey, getMasterKey(), undefined, undefined, undefined, undefined, undefined, getFileKey)
+      await encryptedUpload(file, fileId, fileKey, getMasterKey(), undefined, undefined, undefined, undefined)
       setVaultSavePhase('saved')
     } catch (err) {
       setVaultSaveError(

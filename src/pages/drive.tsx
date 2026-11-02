@@ -66,6 +66,7 @@ import {
   type SyncNode,
 } from '../lib/api'
 import { createOwnerFolder, moveOwnerItems } from '../lib/owner-upload-key'
+import { createNamedOwnerFolder, folderCreateFailureToast } from '../lib/new-folder'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { usePlanBlock } from '../hooks/use-plan-block'
 import { noCardTrialStatus, trialCapShortfallNotice } from '../lib/no-card-trial'
@@ -82,7 +83,8 @@ import {
   StorageFullBanner,
   shouldShowUpgradeNudge,
 } from '../components/upgrade-nudge-modal'
-import { encryptedUpload } from '../lib/encrypted-upload'
+import { encryptedUpload, type SharedFolderUploadContext } from '../lib/encrypted-upload'
+import { resolveParentUploadContext, sharedParentFailureMessage } from '../lib/shared-parent-context'
 import { UploadRestartFailedError } from '../lib/upload-session-reinit'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../lib/bulk-download'
@@ -90,12 +92,16 @@ import {
   computeFingerprint,
   getActiveUploads,
   findByFingerprint,
+  planResume,
+  pausedRowCheckFailedMessage,
+  PausedVersionRefusedError,
   removeUploadState,
   type UploadState,
 } from '../lib/upload-resume'
 import { encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata, readFileMetadata } from '../lib/crypto'
 import { renameOwnerRow } from '../lib/owner-rename'
 import { assertCurrentVersionWritable } from '../lib/owner-write-guard'
+import { lookupOwnRow } from '../lib/stored-row'
 import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { RestoreFromEraseOffer } from '../components/restore-from-erase'
@@ -1116,12 +1122,68 @@ export function Drive() {
       // Remove from paused list immediately
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== match.fileId))
 
-      const fileKey = await getFileKey(match.fileId)
+      // L13 (SF-0001): only a session this client minted may be resumed. A
+      // record from before the marker (its id may be the server's) restarts —
+      // never resumed, never left looping on the old id. `planResume` is the
+      // same rule encryptedUpload applies: a paused new version of a live row
+      // restarts as a version of it with that row's own stored name; one whose
+      // row is gone is refused (nothing uploaded); anything else restarts under
+      // a fresh id. Its row is not abandoned file-wide (that could end another
+      // device's live upload); the server's lease sweep ends the stale session.
       try {
+        const recordKey = await getFileKey(match.fileId)
+        let plan: Awaited<ReturnType<typeof planResume>>
+        try {
+          plan = await planResume(match, {
+            mintId: () => crypto.randomUUID(),
+            lookupRow: (id) => lookupOwnRow(id, recordKey),
+          })
+        } catch (err) {
+          // The row check could not answer (401 / 403 / 410, no connection, a
+          // crypto worker error). Nothing was uploaded and the record is KEPT:
+          // it goes back on the paused banner, where Dismiss removes it, and
+          // the toast says why. Never a "Queued" card that silently loops.
+          setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+          setPausedUploads((prev) => (prev.some((u) => u.fileId === match.fileId) ? prev : [...prev, match]))
+          showToast({ icon: 'upload', title: 'Upload not restarted', description: pausedRowCheckFailedMessage(err), danger: true })
+          continue
+        }
+        if (plan.kind === 'refuse') {
+          await removeUploadState(match.fileId)
+          setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+          showToast({ icon: 'upload', title: 'Upload not restarted', description: userFriendlyError(new PausedVersionRefusedError(plan.reason)), danger: true })
+          continue
+        }
+        // F7 (SF-0001 round 5): a paused upload into a folder shared WITH this
+        // user is a member's upload: it must carry that folder's upload
+        // context, so the file key is wrapped for the owner and members. When
+        // that context cannot be resolved, nothing is uploaded (never an
+        // unwrapped file in a shared folder): the record is KEPT, back on the
+        // paused banner (Dismiss removes it), and the toast says why.
+        let sharedFolderContext: SharedFolderUploadContext | undefined
+        try {
+          const parent = await resolveParentUploadContext(match.parentId, getMasterKey())
+          sharedFolderContext = parent.kind === 'member' ? parent.context : undefined
+        } catch (err) {
+          setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+          setPausedUploads((prev) => (prev.some((u) => u.fileId === match.fileId) ? prev : [...prev, match]))
+          showToast({ icon: 'upload', title: 'Upload not restarted', description: sharedParentFailureMessage(err), danger: true })
+          continue
+        }
+        if (plan.kind !== 'resume') {
+          showToast({
+            icon: 'upload',
+            title: 'Upload restarted',
+            description: plan.kind === 'restart-version'
+              ? `${file.name} was started by an older version, so it uploads again from the start as a new version of the same file.`
+              : `${file.name} was started by an older version, so it uploads again as a new file.`,
+          })
+        }
+        const fileKey = plan.fileId === match.fileId ? recordKey : await getFileKey(plan.fileId)
         let resumeStartedAt: number | undefined
         await encryptedUpload(
           file,
-          match.fileId,
+          plan.fileId,
           fileKey,
           getMasterKey(),
           match.parentId ?? undefined,
@@ -1148,13 +1210,18 @@ export function Drive() {
               ),
             )
           },
-          match.fileId, // resumeFileId
+          // The record's id while the upload stays on it (a resume, or a
+          // legacy replace restarting as a version of its row); none for a
+          // fresh id (encryptedUpload then drops the old record as another id's).
+          plan.resumeFileId,
+          // A member's upload into a folder shared with this user (F7).
+          sharedFolderContext,
           undefined,
-          undefined,
-          getFileKey,
+          // A version restart sends the row's own stored name, byte for byte.
+          plan.kind === 'restart-version' ? { replaceOf: plan.replaceOf } : undefined,
         )
         setUploads((prev) => prev.filter((u) => u.id !== uploadId))
-        showToast({ icon: 'check', title: 'Upload resumed', description: file.name })
+        showToast({ icon: 'check', title: plan.kind === 'resume' ? 'Upload resumed' : 'Uploaded', description: file.name })
         fetchFiles()
       } catch (err) {
         // Task 1589: the server swept this paused upload (its lease expired)
@@ -1168,6 +1235,13 @@ export function Drive() {
             description: `${file.name}: ${userFriendlyError(err)}`,
             danger: true,
           })
+          setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+          continue
+        }
+        // Refused inside encryptedUpload (its own row check): the record is
+        // already gone, so drop the row too and say why.
+        if (err instanceof PausedVersionRefusedError) {
+          showToast({ icon: 'upload', title: 'Upload not restarted', description: userFriendlyError(err), danger: true })
           setUploads((prev) => prev.filter((u) => u.id !== uploadId))
           continue
         }
@@ -1508,7 +1582,7 @@ export function Drive() {
               : u,
           ),
         )
-      }, undefined, undefined, abortController.signal, getFileKey, { conflictCreated, replaceOf })
+      }, undefined, undefined, abortController.signal, { conflictCreated, replaceOf })
       const uploadedFileId = uploadedFile.id
 
       // Update the encrypted search index with the new file
@@ -1775,7 +1849,7 @@ export function Drive() {
                 : u,
             ),
           )
-        }, undefined, undefined, undefined, getFileKey)
+        }, undefined, undefined, undefined)
 
         // Index each file
         const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
@@ -1863,24 +1937,17 @@ export function Drive() {
 
   async function handleCreateFolder(name: string) {
     try {
-      // Create folder first to get the server-assigned ID
-      // Then encrypt the name with that ID as the key derivation input
-      const folderId = crypto.randomUUID()
-      let nameEncrypted = name
-      let nameKey: Uint8Array | undefined
-      if (isUnlocked && cryptoReady) {
-        nameKey = await getFileKey(folderId)
-        const enc = await encryptFileMetadata(nameKey, name)
-        nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      }
-      // Inside a shared folder its name-key wrap is published too (guests and
-      // members read the name through it).
-      const result = await createOwnerFolder({
-        nameEncrypted,
+      // The name is sealed under the key of an id minted for this folder
+      // before anything is sent; with the vault locked nothing is sent
+      // (src/lib/new-folder.ts). Inside a shared folder its name-key wrap is
+      // published too (guests and members read the name through it).
+      const result = await createNamedOwnerFolder({
+        name,
         parentId: currentParentId,
-        folderId,
-        nameKey,
-        masterKey: nameKey ? getMasterKey() : undefined,
+        vaultReady: isUnlocked && cryptoReady,
+        getFileKey: (id) => getFileKey(id),
+        getMasterKey,
+        seal: encryptFileMetadata,
       })
 
       // Update the encrypted search index with the new folder
@@ -1899,12 +1966,7 @@ export function Drive() {
 
       fetchFiles()
     } catch (err) {
-      showToast({
-        icon: 'folder',
-        title: 'Failed to create folder',
-        description: userFriendlyError(err),
-        danger: true,
-      })
+      showToast(folderCreateFailureToast(err))
     }
   }
 
@@ -1976,7 +2038,6 @@ export function Drive() {
           undefined,
           undefined,
           undefined,
-          getFileKey,
         )
         const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
         const now = new Date().toISOString()

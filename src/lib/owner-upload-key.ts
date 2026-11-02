@@ -8,11 +8,12 @@
  * invite to hang it on (`POST /shared-folders/:id/keys`, owner only,
  * insert-only).
  */
-import { ApiError, createFolder, publishSharedFolderKeys, updateFile, type DriveFile } from './api'
+import { ApiError, createFolder, getFile, publishSharedFolderKeys, updateFile, type DriveFile } from './api'
 import { collectAllChildItems, sealChildKey } from './folder-share-crypto'
 import { assertNoSeenCustodyAbove, folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
 import { deriveFileKey, zeroize } from './crypto'
 import { sharedFoldersEnabled } from './use-feature-flag'
+import { withNetworkRetry } from './net-retry'
 
 /**
  * Publish the wrap of an item the owner just added under its shared root: a
@@ -67,9 +68,10 @@ export async function publishOwnerUploadKey(
  * Create a folder the owner names, and publish its name-key wrap when it lands
  * inside a shared folder. Without that wrap a guest or member cannot read the
  * new folder's name (its name is sealed under its own key, derived from the
- * owner's master key). `nameKey` is that key; omit it for a folder created
- * while the vault is locked (its name is not encrypted, so there is nothing
- * to publish).
+ * owner's master key). `nameKey` is that key; without it nothing is published.
+ * `nameEncrypted` is always the sealed name: no site sends a plain one (a
+ * folder named in the UI goes through new-folder.ts, which refuses while the
+ * vault is locked).
  */
 export async function createOwnerFolder(args: {
   nameEncrypted: string
@@ -78,11 +80,61 @@ export async function createOwnerFolder(args: {
   nameKey?: Uint8Array
   masterKey?: Uint8Array
 }): Promise<DriveFile> {
-  const created = await createFolder(args.nameEncrypted, args.parentId, args.folderId)
+  // L13 (contract 2275, SF-0001): the folder's name is sealed under the key
+  // derived from the id THIS client chose. createFolder throws on an answer
+  // with any other id — before a wrap is published here, and before the
+  // caller indexes, moves items into, or navigates to the answer.
+  // A dropped connection is retried under the SAME id (SF-0001 round 3): it
+  // was minted for this folder, so no other client holds it. The changed-id
+  // abort and every HTTP error are not retried.
+  let created: DriveFile
+  try {
+    created = await withNetworkRetry(() => createFolder(args.nameEncrypted, args.parentId, args.folderId))
+  } catch (err) {
+    // POST /files/folder is a plain INSERT: a create whose earlier attempt
+    // (in this call, or in an earlier call with the same minted id, as the
+    // import makes) DID commit answers 500 or 409 on the primary key, and a
+    // connection that stayed down leaves it unknown. On any such failure the
+    // row under this client-minted id is looked up (SF-0001 rounds 4-5): if it
+    // is exactly the folder this client sent (`folderThatLanded`: the same
+    // sealed name byte for byte, a live folder, the same parent), it IS this
+    // folder, and the create goes on below, the name-key wrap included.
+    // Otherwise the error stands.
+    const maybeLanded = err instanceof ApiError && (err.status === 0 || err.status === 409 || err.status >= 500)
+    const landed = maybeLanded ? await folderThatLanded(args) : null
+    if (!landed) throw err
+    created = landed
+  }
   if (args.parentId && args.nameKey && args.masterKey) {
     await publishOwnerUploadKey(args.masterKey, args.parentId, created.id, args.nameKey, true)
   }
   return created
+}
+
+/**
+ * The folder this client's earlier attempt created under `args.folderId`, if
+ * the row there is EXACTLY what it sent (SF-0001 round 5): byte for byte the
+ * sealed name it sent (core seals with a fresh nonce, so nobody else holds
+ * that string; a plaintext legacy name, or any other sealing, is not it), a
+ * live folder, under the parent it asked for. Needs no key. Null for
+ * anything else, including a lookup that fails: the create's own error is
+ * what the caller then surfaces.
+ */
+async function folderThatLanded(args: {
+  nameEncrypted: string
+  parentId?: string
+  folderId: string
+}): Promise<DriveFile | null> {
+  let row: DriveFile
+  try {
+    row = await getFile(args.folderId)
+  } catch {
+    return null
+  }
+  if (row.id !== args.folderId || !row.is_folder || row.is_trashed) return null
+  if ((row.parent_id ?? undefined) !== args.parentId) return null
+  if (row.name_encrypted !== args.nameEncrypted) return null
+  return row
 }
 
 /** The server takes at most this many key rows per publish call. */
