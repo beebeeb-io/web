@@ -86,7 +86,7 @@ import { InvoiceList } from '../components/billing/InvoiceList'
 import { CreditNoteList } from '../components/billing/CreditNoteList'
 import { TransactionList } from '../components/billing/TransactionList'
 import { CouponCard } from '../components/billing/coupon-card'
-import { PLAN_META, PLAN_RANK } from '../lib/plan-constants'
+import { PLAN_META } from '../lib/plan-constants'
 import {
   type PendingCheckout,
   makePreState,
@@ -151,108 +151,18 @@ import {
   type PayOverdueView,
 } from '../lib/pay-overdue-return'
 import { LiveNote } from '../components/live-note'
-
-/* ── Plan metadata (imported from plan-constants.ts) ──── */
-
-const planMeta = PLAN_META
-const planRank = PLAN_RANK
-
-type UpgradePlanCard = {
-  id: string
-  label: string
-  priceMonthly: number
-  priceYearly: number
-  storageLabel: string
-  features: string[]
-  sortOrder: number
-}
-
-const fallbackUpgradePlanIds = ['basic', 'pro', 'business'] as const
-
-/* ── Helpers ────────────────────────────────────────────── */
-
-function formatDate(iso: string | null): string {
-  if (!iso) return '-'
-  return new Date(iso).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  })
-}
-
-/** Compute remaining time until a future ISO date as a human-readable string. */
-function formatRemainingTime(iso: string | null): string | null {
-  if (!iso) return null
-  const now = new Date()
-  const end = new Date(iso)
-  const diffMs = end.getTime() - now.getTime()
-  if (diffMs <= 0) return null
-
-  const totalDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
-  const months = Math.floor(totalDays / 30)
-  const days = totalDays - months * 30
-
-  if (months >= 1 && days > 0) return `${months} month${months !== 1 ? 's' : ''}, ${days} day${days !== 1 ? 's' : ''} remaining`
-  if (months >= 1) return `${months} month${months !== 1 ? 's' : ''} remaining`
-  return `${totalDays} day${totalDays !== 1 ? 's' : ''} remaining`
-}
-
-/** Get the number of remaining days until an ISO date. */
-function remainingDays(iso: string | null): number {
-  if (!iso) return 0
-  const diffMs = new Date(iso).getTime() - Date.now()
-  return diffMs > 0 ? Math.ceil(diffMs / (1000 * 60 * 60 * 24)) : 0
-}
-
-/** Plans ordered by tier, used for downgrade suggestions.
- *
- * Includes `business` (Teams) for rank ordering, but Teams is `comingSoon` —
- * not purchasable via checkout (server rejects it — task 1050) — so every
- * consumer of this list MUST also exclude `comingSoon` plans before offering
- * one as an actual downgrade/downsell target (task 1064, D8: the cancel
- * downsell iterated this list without that guard — latent today only because
- * Teams is the top rank and can never be "lower" than the current plan, but a
- * real bug the moment a plan above Teams ships). */
-const orderedPaidPlans = ['basic', 'pro', 'business'] as const
-
-function upgradeCardFromApiPlan(plan: Plan, fallbackSortOrder: number): UpgradePlanCard {
-  return {
-    id: plan.id,
-    label: plan.name,
-    priceMonthly: plan.price_eur,
-    priceYearly: plan.price_yearly_eur,
-    storageLabel: plan.storage_label,
-    features: plan.features,
-    sortOrder: plan.sort_order ?? planRank[plan.id] ?? fallbackSortOrder,
-  }
-}
-
-function upgradeCardFromFallback(planId: (typeof fallbackUpgradePlanIds)[number], fallbackSortOrder: number): UpgradePlanCard {
-  const meta = planMeta[planId]
-  return {
-    id: planId,
-    label: meta.label,
-    priceMonthly: meta.priceMonthly,
-    priceYearly: meta.priceYearly,
-    storageLabel: formatStorageSI(meta.storageGB * 1_000_000_000),
-    features: meta.features,
-    sortOrder: planRank[planId] ?? fallbackSortOrder,
-  }
-}
-
-function upgradeCardFromPlanMeta(planId: string): UpgradePlanCard | null {
-  const meta = planMeta[planId]
-  if (!meta) return null
-  return {
-    id: planId,
-    label: meta.label,
-    priceMonthly: meta.priceMonthly,
-    priceYearly: meta.priceYearly,
-    storageLabel: formatStorageSI(meta.storageGB * 1_000_000_000),
-    features: meta.features,
-    sortOrder: planRank[planId] ?? 0,
-  }
-}
+import {
+  fallbackUpgradePlanIds,
+  formatDate,
+  formatRemainingTime,
+  orderedPaidPlans,
+  planMeta,
+  planRank,
+  remainingDays,
+  upgradeCardFromApiPlan,
+  upgradeCardFromFallback,
+  upgradeCardFromPlanMeta,
+} from './billing/upgrade-plans'
 
 /* ── Checkout watchdog + pre-checkout intent (task 0946) ───
 
