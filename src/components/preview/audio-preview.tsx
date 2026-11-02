@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 
 interface AudioPreviewProps {
-  blob: Blob
+  /** A whole-file blob (the non-streaming paths). */
+  blob?: Blob
+  /** LD-0001 PR-B: a `/sw-stream/<id>` URL from the streaming session. */
+  src?: string
   filename: string
+  /** The hook wires the element's events and its network-error recovery. */
+  onElement?: (el: HTMLAudioElement | null) => void
 }
 
 function formatTime(seconds: number): string {
@@ -52,7 +57,7 @@ function pcmToWavBlob(audioBuffer: AudioBuffer): Blob {
   return new Blob([buffer], { type: 'audio/wav' })
 }
 
-export function AudioPreview({ blob, filename }: AudioPreviewProps) {
+export function AudioPreview({ blob, src, filename, onElement }: AudioPreviewProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [url, setUrl] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
@@ -63,17 +68,29 @@ export function AudioPreview({ blob, filename }: AudioPreviewProps) {
   const convertedRef = useRef(false)
 
   useEffect(() => {
+    convertedRef.current = false
+    // Streaming: the session's URL IS the source (LD-0001 PR-B).
+    if (src) {
+      setUrl(src)
+      return
+    }
+    if (!blob) {
+      setUrl(null)
+      return
+    }
     const objectUrl = URL.createObjectURL(blob)
     setUrl(objectUrl)
-    convertedRef.current = false
     return () => URL.revokeObjectURL(objectUrl)
-  }, [blob])
+  }, [blob, src])
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
   const ext = filename.split('.').pop()?.toUpperCase() ?? 'Audio'
 
   async function decodeAndConvert() {
     if (convertedRef.current) return
+    // The convert path decodes a whole file, so it has no meaning for a
+    // stream: a streaming element error is the hook's decision (row 6/7).
+    if (!blob) return
     convertedRef.current = true
     setConverting(true)
     setError(null)
@@ -129,7 +146,10 @@ export function AudioPreview({ blob, filename }: AudioPreviewProps) {
       {/* Player card */}
       <div className="w-full rounded-xl border border-line bg-paper p-5" style={{ boxShadow: '0 4px 20px -4px rgba(0,0,0,0.12)' }}>
         <audio
-          ref={audioRef}
+          ref={(el) => {
+            audioRef.current = el
+            onElement?.(el)
+          }}
           src={url}
           preload="metadata"
           onPlay={() => setPlaying(true)}
@@ -138,6 +158,7 @@ export function AudioPreview({ blob, filename }: AudioPreviewProps) {
           onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime ?? 0)}
           onLoadedMetadata={() => setDuration(audioRef.current?.duration ?? 0)}
           onError={() => {
+            if (src) return // streaming: the hook decides (rows 6-7)
             if (!convertedRef.current) {
               decodeAndConvert()
             } else {
