@@ -3,6 +3,11 @@
  *
  * Every file that needs plan labels, prices, storage amounts, or tier ordering
  * should import from here instead of defining its own copies.
+ *
+ * The numbers are a DISPLAY MIRROR of core's `beebeeb_types::quota` (what the
+ * server and Mollie charge); the charged amounts always come from wasm
+ * (`plan-pricing.ts`). `test/w-p3-5-plan-math.test.ts` pins every mirror value
+ * to core, so a drift fails there rather than in a customer's invoice.
  */
 
 // ── Core plan metadata ───────────────────────────────────────────────────────
