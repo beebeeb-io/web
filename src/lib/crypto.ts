@@ -4,15 +4,17 @@ import type { ContentPin, DecryptSummary, PinnedMetadata } from './content-crypt
 import { withProxy } from './crypto/service'
 import { fromBase64, toBase64, x25519SharedSecret, zeroize } from './crypto/helpers'
 import { withCryptoError } from './crypto/errors'
-
-export * from './crypto/service'
-export * from './crypto/search-index'
-export * from './crypto/file-requests'
-export * from './crypto/transfers'
-export * from './crypto/helpers'
-export * from './crypto/ceremony'
-export * from './crypto/errors'
-
+export { __cryptoRestartInternals, initCrypto, withProxy } from './crypto/service'
+export { SearchIndexProxy, buildSearchIndex, createSearchIndex, createSharedSearchIndex, searchIndexFromShards, searchIndexSyncPlan, sharedSearchIndexFromShards } from './crypto/search-index'
+export type { CoreEncryptedShard, ShardCoordinate, ShardSyncPlan } from './crypto/search-index'
+export { FILE_REQUEST_EMPTY_ID, derivePublicFromPrivate, generateRequestKeypair, openRequestUpload, sealToRequest, unwrapRequestPrivate, wrapRequestPrivate } from './crypto/file-requests'
+export type { RequestKeypair } from './crypto/file-requests'
+export { decryptTransferBlob, deriveTransferSession, sessionIdToBytes, transferDecrypt, transferDeriveKey, transferDeriveSasBytes, transferEncrypt, transferGenerateKeypair, transferSasToWords } from './crypto/transfers'
+export { CHUNK_SIZE, chunkFile, fromBase64, toBase64, x25519SharedSecret, zeroize } from './crypto/helpers'
+export { BreachCheckProxy, CeremonyError, CeremonyProxy, createBreachCheck, createSignupCeremony, evaluatePasswordCore } from './crypto/ceremony'
+export type { BreachVerdict, CeremonyConfig, PasswordEvaluation } from './crypto/ceremony'
+export { CryptoError, cryptoErrorKindOf, withCryptoError } from './crypto/errors'
+export type { CryptoErrorKind } from './crypto/errors'
 // ─── Key derivation ─────────────────────────────────
 
 /** Derive a master key from a password + salt via Argon2id. */
