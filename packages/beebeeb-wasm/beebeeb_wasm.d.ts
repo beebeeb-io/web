@@ -734,6 +734,29 @@ export class WasmWriteTarget {
 }
 
 /**
+ * The archive/extract rule: [`path_safety::archive_component`], the portable
+ * sanitizer above. Named for the caller that extracts entries, so the intent is
+ * on the call site; it never drops a name silently.
+ */
+export function archiveEntryName(name: string): string;
+
+/**
+ * Build `{app_url}/{s|f}/{token}#key={key}`. `route` is `"s"` (the default
+ * when omitted or `null`) or `"f"`.
+ */
+export function buildShareLink(app_url: string, token: string, key: string, route?: string | null): string;
+
+/**
+ * Check one server-provided name (a single component, never a path).
+ *
+ * `portable` selects the strict cross-platform rule set (what a pulled tree or
+ * an archive must satisfy); `windows` says the caller will write it with
+ * Windows path semantics. Returns normally when the name is safe, throws the
+ * user-facing reason otherwise (e.g. `contains a path separator`).
+ */
+export function checkPathComponent(name: string, portable: boolean, windows: boolean): void;
+
+/**
  * Was the body a storage GET actually delivered the chunk? Same answer shape as
  * `checkStorageGet`, but decided by the counted bytes: `stored` only when `received` is
  * exactly `expected`. `Content-Length` is only the head; a truncated stream ends short.
@@ -800,6 +823,15 @@ export function combineFolderLinkKey(k_c: Uint8Array, passphrase_stretch?: Uint8
  * Compute recovery check from master key. Returns 32-byte `Uint8Array`.
  */
 export function compute_recovery_check(master_key: Uint8Array): Uint8Array;
+
+/**
+ * Decode any accepted stored form of the metadata envelope.
+ *
+ * Throws an `Error` whose message starts with `invalid input:` — the core
+ * error's own text — for invalid JSON, a missing/non-byte field, an unknown
+ * cipher suite, or a `null` field. Fields core does not know are ignored.
+ */
+export function decodeMetadataEnvelope(payload: string): any;
 
 /**
  * Decompress gzip-compressed data. Returns `Uint8Array`.
@@ -960,6 +992,15 @@ export function directDownloadGrantsPath(file_id: string): string;
 export function directTransferConstants(): any;
 
 /**
+ * Serialize a nonce + ciphertext pair into the canonical wire format.
+ *
+ * Returns `{"ciphertext":"<base64>","nonce":"<base64>"}` — byte-identical to
+ * `beebeeb_core::metadata_wire::serialize_encrypted_metadata`. Never emits a
+ * `cipher_suite`: the writer is frozen.
+ */
+export function encodeMetadataEnvelope(nonce: Uint8Array, ciphertext: Uint8Array): string;
+
+/**
  * Seal a name for a NEW row minted by `newOwnerItemId`/`newForeignItemId`.
  *
  * The id handle decides the key (L12): an owner id derives it. A new foreign
@@ -1093,6 +1134,20 @@ export function fitForSeal(s: string): string;
  * (wasm-bindgen's own copy is freed without a wipe).
  */
 export function folder_key_id(folder_key: Uint8Array): Uint8Array;
+
+/**
+ * Format a byte count with binary units and IEC labels: `1 KiB` (1,024),
+ * `1 MiB`, `1.0 TiB`. Same ladder and precision rule as the SI formatter; a
+ * negative count keeps its sign and never scales (`-1500 B`).
+ */
+export function formatBinary(bytes: bigint): string;
+
+/**
+ * Format a byte count in decimal units with `decimals` decimals (0, 1 or 2),
+ * carrying a value that rounds up into the next unit (`999.6 KB` with one
+ * decimal prints `1.0 MB`). Counts below 1,000 always print as `N B`.
+ */
+export function formatCompact(bytes: bigint, decimals: number): string;
 
 /**
  * Generate a recovery kit PDF with a title, recovery words, and metadata.
@@ -1280,6 +1335,23 @@ export function pairsAllowed(discovery: any, direction: string, pairs: any): boo
 export function parseDirectDiscovery(body: Uint8Array): any;
 
 /**
+ * Parse a `Retry-After` delta-seconds header: the number of seconds, or `null`
+ * for anything else (empty, negative, fractional, an HTTP date), so the caller
+ * falls back to the ladder.
+ */
+export function parseRetryAfter(value: string): any;
+
+/**
+ * Parse a share link on either route and on any host. Returns
+ * `{ base_url, route, token, key }`; `key` is the percent-decoded fragment
+ * value, not yet decoded as bytes — use `shareKeyBytes(key)` for that.
+ *
+ * The thrown message starts with core's stable code, so a caller can branch:
+ * `missing_fragment`, `missing_key`, `missing_token`, `not_a_share_link`.
+ */
+export function parseShareLink(url: string): any;
+
+/**
  * The shared retry policy of the pinned per-chunk route (4 attempts, 150 s of waiting in all, a
  * stated `Retry-After` kept, otherwise 1 s doubling). `outcome` is what `classifyDirectAnswer`
  * returned for `call: "pinned_chunk"`; `attempt` is the 1-based number of the attempt that just
@@ -1377,6 +1449,44 @@ export function resumeNewItemId(master_key: Uint8Array, item_id: string, tag: Ui
 export function resumeTransport(recorded: string, discovery: any, forced_api: boolean): string;
 
 /**
+ * The decision after `attempts_made` attempts: the delay in milliseconds to
+ * wait before the next attempt, or `null` to surface the last error. A server
+ * `Retry-After` (`retry_after_seconds`, a number of seconds or `null`)
+ * replaces the ladder exactly.
+ *
+ * `outcome` is `"success"`, `"network"`, `"fatal"`, or `{ status: 503 }`.
+ */
+export function retryDecide(policy: any, attempts_made: number, outcome: any, retry_after_seconds: any): any;
+
+/**
+ * The un-jittered ladder delay before retry number `retry` (1-based; retry 0
+ * means "no retry" and is 0 ms), capped at the policy's `cap_ms`.
+ */
+export function retryDelayMs(policy: any, retry: number): number;
+
+/**
+ * The ladder delay shortened per the policy's jitter, with a caller-supplied
+ * sample in permille (`0..=1000`; larger values are clamped). A `"none"`
+ * policy ignores the sample.
+ */
+export function retryJitteredDelayMs(policy: any, retry: number, sample_permille: number): number;
+
+/**
+ * The shipped policy: six requests in all (one try plus five retries), 500 ms
+ * base, a 30 s cap, no jitter, and a server `Retry-After` honoured.
+ */
+export function retryPolicy(): any;
+
+/**
+ * Rewrite one name so it is safe under the strictest (Windows) rule set:
+ * `: < > " | ? *` become `_`, trailing dots/spaces become `_`, a reserved
+ * device name gets a leading `_`, and bidi controls are removed. A name that
+ * is structurally unsafe (separator, `.`/`..`, control character, drive
+ * prefix) is still refused, never rewritten.
+ */
+export function sanitizePathComponent(name: string): string;
+
+/**
  * Text that may contain URLs, made safe to print.
  */
 export function scrubText(text: string): string;
@@ -1410,6 +1520,12 @@ export function seal_to_request(r_pub: Uint8Array, file_id: Uint8Array, content_
 export function searchIndexSyncPlan(local: any, remote: any, local_is_authoritative: boolean): any;
 
 /**
+ * Decode a `#key=` value as bytes, accepting standard base64 (legacy links) and
+ * base64url (current links), padded or unpadded; `null` when it is neither.
+ */
+export function shareKeyBytes(key: string): any;
+
+/**
  * The most a storage GET of `len` ciphertext bytes may take, in milliseconds (the same formula as a PUT).
  * Throws like `storagePutTotalMs`.
  */
@@ -1426,6 +1542,26 @@ export function storagePutTotalMs(len: number): number;
  * Format a byte count as a human-readable SI string (e.g. "5.0 TB").
  */
 export function storage_format_si(bytes: bigint): string;
+
+/**
+ * Where `bytes` falls against one variant's budgets: `"target"` (at or below
+ * `target_bytes`, stop the ladder), `"fallback"` (above target but at or below
+ * `max_bytes`, keep it and keep trying) or `"rejected"` (above `max_bytes`).
+ */
+export function thumbnailBudget(variant: string, bytes: number): string;
+
+/**
+ * The encoder output a variant asks for on `platform`: `"heic"` on iOS and
+ * macOS (the OS owns the encoder), `"webp"` everywhere else.
+ */
+export function thumbnailFormat(variant: string, platform: string): string;
+
+/**
+ * The policy for one variant (`small`, `medium`, `large`):
+ * `{ variant, target_px, target_bytes, max_bytes, steps }`, where each step is
+ * `{ max_dimension, quality }`.
+ */
+export function thumbnailPolicy(variant: string): any;
 
 /**
  * Decrypt a `nonce(12) || ciphertext` blob produced by `transfer_encrypt`.
@@ -1588,6 +1724,9 @@ export interface InitOutput {
     readonly __wbg_wasmsignupceremony_free: (a: number, b: number) => void;
     readonly __wbg_wasmstoragebody_free: (a: number, b: number) => void;
     readonly __wbg_wasmwritetarget_free: (a: number, b: number) => void;
+    readonly archiveEntryName: (a: number, b: number, c: number) => void;
+    readonly buildShareLink: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly checkPathComponent: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly checkStorageBody: (a: number, b: number, c: number) => void;
     readonly checkStorageGet: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly checkStorageUrl: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
@@ -1599,6 +1738,7 @@ export interface InitOutput {
     readonly clientmetakey_seal: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly combineFolderLinkKey: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly compute_recovery_check: (a: number, b: number, c: number) => void;
+    readonly decodeMetadataEnvelope: (a: number, b: number, c: number) => void;
     readonly decompress_gzip: (a: number, b: number, c: number) => void;
     readonly decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly decrypt_chunk_frame: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
@@ -1621,6 +1761,7 @@ export interface InitOutput {
     readonly derive_x25519_public: (a: number, b: number, c: number) => void;
     readonly directDownloadGrantsPath: (a: number, b: number, c: number) => void;
     readonly directTransferConstants: (a: number) => void;
+    readonly encodeMetadataEnvelope: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encryptNameForNewItem: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly encryptNameForTarget: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly encryptNoteForNewItem: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -1638,6 +1779,8 @@ export interface InitOutput {
     readonly evaluate_password: (a: number, b: number, c: number, d: number) => void;
     readonly fitForSeal: (a: number, b: number, c: number) => void;
     readonly folder_key_id: (a: number, b: number, c: number) => void;
+    readonly formatBinary: (a: number, b: bigint) => void;
+    readonly formatCompact: (a: number, b: bigint, c: number) => void;
     readonly generate_recovery_pdf: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly generate_recovery_phrase: (a: number) => void;
     readonly generate_share_token: (a: number) => void;
@@ -1662,6 +1805,8 @@ export interface InitOutput {
     readonly pacedUntilMs: (a: number, b: number, c: number, d: number) => void;
     readonly pairsAllowed: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly parseDirectDiscovery: (a: number, b: number, c: number) => void;
+    readonly parseRetryAfter: (a: number, b: number) => number;
+    readonly parseShareLink: (a: number, b: number, c: number) => void;
     readonly pinnedRetryDecision: (a: number, b: number, c: number, d: number) => void;
     readonly plan_base_storage_bytes: (a: number, b: number) => bigint;
     readonly plan_can_add_storage: (a: number, b: number) => number;
@@ -1675,13 +1820,22 @@ export interface InitOutput {
     readonly resolveRequestRow: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number) => void;
     readonly resumeNewItemId: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly resumeTransport: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly retryDecide: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly retryDelayMs: (a: number, b: number, c: number) => void;
+    readonly retryJitteredDelayMs: (a: number, b: number, c: number, d: number) => void;
+    readonly retryPolicy: (a: number) => void;
+    readonly sanitizePathComponent: (a: number, b: number, c: number) => void;
     readonly scrubText: (a: number, b: number, c: number) => void;
     readonly sealFolderActorName: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly seal_to_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly searchIndexSyncPlan: (a: number, b: number, c: number, d: number) => void;
+    readonly shareKeyBytes: (a: number, b: number) => number;
     readonly storageGetTotalMs: (a: number, b: number) => void;
     readonly storagePutTotalMs: (a: number, b: number) => void;
     readonly storage_format_si: (a: number, b: bigint) => void;
+    readonly thumbnailBudget: (a: number, b: number, c: number, d: number) => void;
+    readonly thumbnailFormat: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly thumbnailPolicy: (a: number, b: number, c: number) => void;
     readonly transfer_decrypt: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly transfer_derive_key: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly transfer_derive_sas_bytes: (a: number, b: number, c: number, d: number, e: number) => void;

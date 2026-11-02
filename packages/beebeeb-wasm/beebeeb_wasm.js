@@ -2259,6 +2259,109 @@ export class WasmWriteTarget {
 if (Symbol.dispose) WasmWriteTarget.prototype[Symbol.dispose] = WasmWriteTarget.prototype.free;
 
 /**
+ * The archive/extract rule: [`path_safety::archive_component`], the portable
+ * sanitizer above. Named for the caller that extracts entries, so the intent is
+ * on the call site; it never drops a name silently.
+ * @param {string} name
+ * @returns {string}
+ */
+export function archiveEntryName(name) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.archiveEntryName(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Build `{app_url}/{s|f}/{token}#key={key}`. `route` is `"s"` (the default
+ * when omitted or `null`) or `"f"`.
+ * @param {string} app_url
+ * @param {string} token
+ * @param {string} key
+ * @param {string | null} [route]
+ * @returns {string}
+ */
+export function buildShareLink(app_url, token, key, route) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(app_url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(token, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(route) ? 0 : passStringToWasm0(route, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len3 = WASM_VECTOR_LEN;
+        wasm.buildShareLink(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr5 = r0;
+        var len5 = r1;
+        if (r3) {
+            ptr5 = 0; len5 = 0;
+            throw takeObject(r2);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred6_0, deferred6_1, 1);
+    }
+}
+
+/**
+ * Check one server-provided name (a single component, never a path).
+ *
+ * `portable` selects the strict cross-platform rule set (what a pulled tree or
+ * an archive must satisfy); `windows` says the caller will write it with
+ * Windows path semantics. Returns normally when the name is safe, throws the
+ * user-facing reason otherwise (e.g. `contains a path separator`).
+ * @param {string} name
+ * @param {boolean} portable
+ * @param {boolean} windows
+ */
+export function checkPathComponent(name, portable, windows) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.checkPathComponent(retptr, ptr0, len0, portable, windows);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        if (r1) {
+            throw takeObject(r0);
+        }
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Was the body a storage GET actually delivered the chunk? Same answer shape as
  * `checkStorageGet`, but decided by the counted bytes: `stored` only when `received` is
  * exactly `expected`. `Content-Length` is only the head; a truncated stream ends short.
@@ -2479,6 +2582,33 @@ export function compute_recovery_check(master_key) {
         var v2 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export4(r0, r1 * 1, 1);
         return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Decode any accepted stored form of the metadata envelope.
+ *
+ * Throws an `Error` whose message starts with `invalid input:` — the core
+ * error's own text — for invalid JSON, a missing/non-byte field, an unknown
+ * cipher suite, or a `null` field. Fields core does not know are ignored.
+ * @param {string} payload
+ * @returns {any}
+ */
+export function decodeMetadataEnvelope(payload) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(payload, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.decodeMetadataEnvelope(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -3157,6 +3287,37 @@ export function directTransferConstants() {
 }
 
 /**
+ * Serialize a nonce + ciphertext pair into the canonical wire format.
+ *
+ * Returns `{"ciphertext":"<base64>","nonce":"<base64>"}` — byte-identical to
+ * `beebeeb_core::metadata_wire::serialize_encrypted_metadata`. Never emits a
+ * `cipher_suite`: the writer is frozen.
+ * @param {Uint8Array} nonce
+ * @param {Uint8Array} ciphertext
+ * @returns {string}
+ */
+export function encodeMetadataEnvelope(nonce, ciphertext) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(nonce, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(ciphertext, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.encodeMetadataEnvelope(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred3_0 = r0;
+        deferred3_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Seal a name for a NEW row minted by `newOwnerItemId`/`newForeignItemId`.
  *
  * The id handle decides the key (L12): an owner id derives it. A new foreign
@@ -3741,6 +3902,55 @@ export function folder_key_id(folder_key) {
         return v2;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Format a byte count with binary units and IEC labels: `1 KiB` (1,024),
+ * `1 MiB`, `1.0 TiB`. Same ladder and precision rule as the SI formatter; a
+ * negative count keeps its sign and never scales (`-1500 B`).
+ * @param {bigint} bytes
+ * @returns {string}
+ */
+export function formatBinary(bytes) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.formatBinary(retptr, bytes);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred1_0 = r0;
+        deferred1_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Format a byte count in decimal units with `decimals` decimals (0, 1 or 2),
+ * carrying a value that rounds up into the next unit (`999.6 KB` with one
+ * decimal prints `1.0 MB`). Counts below 1,000 always print as `N B`.
+ * @param {bigint} bytes
+ * @param {number} decimals
+ * @returns {string}
+ */
+export function formatCompact(bytes, decimals) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.formatCompact(retptr, bytes, decimals);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred1_0 = r0;
+        deferred1_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
     }
 }
 
@@ -4423,6 +4633,48 @@ export function parseDirectDiscovery(body) {
 }
 
 /**
+ * Parse a `Retry-After` delta-seconds header: the number of seconds, or `null`
+ * for anything else (empty, negative, fractional, an HTTP date), so the caller
+ * falls back to the ladder.
+ * @param {string} value
+ * @returns {any}
+ */
+export function parseRetryAfter(value) {
+    const ptr0 = passStringToWasm0(value, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parseRetryAfter(ptr0, len0);
+    return takeObject(ret);
+}
+
+/**
+ * Parse a share link on either route and on any host. Returns
+ * `{ base_url, route, token, key }`; `key` is the percent-decoded fragment
+ * value, not yet decoded as bytes — use `shareKeyBytes(key)` for that.
+ *
+ * The thrown message starts with core's stable code, so a caller can branch:
+ * `missing_fragment`, `missing_key`, `missing_token`, `not_a_share_link`.
+ * @param {string} url
+ * @returns {any}
+ */
+export function parseShareLink(url) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.parseShareLink(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * The shared retry policy of the pinned per-chunk route (4 attempts, 150 s of waiting in all, a
  * stated `Retry-After` kept, otherwise 1 s doubling). `outcome` is what `classifyDirectAnswer`
  * returned for `call: "pinned_chunk"`; `attempt` is the 1-based number of the attempt that just
@@ -4768,6 +5020,140 @@ export function resumeTransport(recorded, discovery, forced_api) {
 }
 
 /**
+ * The decision after `attempts_made` attempts: the delay in milliseconds to
+ * wait before the next attempt, or `null` to surface the last error. A server
+ * `Retry-After` (`retry_after_seconds`, a number of seconds or `null`)
+ * replaces the ladder exactly.
+ *
+ * `outcome` is `"success"`, `"network"`, `"fatal"`, or `{ status: 503 }`.
+ * @param {any} policy
+ * @param {number} attempts_made
+ * @param {any} outcome
+ * @param {any} retry_after_seconds
+ * @returns {any}
+ */
+export function retryDecide(policy, attempts_made, outcome, retry_after_seconds) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.retryDecide(retptr, addHeapObject(policy), attempts_made, addHeapObject(outcome), addHeapObject(retry_after_seconds));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The un-jittered ladder delay before retry number `retry` (1-based; retry 0
+ * means "no retry" and is 0 ms), capped at the policy's `cap_ms`.
+ * @param {any} policy
+ * @param {number} retry
+ * @returns {number}
+ */
+export function retryDelayMs(policy, retry) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.retryDelayMs(retptr, addHeapObject(policy), retry);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The ladder delay shortened per the policy's jitter, with a caller-supplied
+ * sample in permille (`0..=1000`; larger values are clamped). A `"none"`
+ * policy ignores the sample.
+ * @param {any} policy
+ * @param {number} retry
+ * @param {number} sample_permille
+ * @returns {number}
+ */
+export function retryJitteredDelayMs(policy, retry, sample_permille) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.retryJitteredDelayMs(retptr, addHeapObject(policy), retry, sample_permille);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The shipped policy: six requests in all (one try plus five retries), 500 ms
+ * base, a 30 s cap, no jitter, and a server `Retry-After` honoured.
+ * @returns {any}
+ */
+export function retryPolicy() {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.retryPolicy(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Rewrite one name so it is safe under the strictest (Windows) rule set:
+ * `: < > " | ? *` become `_`, trailing dots/spaces become `_`, a reserved
+ * device name gets a leading `_`, and bidi controls are removed. A name that
+ * is structurally unsafe (separator, `.`/`..`, control character, drive
+ * prefix) is still refused, never rewritten.
+ * @param {string} name
+ * @returns {string}
+ */
+export function sanitizePathComponent(name) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.sanitizePathComponent(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Text that may contain URLs, made safe to print.
  * @param {string} text
  * @returns {string}
@@ -4895,6 +5281,19 @@ export function searchIndexSyncPlan(local, remote, local_is_authoritative) {
 }
 
 /**
+ * Decode a `#key=` value as bytes, accepting standard base64 (legacy links) and
+ * base64url (current links), padded or unpadded; `null` when it is neither.
+ * @param {string} key
+ * @returns {any}
+ */
+export function shareKeyBytes(key) {
+    const ptr0 = passStringToWasm0(key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.shareKeyBytes(ptr0, len0);
+    return takeObject(ret);
+}
+
+/**
  * The most a storage GET of `len` ciphertext bytes may take, in milliseconds (the same formula as a PUT).
  * Throws like `storagePutTotalMs`.
  * @param {number} len
@@ -4958,6 +5357,102 @@ export function storage_format_si(bytes) {
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
         wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Where `bytes` falls against one variant's budgets: `"target"` (at or below
+ * `target_bytes`, stop the ladder), `"fallback"` (above target but at or below
+ * `max_bytes`, keep it and keep trying) or `"rejected"` (above `max_bytes`).
+ * @param {string} variant
+ * @param {number} bytes
+ * @returns {string}
+ */
+export function thumbnailBudget(variant, bytes) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(variant, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.thumbnailBudget(retptr, ptr0, len0, bytes);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * The encoder output a variant asks for on `platform`: `"heic"` on iOS and
+ * macOS (the OS owns the encoder), `"webp"` everywhere else.
+ * @param {string} variant
+ * @param {string} platform
+ * @returns {string}
+ */
+export function thumbnailFormat(variant, platform) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(variant, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(platform, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.thumbnailFormat(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * The policy for one variant (`small`, `medium`, `large`):
+ * `{ variant, target_px, target_bytes, max_bytes, steps }`, where each step is
+ * `{ max_dimension, quality }`.
+ * @param {string} variant
+ * @returns {any}
+ */
+export function thumbnailPolicy(variant) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(variant, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.thumbnailPolicy(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
 }
 
@@ -5751,6 +6246,10 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_is_function_3baa9db1a987f47d: function(arg0) {
             const ret = typeof(getObject(arg0)) === 'function';
+            return ret;
+        },
+        __wbg___wbindgen_is_null_52ff4ec04186736f: function(arg0) {
+            const ret = getObject(arg0) === null;
             return ret;
         },
         __wbg___wbindgen_is_object_63322ec0cd6ea4ef: function(arg0) {
