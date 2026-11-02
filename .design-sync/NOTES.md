@@ -16,6 +16,7 @@
 - Billing chips follow `statusVariant` in `src/components/billing/TransactionList.tsx`: paid green, pending/open amber, failed red.
 
 ## Known render warns
+- `BBProductLockup` at 40 px and below: the mono label sits on its 9 px floor, so it is small next to the wordmark. Graded good (whole, aligned, legible); it is the ruled layout, and the doc points smaller uses at `BBProductIcon`.
 - Skeleton cards are low-contrast (`bg-paper-2` on `bg-paper`, `animate-pulse`); that is the shipped look, not a blank render.
 - `BBButton` and `BBInput` "Disabled" cells look the same as enabled: neither component has disabled styling in code. Graded good as a faithful render; the gap is a product finding (see below).
 - Nine wide components use `cardMode: column` (the row skeletons, CardSkeleton, PhotoGroupSkeleton, Icon, BBLogo, BBProductIcon, BBProductLockup).
