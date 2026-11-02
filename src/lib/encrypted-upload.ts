@@ -18,6 +18,7 @@ import {
   CHUNK_SIZE,
   planChunks,
   startEncryptedStream,
+  startEncryptedStreamForNewItem,
   startEncryptedStreamWithChunkSize,
   encryptFilename,
   serializeEncryptedBlob,
@@ -48,6 +49,7 @@ import {
 import { isLikelyAlbumArtOrIcon } from './photo-library'
 import { assertOwnerRepairWritable } from './owner-repair'
 import { runWithSessionReinit } from './upload-session-reinit'
+import { ownedItem } from './owned-item'
 
 /**
  * Legacy fallback — only used when WASM plan_chunks is unavailable.
@@ -108,6 +110,13 @@ interface EncryptedUploadOptions {
    * test/1943-writer-pin.test.ts holds both rules.
    */
   replaceOf?: { nameEncrypted: string }
+  /**
+   * L13 (contract 2275): the `NewItemId` this create proposes, minted by core
+   * for THIS upload (`mintUploadIdentity`). When present the id text must be
+   * exactly the id the caller passed — core re-checks the tag before any
+   * seal — and the content is sealed through core's `forNewItem`.
+   */
+  newItemId?: { idText: string; tag: Uint8Array }
 }
 
 /**
@@ -177,6 +186,15 @@ async function uploadFileWith(
   // SF-0002: a repaired read-only row is never replaced or given a new
   // version. A NEW upload (fresh id) is unaffected: only a marked id throws.
   assertOwnerRepairWritable(fileId)
+  // L13: a create proposes the id THIS client minted and only that id. Core
+  // re-checks the (id, tag) pair here, before a name, a chunk or a resume
+  // record can be sealed; a caller that hands a different id is a bug.
+  if (options.newItemId) {
+    if (options.newItemId.idText !== fileId) {
+      throw new Error('new-item id mismatch: the upload writes an id it did not mint')
+    }
+    await ownedItem.resume(masterKey, options.newItemId.idText, options.newItemId.tag)
+  }
   onProgress?.({ stage: 'Preparing', progress: 0 })
 
   const mimeType = file.type || null
@@ -638,9 +656,16 @@ async function uploadFileWith(
     // use the web ladder, which is identical to the `planChunks()` proposal above
     // (both call core's `plan_chunks`), so chunk_count stays consistent with init.
     const serverOverrodeChunkSize = chunkBytes !== fallbackPlan.chunk_size_bytes
-    const enc = serverOverrodeChunkSize
-      ? await startEncryptedStreamWithChunkSize(masterKey, serverFileId, file.size, chunkBytes)
-      : await startEncryptedStream(masterKey, serverFileId, file.size, 'web')
+    // L13: a create seals through core's `forNewItem` under the id it minted
+    // (same content key derivation; the tag is re-checked there). A replace or
+    // version writes under the listed row's own id, as before. An explicit
+    // server chunk size has no forNewItem variant, so that rare path keeps the
+    // id-bound derive (the tag was already checked above).
+    const enc = options.newItemId && isCreate() && !serverOverrodeChunkSize
+      ? await startEncryptedStreamForNewItem(masterKey, options.newItemId, file.size, 'web')
+      : serverOverrodeChunkSize
+        ? await startEncryptedStreamWithChunkSize(masterKey, serverFileId, file.size, chunkBytes)
+        : await startEncryptedStream(masterKey, serverFileId, file.size, 'web')
 
     try {
       // Replace of an existing file (or a version of it): write in the format

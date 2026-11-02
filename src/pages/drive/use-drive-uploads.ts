@@ -1,5 +1,6 @@
 // The drive's upload queue, conflict resolution, and progress.
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
+import { mintUploadIdentity } from '../../lib/upload-identity'
 import { useToast } from '../../components/toast'
 import { useBrowseFiles, type FolderFile } from '../../components/upload-zone'
 import type { UploadItem } from '../../components/upload-progress'
@@ -549,10 +550,11 @@ export function useDriveUploads(params: DriveUploadsParams) {
       return
     }
 
-    // Replace mode uses the existing file's ID for versioning;
-    // normal mode generates a new UUID.
-    const fileId = replaceFileId ?? crypto.randomUUID()
-    const fileKey = await getFileKey(fileId)
+    // Replace mode uses the existing file's ID for versioning; a create
+    // proposes the id core minted for it (L13), never a JS-made one.
+    const identity = replaceFileId ? null : await mintUploadIdentity(getMasterKey(), 'owner')
+    const fileId = replaceFileId ?? identity!.idText
+    const fileKey = identity?.fileKey ?? (await getFileKey(fileId))
 
     const abortController = new AbortController()
     uploadAbortRef.current.set(uploadId, abortController)
@@ -600,7 +602,11 @@ export function useDriveUploads(params: DriveUploadsParams) {
               : u,
           ),
         )
-      }, undefined, undefined, abortController.signal, { conflictCreated, replaceOf })
+      }, undefined, undefined, abortController.signal, {
+        conflictCreated,
+        replaceOf,
+        newItemId: identity ? { idText: identity.idText, tag: identity.tag } : undefined,
+      })
       const uploadedFileId = uploadedFile.id
 
       const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')

@@ -123,6 +123,22 @@ export async function startEncryptedStream(
 }
 
 /**
+ * Start a streaming encryptor for a NEW row, sealed under the `NewItemId` this
+ * client minted (L13). Core re-checks the tag inside the worker.
+ */
+export async function startEncryptedStreamForNewItem(
+  masterKey: Uint8Array,
+  newItemId: { idText: string; tag: Uint8Array },
+  fileSize: number,
+  profile: ChunkProfile = 'web',
+): Promise<StreamingEncryptor> {
+  const handle = await withProxy((p) =>
+    p.createEncryptorForNewItem(masterKey, newItemId.idText, newItemId.tag, fileSize, profile),
+  )
+  return new StreamingEncryptor(handle)
+}
+
+/**
  * Start a streaming encryptor with an explicit, server-dictated chunk size.
  * Use when the v2 upload-init response overrode `chunk_size` so the client plan
  * cannot diverge from what the server expects.

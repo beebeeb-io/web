@@ -14,8 +14,9 @@
  *    by `uploaded_by`, unlike an anonymous link guest.
  */
 import type { DriveFile } from './api'
+import { mintUploadIdentity } from './upload-identity'
 import { ApiError, bulkTrashFiles, updateFile } from './api'
-import { deriveFileKey, encryptFilename, serializeEncryptedBlob } from './crypto'
+import { encryptFilename, serializeEncryptedBlob } from './crypto'
 import { encryptedUpload, type SharedFolderUploadContext, type UploadProgress } from './encrypted-upload'
 import { canAdd, canEdit, type FolderAccessLevel } from './folder-link-types'
 import { openFolderChild, type FolderWrapFormat } from './folder-share-crypto'
@@ -96,12 +97,15 @@ export async function memberUploadFiles(
   let failed = 0
   for (const file of files) {
     try {
-      const fileId = crypto.randomUUID()
-      const fileKey = await deriveFileKey(ctx.masterKey, fileId)
+      // L13 (SF-0001, T5.1): the member's create is an F id minted by core;
+      // the file key stays derived from the MEMBER's own master under it, and
+      // core re-checks the id/tag before a chunk is sealed. encryptedUpload
+      // aborts on any other id the init answers.
+      const identity = await mintUploadIdentity(ctx.masterKey, 'foreign')
       await encryptedUpload(
         file,
-        fileId,
-        fileKey,
+        identity.idText,
+        identity.fileKey,
         ctx.masterKey,
         // The shared folder's own id is the root parent: a member uploading at
         // the top level must land inside the folder, never in their own drive.
@@ -110,9 +114,7 @@ export async function memberUploadFiles(
         undefined,
         sharedFolderContext,
         undefined,
-        // L13 (SF-0001): the member's file key is derived from the member's own
-        // minted id. encryptedUpload aborts on any other id the init answers,
-        // so the key is never re-derived for a substituted one.
+        { newItemId: { idText: identity.idText, tag: identity.tag } },
       )
       added += 1
     } catch {

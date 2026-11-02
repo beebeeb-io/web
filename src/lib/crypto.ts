@@ -163,6 +163,62 @@ export async function ownerRepairContentKey(
   return withProxy((p) => p.ownerRepairContentKey(masterKey, fileId, firstChunkFrame))
 }
 
+// ─── 2275 L12/L13: id class, minting, the owner resolver ────────────────────
+// Worker transport only. `src/lib/owned-item.ts` holds the typed surface; the
+// decisions (class, key, write target, wrap match) are all core's.
+
+export async function mintItemIdWorker(
+  masterKey: Uint8Array,
+  foreign: boolean,
+): Promise<{ idText: string; tag: Uint8Array }> {
+  return withProxy((p) => p.mintItemId(masterKey, foreign))
+}
+
+export async function resumeItemIdWorker(
+  masterKey: Uint8Array,
+  itemId: string,
+  tag: Uint8Array,
+): Promise<{ idText: string; tag: Uint8Array }> {
+  return withProxy((p) => p.resumeItemId(masterKey, itemId, tag))
+}
+
+export async function isForeignItemIdWorker(itemId: string): Promise<boolean> {
+  return withProxy((p) => p.isForeignItemId(itemId))
+}
+
+export interface ResolveOwnedItemArgs {
+  masterKey: Uint8Array
+  itemId: string
+  kind: number
+  ownerWrap?: Uint8Array | null
+  nameEncrypted: string
+  sharedFolderId?: string | null
+  folderKey?: Uint8Array | null
+  folderWrap?: Uint8Array | null
+  firstChunkFrame?: Uint8Array | null
+}
+
+export async function resolveOwnedItemWorker(args: ResolveOwnedItemArgs): Promise<{
+  key: Uint8Array
+  contentKey: Uint8Array | null
+  origin: string
+  name: { name?: string; mimeType?: string | null; plaintext?: string; chunkFormat: number } | null
+  writeTarget: { itemId: string; pin: number } | null
+}> {
+  return withProxy((p) => p.resolveOwnedItem(args))
+}
+
+export async function childWrapMatchesWorker(
+  folderKey: Uint8Array,
+  sharedFolderId: string,
+  itemId: string,
+  kind: number,
+  wrapped: Uint8Array,
+  expectedKey: Uint8Array,
+): Promise<boolean> {
+  return withProxy((p) => p.childWrapMatches(folderKey, sharedFolderId, itemId, kind, wrapped, expectedKey))
+}
+
 /** The worker calls a content decryptor needs. Production: the crypto worker over Comlink. */
 export interface DecryptorPort {
   decryptorPushFrame(handle: number, frame: Uint8Array): Promise<Uint8Array>
@@ -655,6 +711,7 @@ export async function planChunks(
 export {
   StreamingEncryptor,
   startEncryptedStream,
+  startEncryptedStreamForNewItem,
   startEncryptedStreamWithChunkSize,
 } from './crypto-stream-encrypt'
 export type { ChunkEncryptorSummary, ChunkProfile } from './crypto-stream-encrypt'
