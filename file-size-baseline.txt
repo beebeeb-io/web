@@ -1,0 +1,15 @@
+# file-size-baseline.txt: source files over the size limit when the ratchet started, `<lines> <path>`.
+# Limits: 1,200 lines per source file, 1,500 under tests/. Written by scripts/check-file-sizes.sh --init-baseline
+# (workspace) from 09eafb557c99 on 2026-11-02. Entries only go down: `check-file-sizes.sh . --update-baseline`
+# lowers or drops them. Never add a path or raise a count here; split the file instead (token plan Phase 4).
+1672 packages/shared/src/types/index.ts
+1712 src/components/file-list.tsx
+1235 src/components/preview/file-preview.tsx
+4639 src/lib/api.ts
+1707 src/lib/crypto.ts
+1596 src/lib/sync-client.ts
+4287 src/pages/billing.tsx
+3461 src/pages/drive.tsx
+1468 src/pages/settings/import.tsx
+1716 src/pages/share-view.tsx
+1248 src/pages/shared.tsx
