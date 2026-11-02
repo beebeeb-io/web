@@ -674,6 +674,51 @@ async function readDirectWholeFile(
   return plaintext
 }
 
+/**
+ * No usable Content-Length: read the body whole, then decrypt it. The legacy
+ * `size_bytes` rule runs against the REAL body length here (item 4).
+ */
+async function decryptBufferedResponseBody(
+  res: Response,
+  fileKey: Uint8Array,
+  content: FileContentRef,
+  totalChunks: number,
+  sizeBytes: number,
+  chunkSize: number,
+  opts?: WholeFileOptions,
+): Promise<Uint8Array> {
+  // C3: this path still reports byte progress from the real body (with no
+  // total, so the copy says `Downloading 12.4 MB`), and its `done` runs
+  // inside the wipe like the pipelined path's.
+  const encryptedBytes = await readWholeBody(res, (receivedBytes) => {
+    opts?.onProgress?.({ phase: 'downloading', receivedBytes, totalBytes: null, decryptedChunks: 0, totalChunks })
+  })
+  opts?.onProgress?.({
+    phase: 'decrypting',
+    receivedBytes: encryptedBytes.length,
+    totalBytes: encryptedBytes.length,
+    decryptedChunks: 0,
+    totalChunks,
+  })
+  const decrypted = await decryptEncryptedBytes(
+    fileKey, content, encryptedBytes, totalChunks, sizeBytes, chunkSize,
+    opts?.masterKey,
+  )
+  try {
+    opts?.onProgress?.({
+      phase: 'done',
+      receivedBytes: encryptedBytes.length,
+      totalBytes: encryptedBytes.length,
+      decryptedChunks: totalChunks,
+      totalChunks,
+    })
+  } catch (err) {
+    decrypted.fill(0)
+    throw err
+  }
+  return decrypted
+}
+
 async function decryptWholeFileResponse(
   res: Response,
   fileKey: Uint8Array,
@@ -687,40 +732,10 @@ async function decryptWholeFileResponse(
   const contentLength = parseHeaderInt(res.headers.get('Content-Length'))
   const totalChunks = effectiveChunkCount
 
-  // Without a Content-Length the plaintext size cannot be known before the body
-  // is read, so keep today's buffered path: it applies the legacy `size_bytes`
-  // rule against the REAL body length (round-2 review, item 4).
   if (!res.body || contentLength === null) {
-    // C3: this path still reports byte progress from the real body (with no
-    // total, so the copy says `Downloading 12.4 MB`), and its `done` runs
-    // inside the wipe like the pipelined path's.
-    const encryptedBytes = await readWholeBody(res, (receivedBytes) => {
-      opts?.onProgress?.({ phase: 'downloading', receivedBytes, totalBytes: null, decryptedChunks: 0, totalChunks })
-    })
-    opts?.onProgress?.({
-      phase: 'decrypting',
-      receivedBytes: encryptedBytes.length,
-      totalBytes: encryptedBytes.length,
-      decryptedChunks: 0,
-      totalChunks,
-    })
-    const decrypted = await decryptEncryptedBytes(
-      fileKey, content, encryptedBytes, totalChunks, sizeBytes, effectiveChunkSize,
-      opts?.masterKey,
+    return decryptBufferedResponseBody(
+      res, fileKey, content, totalChunks, sizeBytes, effectiveChunkSize, opts,
     )
-    try {
-      opts?.onProgress?.({
-        phase: 'done',
-        receivedBytes: encryptedBytes.length,
-        totalBytes: encryptedBytes.length,
-        decryptedChunks: totalChunks,
-        totalChunks,
-      })
-    } catch (err) {
-      decrypted.fill(0)
-      throw err
-    }
-    return decrypted
   }
 
   const totalBytes = contentLength
@@ -801,6 +816,204 @@ async function decryptWholeFileResponse(
 
 // ─── Public API ─────────────────────────────────────
 
+/** The verified file plus its open body, and the sizes both save paths read. */
+interface DownloadTarget {
+  meta: { name: string; mimeType: string | null; content: FileContentRef }
+  filename: string
+  mime: string
+  direct: boolean
+  res: Response
+  chunkCount: number
+  chunkSize: number
+  plaintextSize: number
+  controller: ServiceWorker | null
+}
+
+/** Verify the metadata, open the body, and read the sizes both save paths need. */
+async function openDownloadTarget(
+  fileId: string,
+  fileKey: Uint8Array,
+  nameEncryptedJson: string,
+  mimeType: string | null | undefined,
+  chunkCount: number,
+  sizeBytes: number,
+  opts?: EncryptedDownloadOptions,
+): Promise<DownloadTarget> {
+  // The file's authenticated metadata: name, MIME type and content pin.
+  // Refused (nothing is downloaded) when it cannot be verified.
+  const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
+  // Prefer explicit mimeType arg (legacy files) over encrypted metadata
+  const mime = mimeType || meta.mimeType || 'application/octet-stream'
+
+  // C2: a caller that must never buffer learns BEFORE any fetch whether this
+  // window can stream the save to disk; if not, nothing is downloaded.
+  let knownController: ServiceWorker | null | undefined
+  if (opts?.neverBuffer) {
+    knownController = canStreamToDisk() ? await awaitController() : null
+    if (!knownController) throw new TooLargeToDownloadHereError()
+  }
+
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const direct = await directResponse(fileKey, meta.content, opts?.signal ?? new AbortController().signal, opts?.masterKey)
+  const res = direct ?? await fetch(downloadUrlFor(fileId, opts?.versionId ?? null), {
+    headers,
+    signal: opts?.signal,
+    credentials: 'include',
+  })
+  if (!res.ok) {
+    throw new ApiError(res.statusText, res.status)
+  }
+
+  const effectiveChunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? chunkCount
+  const effectiveChunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size')) ?? CHUNK_SIZE
+
+  // Account for the legacy "encrypted total stored in size_bytes" case so the
+  // streaming path sees the same plaintext size the buffered path does.
+  const contentLengthHeader = parseHeaderInt(res.headers.get('Content-Length'))
+  // The direct transport hands out plaintext frames, so its Content-Length is
+  // already the plaintext total; the API path needs the legacy size rule.
+  const plaintextSize = direct
+    ? contentLengthHeader ?? sizeBytes
+    : plaintextSizeFor(sizeBytes, contentLengthHeader, effectiveChunkCount)
+
+  const controller =
+    knownController !== undefined
+      ? knownController
+      : canStreamToDisk()
+        ? await awaitController()
+        : null
+
+  return {
+    meta,
+    filename: meta.name,
+    mime,
+    direct: direct !== null,
+    res,
+    chunkCount: effectiveChunkCount,
+    chunkSize: effectiveChunkSize,
+    plaintextSize,
+    controller,
+  }
+}
+
+/** Decrypt while the body arrives; each part goes straight to the SW-backed save. */
+async function streamTargetToDisk(
+  target: DownloadTarget,
+  body: ReadableStream<Uint8Array>,
+  fileKey: Uint8Array,
+  controller: ServiceWorker,
+  opts?: EncryptedDownloadOptions,
+): Promise<void> {
+  let handles: StreamingDownloadHandles | null = null
+  try {
+    const id = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    handles = await startStreamingDownload(id, target.filename, target.mime, target.plaintextSize, controller)
+    const writer = handles.writer
+
+    const onAbortHandler = () => {
+      void handles?.abort(opts?.signal?.reason ?? 'aborted')
+    }
+    if (opts?.signal) opts.signal.addEventListener('abort', onAbortHandler, { once: true })
+
+    try {
+      if (target.direct) {
+        let written = 0
+        await body.pipeTo(new WritableStream<Uint8Array>({
+          async write(chunk) {
+            await writer.write(chunk)
+            written += chunk.length
+            opts?.onProgress?.(written, target.plaintextSize)
+          },
+        }), { signal: opts?.signal })
+      } else await pipeDecryptedChunks(
+        body,
+        fileKey,
+        target.meta.content,
+        target.chunkCount,
+        target.plaintextSize,
+        target.chunkSize,
+        opts?.signal,
+        async chunk => { await writer.write(chunk) },
+        opts?.onProgress
+          ? (written: number) => opts.onProgress!(written, target.plaintextSize)
+          : undefined,
+        opts?.masterKey,
+      )
+      await handles.close()
+    } finally {
+      if (opts?.signal) opts.signal.removeEventListener('abort', onAbortHandler)
+    }
+  } catch (err) {
+    // Stream path failed (registration, transfer, network, abort, ...).
+    // Tear down the partial download and propagate the error so callers
+    // see the same contract regardless of which path was taken.
+    try { await handles?.abort(err) } catch {}
+    await body.cancel().catch(() => {})
+    throw err
+  }
+}
+
+/** Read the whole body, decrypt it in memory, and trigger the browser save. */
+async function saveTargetAsBlob(
+  target: DownloadTarget,
+  fileKey: Uint8Array,
+  sizeBytes: number,
+  opts?: EncryptedDownloadOptions,
+): Promise<void> {
+  const { res, direct, meta, mime, plaintextSize } = target
+
+  if (opts?.neverBuffer) {
+    // C2: never fall back to arrayBuffer() on the over-cap path.
+    try {
+      await res.body?.cancel()
+    } catch {
+      // Already closed.
+    }
+    throw new TooLargeToDownloadHereError()
+  }
+  if (plaintextSize > 200 * 1024 * 1024) {
+    // Surface a console warning so we can debug user reports; we cannot avoid
+    // the in-memory buffer here without SW support.
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[encryptedDownload] Falling back to in-memory download for large file ' +
+      `(${(plaintextSize / 1024 / 1024).toFixed(0)} MB) — browser does not support streaming saves.`,
+    )
+  }
+
+  const encryptedBlob = await res.arrayBuffer()
+  const encryptedBytes = new Uint8Array(encryptedBlob)
+
+  const decrypted = direct ? encryptedBytes : await decryptEncryptedBytes(
+    fileKey,
+    meta.content,
+    encryptedBytes,
+    target.chunkCount,
+    sizeBytes,
+    target.chunkSize,
+    opts?.masterKey,
+  )
+
+  // Fire a single progress event after decryption so observers still see
+  // completion when the SW path was unavailable.
+  opts?.onProgress?.(decrypted.length, decrypted.length)
+
+  const blob = new Blob([decrypted as BlobPart], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = target.filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 /**
  * Download and decrypt a file, then trigger a browser save dialog.
  *
@@ -828,158 +1041,12 @@ export async function encryptedDownload(
   sizeBytes: number,
   opts?: EncryptedDownloadOptions,
 ): Promise<void> {
-  // 1. The file's authenticated metadata: name, MIME type and content pin.
-  //    Refused (nothing is downloaded) when it cannot be verified.
-  const meta = await openFileMetadata(fileId, fileKey, nameEncryptedJson)
-  const filename = meta.name
-  // Prefer explicit mimeType arg (legacy files) over encrypted metadata
-  const effectiveMime = mimeType || meta.mimeType || 'application/octet-stream'
-
-  // C2: a caller that must never buffer learns BEFORE any fetch whether this
-  // window can stream the save to disk; if not, nothing is downloaded.
-  let knownController: ServiceWorker | null | undefined
-  if (opts?.neverBuffer) {
-    knownController = canStreamToDisk() ? await awaitController() : null
-    if (!knownController) throw new TooLargeToDownloadHereError()
+  const target = await openDownloadTarget(fileId, fileKey, nameEncryptedJson, mimeType, chunkCount, sizeBytes, opts)
+  if (target.controller && target.res.body) {
+    await streamTargetToDisk(target, target.res.body, fileKey, target.controller, opts)
+  } else {
+    await saveTargetAsBlob(target, fileKey, sizeBytes, opts)
   }
-
-  // 2. Download the encrypted blob from the API
-  const token = getToken()
-  const headers: Record<string, string> = {}
-  if (token) headers['Authorization'] = `Bearer ${token}`
-
-  const direct = await directResponse(fileKey, meta.content, opts?.signal ?? new AbortController().signal, opts?.masterKey)
-  const res = direct ?? await fetch(downloadUrlFor(fileId, opts?.versionId ?? null), {
-    headers,
-    signal: opts?.signal,
-    credentials: 'include',
-  })
-  if (!res.ok) {
-    throw new ApiError(res.statusText, res.status)
-  }
-
-  const effectiveChunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? chunkCount
-  const headerChunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size'))
-  const effectiveChunkSize = headerChunkSize ?? CHUNK_SIZE
-
-  // Account for the legacy "encrypted total stored in size_bytes" case so the
-  // streaming path sees the same plaintext size the buffered path does.
-  const contentLengthHeader = parseHeaderInt(res.headers.get('Content-Length'))
-  // The direct transport hands out plaintext frames, so its Content-Length is
-  // already the plaintext total; the API path needs the legacy size rule.
-  const effectivePlaintextSize = direct
-    ? contentLengthHeader ?? sizeBytes
-    : plaintextSizeFor(sizeBytes, contentLengthHeader, effectiveChunkCount)
-
-  const controller =
-    knownController !== undefined
-      ? knownController
-      : canStreamToDisk()
-        ? await awaitController()
-        : null
-
-  // ─── Streaming path ──────────────────────────────
-  if (controller && res.body) {
-    let handles: StreamingDownloadHandles | null = null
-    try {
-      const id = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-      handles = await startStreamingDownload(id, filename, effectiveMime, effectivePlaintextSize, controller)
-      const writer = handles.writer
-
-      const onAbortHandler = () => {
-        void handles?.abort(opts?.signal?.reason ?? 'aborted')
-      }
-      if (opts?.signal) opts.signal.addEventListener('abort', onAbortHandler, { once: true })
-
-      try {
-        if (direct) {
-          let written = 0
-          await res.body.pipeTo(new WritableStream<Uint8Array>({
-            async write(chunk) {
-              await writer.write(chunk)
-              written += chunk.length
-              opts?.onProgress?.(written, effectivePlaintextSize)
-            },
-          }), { signal: opts?.signal })
-        } else await pipeDecryptedChunks(
-          res.body,
-          fileKey,
-          meta.content,
-          effectiveChunkCount,
-          effectivePlaintextSize,
-          effectiveChunkSize,
-          opts?.signal,
-          async chunk => { await writer.write(chunk) },
-          opts?.onProgress
-            ? (written: number) => opts.onProgress!(written, effectivePlaintextSize)
-            : undefined,
-          opts?.masterKey,
-        )
-        await handles.close()
-      } finally {
-        if (opts?.signal) opts.signal.removeEventListener('abort', onAbortHandler)
-      }
-
-      dispatchDecrypted(fileId)
-      return
-    } catch (err) {
-      // Stream path failed (registration, transfer, network, abort, ...).
-      // Tear down the partial download and propagate the error so callers
-      // see the same contract regardless of which path was taken.
-      try { await handles?.abort(err) } catch {}
-      await res.body?.cancel().catch(() => {})
-      throw err
-    }
-  }
-
-  // ─── Fallback (Blob) path ────────────────────────
-  if (opts?.neverBuffer) {
-    // C2: never fall back to arrayBuffer() on the over-cap path.
-    try {
-      await res.body?.cancel()
-    } catch {
-      // Already closed.
-    }
-    throw new TooLargeToDownloadHereError()
-  }
-  if (effectivePlaintextSize > 200 * 1024 * 1024) {
-    // Surface a console warning so we can debug user reports; we cannot avoid
-    // the in-memory buffer here without SW support.
-    // eslint-disable-next-line no-console
-    console.warn(
-      '[encryptedDownload] Falling back to in-memory download for large file ' +
-      `(${(effectivePlaintextSize / 1024 / 1024).toFixed(0)} MB) — browser does not support streaming saves.`,
-    )
-  }
-
-  const encryptedBlob = await res.arrayBuffer()
-  const encryptedBytes = new Uint8Array(encryptedBlob)
-
-  const decrypted = direct ? encryptedBytes : await decryptEncryptedBytes(
-    fileKey,
-    meta.content,
-    encryptedBytes,
-    effectiveChunkCount,
-    sizeBytes,
-    effectiveChunkSize,
-    opts?.masterKey,
-  )
-
-  // Fire a single progress event after decryption so observers still see
-  // completion when the SW path was unavailable.
-  opts?.onProgress?.(decrypted.length, decrypted.length)
-
-  const blob = new Blob([decrypted as BlobPart], { type: effectiveMime })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
   dispatchDecrypted(fileId)
 }
 
