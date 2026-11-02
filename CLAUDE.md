@@ -18,6 +18,8 @@ bunx playwright test 2>&1 | tee /tmp/bb-web-e2e.log  # e2e (bun run test:e2e:iso
 make wasm-sync                                       # from the workspace root: regenerate packages/beebeeb-wasm from core
 ```
 
+Quiet runs: `make test-quiet REPO=web` · `make check-quiet REPO=web` · `make e2e-quiet REPO=web` — one PASS line per target, at most 25 printed lines; the full log path is the last line.
+
 Truth lines: `bun test` → `N pass, 0 fail`; Playwright → `N passed`; `tsc` exit 0. Assert N, not the absence of "failed";
 a Playwright filter that matched 0 tests is a RED. UI tasks are verified in a browser (screenshots in the task's evidence path),
 never by curl. A new spec is trusted only after it has been seen to fail against a deliberate mutation.
