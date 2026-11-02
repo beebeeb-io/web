@@ -634,6 +634,47 @@ export async function unwrapFolderCustody(
   return withProxy((p) => p.unwrapFolderCustody(masterKey, folderId, wrapped))
 }
 
+// ─── L16 (2275 T5.7): actor names and link labels ───────────────────────────
+// Core owns the sanitising (NFC, control stripping, blank refusal) and the
+// envelopes; web only carries the bytes. Actor names are bound to the shared
+// folder id, link labels to the share id.
+
+/** L16: seal an actor's display name, bound to the shared folder id. */
+export async function sealActorName(
+  folderKey: Uint8Array,
+  sharedFolderId: string,
+  name: string,
+): Promise<string> {
+  return withProxy((p) => p.sealFolderActorName(folderKey, sharedFolderId, name))
+}
+
+/** L16: open an actor's display name; a different folder id is refused. */
+export async function openActorName(
+  folderKey: Uint8Array,
+  sharedFolderId: string,
+  envelope: string,
+): Promise<string> {
+  return withProxy((p) => p.openFolderActorName(folderKey, sharedFolderId, envelope))
+}
+
+/** L16: seal a link label under the master key, bound to the share id. */
+export async function wrapLinkLabel(
+  masterKey: Uint8Array,
+  shareId: string,
+  label: string,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapLinkLabel(masterKey, shareId, label))
+}
+
+/** L16: open a link label; a different share id is refused. */
+export async function unwrapLinkLabel(
+  masterKey: Uint8Array,
+  shareId: string,
+  wrapped: Uint8Array,
+): Promise<string> {
+  return withProxy((p) => p.unwrapLinkLabel(masterKey, shareId, wrapped))
+}
+
 /** L6: a link's `owner_wrapped_key` (K_c), bound to the share id. */
 export async function wrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, linkKey: Uint8Array): Promise<Uint8Array> {
   return withProxy((p) => p.wrapLinkOwnerKey(masterKey, shareId, linkKey))

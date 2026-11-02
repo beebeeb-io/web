@@ -42,7 +42,7 @@ import {
   sealChildKey,
   sealFolderCustody,
 } from './folder-share-crypto'
-import { encryptActorName } from './guest-actor-name'
+import { encryptLinkLabel } from './link-label'
 import { forgetSharedFolderCustody } from './owner-adoption'
 import {
   linkErrorCode,
@@ -129,7 +129,8 @@ export interface CreateFolderLinkPorts {
   wrapFolderKeyForLink: typeof wrapFolderKeyForLink
   ownerWrappedLinkKey: typeof ownerWrappedLinkKey
   ownerWrappedLinkToken: typeof ownerWrappedLinkToken
-  encryptLabel: (folderKey: Uint8Array, label: string) => Promise<string>
+  /** L16: base64 of core's label wrap under (master key, share id). */
+  encryptLabel: (masterKey: Uint8Array, shareId: string, label: string) => Promise<string>
   fromBase64: typeof fromBase64
   toBase64: typeof toBase64
   origin: () => string
@@ -165,7 +166,7 @@ export const REAL_FOLDER_LINK_PORTS: CreateFolderLinkPorts = {
   wrapFolderKeyForLink,
   ownerWrappedLinkKey,
   ownerWrappedLinkToken,
-  encryptLabel: encryptActorName,
+  encryptLabel: encryptLinkLabel,
   fromBase64,
   toBase64,
   origin: browserOrigin,
@@ -324,14 +325,17 @@ export async function createFolderLinkWithKeys(
     } finally {
       zeroize(rootNameKey)
     }
-    const labelEncrypted = input.label ? await ports.encryptLabel(folderKey, input.label) : null
-
     // L6a: the share id is proposed here and both owner copies are sealed under
     // it. A taken id (a UUIDv4 collision) is answered 409 and nothing is
     // stored, so the copies are re-sealed under a fresh id and sent again.
     try {
       for (let attempt = 1; ; attempt += 1) {
         const id = ports.generateLinkId()
+        // L16: the label is bound to the share id, so it is sealed inside the
+        // loop (a 409 retry re-seals it under the fresh id too).
+        const labelEncrypted = input.label
+          ? await ports.encryptLabel(input.masterKey, id, input.label)
+          : null
         const body: CreateFolderLinkRequest = {
           id,
           folder_id: input.folderId,

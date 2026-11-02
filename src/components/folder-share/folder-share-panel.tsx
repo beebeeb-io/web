@@ -22,7 +22,7 @@ import {
 } from '../../lib/api'
 import { fromBase64 } from '../../lib/crypto'
 import { openFolderCustody } from '../../lib/folder-share-crypto'
-import { decryptActorName } from '../../lib/guest-actor-name'
+import { decryptLinkLabel } from '../../lib/link-label'
 import { rebuildFolderLinkUrl } from '../../lib/shared-folder-link-crypto'
 import { SHARED_FOLDERS_FLAG } from '../../lib/flags'
 import type { FolderLink } from '../../lib/folder-link-types'
@@ -263,18 +263,21 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
           })
         }
 
+        // L16: labels open under the OWNER's master key, bound to the share
+        // id, so they need no folder key.
+        const entries = await Promise.all(
+          linkRows.map(
+            async (link) =>
+              [link.id, await decryptLinkLabel(key, link.id, link.label_encrypted)] as const,
+          ),
+        )
+        if (live) setLabels(Object.fromEntries(entries))
+
         const openedFolderKey = custody?.owner_wrapped_folder_key
           ? await openFolderCustody(key, folderId, fromBase64(custody.owner_wrapped_folder_key))
           : null
         if (openedFolderKey) {
-          const entries = await Promise.all(
-            linkRows.map(async (link) => {
-              if (!link.label_encrypted) return [link.id, null] as const
-              return [link.id, await decryptActorName(openedFolderKey, link.label_encrypted)] as const
-            }),
-          )
           if (live) {
-            setLabels(Object.fromEntries(entries))
             setFolderKey(openedFolderKey)
             // L15: only the owner publishes; the list is the client's proof of
             // what has no L14-passing wrap, shown by name before confirming.

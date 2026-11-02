@@ -61,7 +61,7 @@ import { sharedFoldersEnabled } from './use-feature-flag'
 import { forgetSharedFolderSession, foreignRowKey, folderKeyForRoot, needsOwnership, openOwnerFile } from './owner-adoption'
 import { createSharedFolderKeyCache } from './shared-folder-key-cache'
 import { activeFolderInvites } from './folder-share-crypto'
-import { decryptActorName } from './guest-actor-name'
+import { decryptLinkLabel } from './link-label'
 import { useAuth } from './auth-context'
 import { isImpersonationSessionActive, shouldReconcileLock } from './impersonation-context'
 import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver, type ResolvedRowKeys } from './file-request-crypto'
@@ -640,7 +640,11 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     const key = await folderKeyForRoot(masterKeyRef.current as Uint8Array, folderId)
     try {
       for (const link of links) {
-        labels.set(link.id, key && link.label_encrypted ? await decryptActorName(key, link.label_encrypted) : null)
+        // L16: a label opens under the OWNER's master key, bound to the share id.
+        labels.set(
+          link.id,
+          await decryptLinkLabel(masterKeyRef.current as Uint8Array, link.id, link.label_encrypted),
+        )
       }
     } finally {
       if (key) zeroize(key)

@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react'
 import { getSharedFolderActivity } from '../../lib/api'
 import { decryptActorName } from '../../lib/guest-actor-name'
+import { decryptLinkLabel } from '../../lib/link-label'
 import { folderKeyForRoot } from '../../lib/owner-adoption'
 import type { SharedFolderActivityRow } from '../../lib/folder-link-types'
 import { useKeys } from '../../lib/key-context'
@@ -46,26 +47,23 @@ export function describeActivity(
 /** Decrypted label/actor for every row, keyed by row id. */
 async function decryptRowNames(
   rows: SharedFolderActivityRow[],
+  masterKey: Uint8Array | null,
+  folderId: string,
   folderKey: Uint8Array | null,
 ): Promise<{ labels: Record<string, string | null>; actors: Record<string, string | null> }> {
   const labels: Record<string, string | null> = {}
   const actors: Record<string, string | null> = {}
-  if (!folderKey) return { labels, actors }
+  if (!masterKey) return { labels, actors }
   await Promise.all(
     rows.map(async (row) => {
-      if (row.share_label_encrypted) {
-        try {
-          labels[row.id] = await decryptActorName(folderKey, row.share_label_encrypted)
-        } catch {
-          labels[row.id] = null
-        }
+      // L16: a label is the owner's, bound to the share id under the master
+      // key; an actor's name is bound to the shared folder id under the
+      // folder key. Either may be missing; neither failure hides the row.
+      if (row.share_label_encrypted && row.share_id) {
+        labels[row.id] = await decryptLinkLabel(masterKey, row.share_id, row.share_label_encrypted)
       }
-      if (row.actor_name_encrypted) {
-        try {
-          actors[row.id] = await decryptActorName(folderKey, row.actor_name_encrypted)
-        } catch {
-          actors[row.id] = null
-        }
+      if (row.actor_name_encrypted && folderKey) {
+        actors[row.id] = await decryptActorName(folderKey, folderId, row.actor_name_encrypted)
       }
     }),
   )
@@ -136,8 +134,9 @@ export function FolderActivityTab({ folderId }: FolderActivityTabProps) {
     ;(async () => {
       try {
         const res = await getSharedFolderActivity(folderId, 50)
+        const masterKey = isUnlocked ? getMasterKey() : null
         const folderKey = isUnlocked ? await folderKeyForRoot(getMasterKey(), folderId) : null
-        const names = await decryptRowNames(res.activity, folderKey)
+        const names = await decryptRowNames(res.activity, masterKey, folderId, folderKey)
         if (cancelled) return
         setRows(res.activity)
         setLabels(names.labels)

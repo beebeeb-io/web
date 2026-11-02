@@ -15,6 +15,7 @@ import {
 } from '../lib/content-crypto'
 import { decodeEnvelope, encodeEnvelope, type EnvelopeBytes } from '../lib/metadata-envelope'
 import { ownedItemWorkerOps } from './crypto-owned-item'
+import { l16WorkerOps } from './crypto-l16'
 
 // Import the .wasm binary URL via Vite's ?url suffix so it resolves
 // correctly inside a bundled worker (import.meta.url in the wasm-pack
@@ -575,7 +576,10 @@ const cryptoWorker = {
     return wasm.unwrapFolderCustody(masterKey, folderId, wrapped) as Uint8Array
   },
 
-  /** L6: a link's K_c, sealed to the owner and bound to the share id. */
+  // L16 actor names and link labels live in crypto-l16.ts (same file-size
+  // ratchet); spread in so the Comlink surface is unchanged.
+  ...l16WorkerOps(ensureWasm),
+
   async wrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, linkKey: Uint8Array): Promise<Uint8Array> {
     const wasm = await ensureWasm()
     return wasm.wrapLinkOwnerKey(masterKey, shareId, linkKey) as Uint8Array

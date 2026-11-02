@@ -16,6 +16,7 @@ import { BBButton } from '@beebeeb/shared'
 import { getSentInvites, getSharedFolderActivity, listActivity } from '../lib/api'
 import type { ActivityEvent } from '../lib/api'
 import { decryptActorName } from '../lib/guest-actor-name'
+import { decryptLinkLabel } from '../lib/link-label'
 import { folderKeyForRoot } from '../lib/owner-adoption'
 import { describeActivity } from '../components/folder-share/folder-activity-tab'
 import { useKeys } from '../lib/key-context'
@@ -51,13 +52,16 @@ function SharedFolderActivitySection() {
             const rows: SharedFolderActivityRow[] = res.activity
             const names = await Promise.all(
               rows.map(async (row) => {
+                // L16: the label is bound to the share id under the OWNER's
+                // master key; the actor's name is bound to the shared root id
+                // under the folder key.
                 const label =
-                  row.share_label_encrypted && folderKey
-                    ? await decryptActorName(folderKey, row.share_label_encrypted).catch(() => null)
+                  row.share_label_encrypted && row.share_id
+                    ? await decryptLinkLabel(getMasterKey(), row.share_id, row.share_label_encrypted)
                     : null
                 const actor =
                   row.actor_name_encrypted && folderKey
-                    ? await decryptActorName(folderKey, row.actor_name_encrypted).catch(() => null)
+                    ? await decryptActorName(folderKey, folderId, row.actor_name_encrypted)
                     : null
                 return { row, label, actor }
               }),

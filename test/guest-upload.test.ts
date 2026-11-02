@@ -89,6 +89,15 @@ await mockModuleScoped('../src/lib/crypto', import.meta.dir, {
   fromBase64: unb64,
   wrapFolderChild: owned.wrapFolderChild,
   unwrapFolderChild: owned.unwrapFolderChild,
+  // L16 (2275 T5.7): actor names and link labels, core in process.
+  sealActorName: async (folderKey: Uint8Array, sharedFolderId: string, name: string) =>
+    loadWasm().sealFolderActorName(folderKey, sharedFolderId, name) as string,
+  openActorName: async (folderKey: Uint8Array, sharedFolderId: string, envelope: string) =>
+    loadWasm().openFolderActorName(folderKey, sharedFolderId, envelope) as string,
+  wrapLinkLabel: async (masterKey: Uint8Array, shareId: string, label: string) =>
+    loadWasm().wrapLinkLabel(masterKey, shareId, label) as Uint8Array,
+  unwrapLinkLabel: async (masterKey: Uint8Array, shareId: string, wrapped: Uint8Array) =>
+    loadWasm().unwrapLinkLabel(masterKey, shareId, wrapped) as string,
 })
 
 const {
@@ -378,35 +387,41 @@ describe('uploadGuestFiles', () => {
 describe('actor name', () => {
   test('round-trips and never stores plaintext', async () => {
     const name = 'Anouk de Vries'
-    const encrypted = await storeActorName('folder-1', FOLDER_KEY, name)
-    expect(localStorage.getItem(ACTOR_NAME_STORAGE_PREFIX + 'folder-1')).toBe(encrypted)
+    const encrypted = await storeActorName('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', FOLDER_KEY, name)
+    expect(localStorage.getItem(ACTOR_NAME_STORAGE_PREFIX + 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1')).toBe(encrypted)
     expect(encrypted.indexOf(name)).toBe(-1)
-    expect(await readActorName('folder-1', FOLDER_KEY)).toBe(name)
+    expect(await readActorName('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', FOLDER_KEY)).toBe(name)
   })
 
   test('a different folder key reads null instead of throwing', async () => {
-    const encrypted = await encryptActorName(FOLDER_KEY, 'Anouk')
-    expect(await decryptActorName(new Uint8Array(32).fill(8), encrypted)).toBeNull()
+    const encrypted = await encryptActorName(FOLDER_KEY, ROOT, 'Anouk')
+    expect(await decryptActorName(new Uint8Array(32).fill(8), ROOT, encrypted)).toBeNull()
+  })
+
+  test('L16: a name sealed for one shared root is refused under another', async () => {
+    const encrypted = await encryptActorName(FOLDER_KEY, ROOT, 'Anouk')
+    expect(await decryptActorName(FOLDER_KEY, '22222222-2222-4222-8222-222222222222', encrypted)).toBeNull()
+    expect(await decryptActorName(FOLDER_KEY, ROOT, encrypted)).toBe('Anouk')
   })
 
   test('readActorName is null when nothing was stored', async () => {
-    expect(await readActorName('folder-2', FOLDER_KEY)).toBeNull()
+    expect(await readActorName('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', FOLDER_KEY)).toBeNull()
   })
 
   test('a skipped prompt stays remembered as empty, not as never asked', async () => {
-    storeActorNameSkipped('folder-3')
-    expect(await readActorName('folder-3', FOLDER_KEY)).toBe('')
-    expect(localStorage.getItem(ACTOR_NAME_STORAGE_PREFIX + 'folder-3')).toBe('')
+    storeActorNameSkipped('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3')
+    expect(await readActorName('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', FOLDER_KEY)).toBe('')
+    expect(localStorage.getItem(ACTOR_NAME_STORAGE_PREFIX + 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3')).toBe('')
   })
 
   test('the sealed name for a later batch is the stored ciphertext, null when skipped or foreign', async () => {
-    const encrypted = await storeActorName('folder-4', FOLDER_KEY, 'Mum')
-    expect(await readActorNameCiphertext('folder-4', FOLDER_KEY)).toBe(encrypted)
-    storeActorNameSkipped('folder-5')
-    expect(await readActorNameCiphertext('folder-5', FOLDER_KEY)).toBeNull()
-    expect(await readActorNameCiphertext('folder-6', FOLDER_KEY)).toBeNull()
+    const encrypted = await storeActorName('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', FOLDER_KEY, 'Mum')
+    expect(await readActorNameCiphertext('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', FOLDER_KEY)).toBe(encrypted)
+    storeActorNameSkipped('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5')
+    expect(await readActorNameCiphertext('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5', FOLDER_KEY)).toBeNull()
+    expect(await readActorNameCiphertext('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6', FOLDER_KEY)).toBeNull()
     // Sealed under another folder key: never sent as this folder's name.
-    expect(await readActorNameCiphertext('folder-4', new Uint8Array(32).fill(8))).toBeNull()
+    expect(await readActorNameCiphertext('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', new Uint8Array(32).fill(8))).toBeNull()
   })
 })
 
