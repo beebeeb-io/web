@@ -14,6 +14,7 @@ import {
   approveInvite,
   revokeShare,
   listAllFiles,
+  type DriveFile,
   type ShareInfo,
   type ShareOptions,
   type CreateBundleShareRequest,
@@ -52,6 +53,8 @@ import { SHARED_FOLDERS_FLAG } from '../lib/flags'
 import { sharedFoldersEnabledForWrite, useFeatureFlag } from '../lib/use-feature-flag'
 import { FOLDER_NEEDS_UPGRADE } from '../lib/folder-upgrade'
 import { FolderSharePanel } from './folder-share/folder-share-panel'
+import { shareFileKey } from '../lib/share-file-key'
+import { EXPIRY_OPTIONS, MAX_OPENS_OPTIONS } from '../lib/share-options'
 
 interface ShareDialogProps {
   open: boolean
@@ -60,6 +63,11 @@ interface ShareDialogProps {
   fileName: string
   fileSize: number
   isFolder?: boolean
+  /**
+   * The listed row. With it, a single-file link or invite wraps the key that
+   * opens THIS row (SF-0002 W8), not the plain derivation. Owner pages pass it.
+   */
+  file?: DriveFile
   /**
    * Bundle shares (task 0417): the ordered set of files selected for a single
    * "Share with Beebeeb" link. When present with MORE THAN ONE entry, the Link
@@ -74,25 +82,6 @@ interface ShareDialogProps {
 }
 
 type ShareMode = 'link' | 'invite'
-type ExpiryOption = { label: string; hours: number | null }
-type MaxOpensOption = { label: string; value: number | null }
-
-const EXPIRY_OPTIONS: ExpiryOption[] = [
-  { label: '1 hour', hours: 1 },
-  { label: '24 hours', hours: 24 },
-  { label: '7 days', hours: 168 },
-  { label: '30 days', hours: 720 },
-  { label: 'Never', hours: null },
-]
-
-const MAX_OPENS_OPTIONS: MaxOpensOption[] = [
-  { label: '1', value: 1 },
-  { label: '3', value: 3 },
-  { label: '5', value: 5 },
-  { label: '10', value: 10 },
-  { label: 'Unlimited', value: null },
-]
-
 
 function Dropdown<T extends { label: string }>({
   options,
@@ -220,16 +209,18 @@ function parseRateLimitError(error: unknown): RateLimitInfo | null {
 
 function InviteForm({
   fileId,
+  file,
   isFolder,
   onSuccess,
   onRateLimitFeedback,
 }: {
   fileId: string
+  file?: DriveFile
   isFolder?: boolean
   onSuccess: (email: string) => void
   onRateLimitFeedback: () => void
 }) {
-  const { getMasterKey, getFileKey } = useKeys()
+  const { getMasterKey, getFileKey, getFileKeyForFile } = useKeys()
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -325,7 +316,9 @@ function InviteForm({
         if (result.recipient_public_key && result.status === 'claimed') {
           try {
             const masterKey = getMasterKey()
-            const fileKey = await getFileKey(fileId)
+            // SF-0002 W8: the key that opens this row (a repaired row's is not
+            // the plain derivation), so the recipient's copy opens it.
+            const fileKey = await shareFileKey(fileId, { file, getFileKey, getFileKeyForFile })
             const recipientPubKey = fromBase64(result.recipient_public_key)
 
             const { encryptedFileKey, nonce } = await encryptFileKeyForSharing(
@@ -359,7 +352,7 @@ function InviteForm({
       setLoading(false)
       setProgress(null)
     }
-  }, [email, fileId, isFolder, onSuccess, getMasterKey, getFileKey])
+  }, [email, fileId, file, isFolder, onSuccess, getMasterKey, getFileKey, getFileKeyForFile])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -507,7 +500,7 @@ function InviteSuccess({
 
 // ─── Main dialog ─────────────────────────────────────
 
-function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFolder, bundleFiles, onShareCreated }: ShareDialogProps) {
+function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFolder, file, bundleFiles, onShareCreated }: ShareDialogProps) {
   // getFileKeyForFile (task 2238 review): resolves a row's FileKey whether it is
   // derived from the master key or sealed under a file-request content key.
   const { getFileKey, getFileKeyForFile, getMasterKey, isUnlocked } = useKeys()
@@ -728,7 +721,9 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
         return
       }
 
-      const fileKey = await getFileKey(fileId)
+      // SF-0002 W8: wrap the key that opens this row (a repaired row's is not
+      // the plain derivation, so a link built on that would be dead).
+      const fileKey = await shareFileKey(fileId, { file, getFileKey, getFileKeyForFile })
 
       // ── Double-encrypted mode (the only mode, task 0538) ─────────────────
       // 1. Generate K_c client-side (never leaves the browser).
@@ -787,7 +782,7 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, isBundle, bundleFiles, folderMode, folderFiles, getFileKey, getFileKeyForFile, getMasterKey, onShareCreated])
+  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, isBundle, bundleFiles, folderMode, folderFiles, file, getFileKey, getFileKeyForFile, getMasterKey, onShareCreated])
 
   const generatePassphrase = useCallback(() => {
     // 8 random alphanumeric characters — easy to type, hard to guess
@@ -1154,6 +1149,7 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
                   /* Invite form */
                   <InviteForm
                     fileId={fileId}
+                    file={file}
                     isFolder={isFolder}
                     onSuccess={(email) => setInviteDone(email)}
                     onRateLimitFeedback={() => setFeedbackOpen(true)}

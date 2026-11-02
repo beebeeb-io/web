@@ -11,8 +11,9 @@ import { needsOwnership } from '../lib/owner-adoption'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
-import { decryptManyNames, encryptFilename, readFileMetadata, serializeEncryptedBlob } from '../lib/crypto'
-import { renameKeyFor } from '../lib/owner-rename'
+import { decryptManyNames, readFileMetadata } from '../lib/crypto'
+import { renameOwnerRow } from '../lib/owner-rename'
+import { ownerWriteRefusal } from '../lib/owner-write-guard'
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
@@ -24,7 +25,7 @@ import {
 } from '../lib/pending-select-timer'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
 import { formatBytes, timeAgo } from '../lib/format'
-import { setPreference, updateFile } from '../lib/api'
+import { setPreference } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
 import { SharePopover } from './share-popover'
 import { FolderViewerBadge } from './presence-avatars'
@@ -32,41 +33,8 @@ import { useToast } from './toast'
 import { getFolderColorDot, FOLDER_COLORS } from '../lib/folder-colors'
 import type { DriveFile, MyShare } from '../lib/api'
 import { fileStorageCountry } from '../lib/storage-regions'
+import { SORT_KEY_PREFIX, SORT_OPTIONS, typeGroupRank, type SortKey } from './file-list-sort'
 
-// ─── Sort types ─────────────────────────────────────
-
-type SortKey =
-  | 'name-asc' | 'name-desc'
-  | 'modified-desc' | 'modified-asc'
-  | 'size-desc' | 'size-asc'
-  | 'type-asc'
-  | 'starred-first'
-
-const SORT_OPTIONS: { key: SortKey; label: string }[] = [
-  { key: 'name-asc',      label: 'Name (A → Z)' },
-  { key: 'name-desc',     label: 'Name (Z → A)' },
-  { key: 'modified-desc', label: 'Modified (newest)' },
-  { key: 'modified-asc',  label: 'Modified (oldest)' },
-  { key: 'size-desc',     label: 'Size (largest)' },
-  { key: 'size-asc',      label: 'Size (smallest)' },
-  { key: 'type-asc',      label: 'Type' },
-  { key: 'starred-first', label: 'Starred first' },
-]
-
-// Type-group rank: lower = earlier in the list
-function typeGroupRank(file: DriveFile, name: string): number {
-  if (file.is_folder) return 0
-  const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  if (['jpg', 'jpeg', 'png', 'gif', 'heic', 'webp', 'svg', 'ico', 'bmp', 'tiff', 'tif', 'avif'].includes(ext)) return 1
-  if (['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv', 'm4v'].includes(ext)) return 2
-  if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma', 'm4a', 'aiff', 'opus'].includes(ext)) return 3
-  if (['pdf', 'doc', 'docx', 'odt', 'rtf', 'txt', 'pages', 'md', 'mdx', 'xls', 'xlsx', 'ods', 'numbers', 'ppt', 'pptx', 'odp', 'key'].includes(ext)) return 4
-  if (['zip', 'tar', 'gz', 'rar', '7z', 'bz2', 'xz', 'zst', 'dmg', 'iso'].includes(ext)) return 5
-  if (['js', 'jsx', 'ts', 'tsx', 'py', 'rs', 'go', 'rb', 'java', 'kt', 'swift', 'c', 'cpp', 'h', 'cs', 'php', 'sh', 'html', 'css', 'json', 'yaml', 'yml', 'toml', 'sql'].includes(ext)) return 6
-  return 7
-}
-
-const SORT_KEY_PREFIX = 'beebeeb.sort.'
 
 // ─── Helpers ─────────────────────────────────────────
 
@@ -210,7 +178,7 @@ export function FileList({
   parentId,
   onRefresh,
 }: FileListProps) {
-  const { getFileKey, getFileKeyForFile, isUnlocked } = useKeys()
+  const { getFileKey, getFileKeyForFile, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
   const { showToast } = useToast()
 
   // ─── Active-share lookup ───────────────────────────
@@ -971,20 +939,27 @@ export function FileList({
       // decryptable via the same (request-key) path that reads it.
       // rv-web198c P2-4: a guest's or member's row is renamed under ITS key,
       // proven to open its current name (never the derived fall-through).
-      const fileKey = await renameKeyFor({
+      // SF-0002 round 2 (W4): the same write-time read-only check as the
+      // dialog rename runs first; a refused row is not PATCHed.
+      await renameOwnerRow({
         fileId: file.id,
         file,
+        newName,
         viewerId: null,
+        residentUserId: getResidentUserId(),
+        masterKey: getMasterKey(),
         getFileKey: async () => getFileKeyForFile(file),
         getFileKeyForFile,
         readName: readFileMetadata,
       })
-      const enc = await encryptFilename(fileKey, newName)
-      const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      await updateFile(file.id, { name_encrypted: nameEncrypted })
       onRefresh?.()
-    } catch {
-      showToast({ icon: 'x', title: 'Rename failed', description: 'Could not rename the file.', danger: true })
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Rename failed',
+        description: ownerWriteRefusal(err) ?? 'Could not rename the file.',
+        danger: true,
+      })
     }
   }
 

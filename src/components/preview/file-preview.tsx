@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { listVersions, restoreVersion, type DriveFile, type FileVersion } from '../../lib/api'
+import { listVersions, type DriveFile, type FileVersion } from '../../lib/api'
 import { decryptToBlob, decryptVersionToBlob, streamOverCapDownload, type TransferProgress } from '../../lib/encrypted-download'
+import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly } from '../../lib/owner-repair'
+import { ownerWriteRefusal, restoreOwnerVersion } from '../../lib/owner-write-guard'
 import {
   AUDIO_EXTENSIONS_SET,
   TooLargeToPreviewError,
@@ -33,6 +35,7 @@ import {
   OverCapCard,
   PreviewErrorCard,
   PreviewProgress,
+  ReadOnlyEditorNotice,
   StreamErrorCard,
   UNSUPPORTED_TYPE_COPY,
 } from './file-preview-cards'
@@ -57,18 +60,18 @@ import type { RawExifInfo } from '../../lib/raw-embedded-jpeg'
 import { HeicPreview } from './heic-preview'
 import { TiffPreview } from './tiff-preview'
 import { ZipListingPreview } from './zip-listing-preview'
-import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
 import { needsOwnership, sharedRootFor } from '../../lib/owner-adoption'
 import { sharedFoldersEnabled } from '../../lib/use-feature-flag'
 import { useAuth } from '../../lib/auth-context'
 import { decryptFileMetadata } from '../../lib/crypto'
-import { checkEditability, editabilityNotice, type EditabilityResult } from '../../lib/text-editability'
+import { checkEditability, type EditabilityResult } from '../../lib/text-editability'
 import { FileEditor, type FileEditorHandle } from '../editor/file-editor'
 import { UnsavedChangesDialog } from '../editor/unsaved-changes-dialog'
 import { resolveOfficeFileKind } from '../../lib/office/office-file-kind'
 import { isOfficeLabsEnabled } from '../../lib/office/office-labs'
+import { rawInfoRowsOf } from '../../lib/raw-info-rows'
 
 interface FilePreviewProps {
   file: DriveFile
@@ -268,7 +271,10 @@ function pickRenderer(
 }
 
 export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext, startInEditMode, folderId, onDelete }: FilePreviewProps) {
-  const { getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, isUnlocked } = useKeys()
+  const { getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
+  // SF-0002: the row's name or a version was sealed under the iOS Files-app
+  // convention, so it is openable/downloadable but not writable in place.
+  const ownerReadOnly = isOwnerRepairReadOnly(file.id)
   const [blob, setBlob] = useState<Blob | null>(null)
   /** True when `blob` holds the full original (non-image / fallback / version
    *  paths). False when `blob` is only a thumbnail (the thumbnail-first image
@@ -383,14 +389,18 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
   /** Every load path asks here: an ordinary file derives from the master key,
    *  a guest- or member-added row goes through the shared-folder resolver. */
-  const resolveFileKey = useCallback(async (): Promise<Uint8Array> => {
-    if (!sharedFile) return getFileKeyForFile(file)
+  // `ownerDerived` says whether the key came from the owner's own derivation.
+  // Only then may a content read ask core for the read-only repair key: a
+  // shared-folder or foreign key is never switched to an owner key (SF-0002
+  // review).
+  const resolveFileKey = useCallback(async (): Promise<{ key: Uint8Array; ownerDerived: boolean }> => {
+    if (!sharedFile) return { key: await getFileKeyForFile(file), ownerDerived: true }
     // rv-web198d R1: with the flag off there is no shared-folder walk for the
     // owner (no invites read, no link route asked); the key is derived, as on main.
-    if (!(await sharedFoldersEnabled())) return getFileKeyForFile(file)
+    if (!(await sharedFoldersEnabled())) return { key: await getFileKeyForFile(file), ownerDerived: true }
     const root = await sharedRootFor(folderId ?? null, file.id)
     const key = root ? await getFileKeyForSharedFile(file, root) : null
-    if (key) return key
+    if (key) return { key, ownerDerived: false }
     const label = root ? await getSharedFileOrigin(file, root) : null
     setShareOrigin(label)
     throw new Error(label ? `Can't open this file (added via ${label})` : "Can't open this file")
@@ -409,7 +419,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     let cancelled = false
     async function decrypt() {
       try {
-        const fileKey = await resolveFileKey()
+        const { key: fileKey } = await resolveFileKey()
         const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted)
         if (!cancelled) {
           setLocalDecryptedName(name)
@@ -454,6 +464,12 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   const loadInputsRef = useRef({ file, name, effectiveMime, resolveFileKey })
   loadInputsRef.current = { file, name, effectiveMime, resolveFileKey }
 
+  /** The streaming reader's key resolver: the same lookup, key only. */
+  const resolveStreamKey = useCallback(
+    async () => (await resolveFileKey()).key,
+    [resolveFileKey],
+  )
+
   // LD-0001 PR-B: the streaming session (contract §4). The path is decided
   // synchronously on this render, so the whole-file effect below can never
   // start a download for a file that will stream. Keyed by (file.id,
@@ -466,7 +482,9 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     selectedVersionId,
     isUnlocked,
     mime: effectiveMime,
-    resolveFileKey,
+    // The stream reader takes the bare key: SF-0002's repair is not applied on
+    // the streaming path, so a repaired row shows the stream error card.
+    resolveFileKey: resolveStreamKey,
   })
 
   // Load + decrypt content for the current selection (null = live version).
@@ -523,7 +541,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
     async function loadAndDecrypt() {
       try {
-        const fileKey = await resolveFileKey()
+        const { key: fileKey, ownerDerived } = await resolveFileKey()
 
         // Thumbnail-first path for images (current version only)
         if (isImageFile && selectedVersionId === null) {
@@ -586,6 +604,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
               mediaCapBytes: WHOLE_FILE_MEDIA_CAP_BYTES,
               // C5: the renderer's rule (row MIME first) decides "is media".
               rowMimeType: file.mime_type ?? null,
+              // SF-0002: only an OWNER key may fall back to a repaired key.
+              masterKey: ownerDerived ? getMasterKey() : undefined,
             },
           )
           plaintext = res.plaintext
@@ -607,6 +627,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
               mediaCapBytes: WHOLE_FILE_MEDIA_CAP_BYTES,
               // C5: the renderer's rule (row MIME first) decides "is media".
               rowMimeType: file.mime_type ?? null,
+              // SF-0002: only an OWNER key may fall back to a repaired key.
+              masterKey: ownerDerived ? getMasterKey() : undefined,
             },
           )
         }
@@ -675,19 +697,28 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
   const handleRestore = useCallback(async () => {
     if (selectedVersionId === null) return
+    const version = versions?.find((v) => v.id === selectedVersionId)
+    if (!version) return
     if (!confirm('Restore this version? The current version becomes a previous one.')) return
     try {
-      await restoreVersion(file.id, selectedVersionId)
+      // SF-0002 round 2 (W4): refused when the row is read-only, and when the
+      // version being restored is upper_repair-sealed; nothing is POSTed then.
+      await restoreOwnerVersion({
+        file,
+        version,
+        masterKey: isUnlocked ? getMasterKey() : undefined,
+        residentUserId: getResidentUserId(),
+      })
       // After restore: refetch versions, snap back to live.
       const res = await listVersions(file.id)
       setVersions(res.versions)
       setCurrentVersionNumber(res.current_version)
       setSelectedVersionId(null)
       onVersionRestored?.()
-    } catch {
-      setError('Restore failed. The version may have been deleted.')
+    } catch (err) {
+      setError(ownerWriteRefusal(err) ?? 'Restore failed. The version may have been deleted.')
     }
-  }, [file.id, selectedVersionId, onVersionRestored])
+  }, [file, versions, selectedVersionId, isUnlocked, getMasterKey, getResidentUserId, onVersionRestored])
 
   // ── Text/markdown/code editor (task 1563) ─────────────────────────────────
   // Editing is only offered for the LIVE version — editing a historical
@@ -903,7 +934,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
     try {
       setDownloading(true)
-      const fileKey = await resolveFileKey()
+      const { key: fileKey, ownerDerived } = await resolveFileKey()
       if (action.kind === 'stream-to-disk') {
         // The over-cap card has no Blob and must NEVER load the whole file into
         // memory: stream the plaintext to disk through the service worker, the
@@ -942,6 +973,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           effectiveMime ?? undefined,
           file.chunk_count,
           file.size_bytes,
+          { masterKey: ownerDerived ? getMasterKey() : undefined },
         )
         original = res.plaintext
       } else {
@@ -953,6 +985,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           effectiveMime ?? undefined,
           action.chunkCount,
           action.sizeBytes,
+          { masterKey: ownerDerived ? getMasterKey() : undefined },
         )
       }
       saveBlob(original)
@@ -1021,30 +1054,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   const suppressRendererForNotice =
     showReadOnlyNotice && editability!.reason !== 'too-large'
 
-  // RAW camera details (task 1574) — camera/lens/exposure rows appended to
-  // the Info rail whenever RawPreview successfully extracted them, mirroring
-  // mobile's Info sheet (task 1569). Absent for every non-RAW file, and for
-  // a RAW file with no EXIF this reader could resolve (e.g. CR3's embedded
-  // preview, which carries none — an honest gap, not a bug).
-  const rawInfoRows: [string, string][] = rawExifInfo
-    ? [
-        ...(rawExifInfo.cameraModel ? ([['Camera', rawExifInfo.cameraModel]] as [string, string][]) : []),
-        ...(rawExifInfo.lensModel ? ([['Lens', rawExifInfo.lensModel]] as [string, string][]) : []),
-        // `rawExifInfo.iso` is `mapExifToRawInfo`'s own self-labeled string
-        // ("ISO 200") — its tested contract (test/1574-raw-embedded-jpeg.test.ts),
-        // left as-is there. This row's own "ISO" label column would repeat
-        // it verbatim ("ISO  ISO 200", Codex review round 2, task 1574
-        // gate, 2026-09-27) — every sibling row's value is bare (Shutter:
-        // "1/125s", not "Shutter 1/125s"), so strip the redundant prefix
-        // here, at the one place that adds the label, not in the mapper.
-        ...(rawExifInfo.iso
-          ? ([['ISO', rawExifInfo.iso.replace(/^ISO\s*/i, '')]] as [string, string][])
-          : []),
-        ...(rawExifInfo.shutterSpeed ? ([['Shutter', rawExifInfo.shutterSpeed]] as [string, string][]) : []),
-        ...(rawExifInfo.aperture ? ([['Aperture', rawExifInfo.aperture]] as [string, string][]) : []),
-        ...(rawExifInfo.focalLength ? ([['Focal length', rawExifInfo.focalLength]] as [string, string][]) : []),
-      ]
-    : []
+  // RAW camera details (task 1574) — the Info rail's camera/lens/exposure rows.
+  const rawInfoRows = rawInfoRowsOf(rawExifInfo)
 
   return (
     <PreviewChrome
@@ -1066,7 +1077,9 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       onZoomOut={isImage && blob ? handleZoomOut : undefined}
       onRotate={isImage && blob ? handleRotate : undefined}
       onEdit={
-        canEditOffice && !editing
+        ownerReadOnly
+          ? undefined
+          : canEditOffice && !editing
           ? openOfficeEditorTab
           : canEdit && !editing
             ? () => setEditing(true)
@@ -1178,23 +1191,21 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         </div>
       )}
 
+      {/* SF-0002: repaired-from-iOS file — readable, not writable. */}
+      {!editing && ownerReadOnly && (
+        <div
+          className="mx-auto flex w-full max-w-[560px] items-start gap-2.5 rounded-md border border-line bg-paper px-4 py-3 text-left shadow-1"
+          data-testid="owner-repair-readonly-notice"
+        >
+          <Icon name="lock" size={16} className="mt-0.5 shrink-0 text-ink-3" />
+          <p className="text-[12.5px] leading-relaxed text-ink-2">{OWNER_REPAIR_READ_ONLY}</p>
+        </div>
+      )}
+
       {/* Read-only editor notice (design screen 06) — shown for a
           markdown/code/text file that fails the editability gate. */}
       {!editing && showReadOnlyNotice && editability && (
-        <div
-          className="flex w-full max-w-[520px] flex-col items-center gap-3 rounded-md border border-line bg-paper p-6 text-center shadow-1"
-          data-testid="editor-readonly-notice"
-        >
-          <Icon name={editability.reason === 'binary' ? 'file' : 'shield'} size={26} className="text-ink-3" />
-          <p className="text-sm font-semibold text-ink">{editabilityNotice(editability.reason).title}</p>
-          <p className="text-[12.5px] leading-relaxed text-ink-3">
-            {editabilityNotice(editability.reason).body}
-          </p>
-          <BBButton variant="amber" size="sm" onClick={handleDownload}>
-            <Icon name="download" size={13} className="mr-1.5" />
-            Download
-          </BBButton>
-        </div>
+        <ReadOnlyEditorNotice editability={editability} onDownload={handleDownload} />
       )}
 
       {/* Actual preview — keyed on renderKey so each blob swap (initial

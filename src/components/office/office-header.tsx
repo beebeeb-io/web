@@ -17,9 +17,11 @@ export interface OfficeHeaderProps {
   onOpenPalette: () => void
   onShare?: () => void
   onSave: () => void
+  /** SF-0002: repaired-from-iOS files cannot be written in place. */
+  readOnly?: boolean
 }
 
-export function OfficeHeader({ breadcrumb, filename, dirty, saving, onBack, onOpenPalette, onShare, onSave }: OfficeHeaderProps) {
+export function OfficeHeader({ breadcrumb, filename, dirty, saving, onBack, onOpenPalette, onShare, onSave, readOnly }: OfficeHeaderProps) {
   return (
     <div className="flex h-[52px] shrink-0 items-center gap-3.5 border-b border-line bg-paper-2 px-4" data-testid="office-header">
       <button
@@ -72,7 +74,7 @@ export function OfficeHeader({ breadcrumb, filename, dirty, saving, onBack, onOp
           Share
         </button>
       )}
-      <BBButton size="sm" variant="amber" onClick={onSave} disabled={saving || !dirty} data-testid="office-save">
+      <BBButton size="sm" variant="amber" onClick={onSave} disabled={saving || !dirty || readOnly} data-testid="office-save">
         <Icon name="lock" size={12} className="mr-1" />
         {saving ? 'Saving…' : 'Save'}
         <span className="ml-1.5 font-mono text-[10px] opacity-70">⌘S</span>

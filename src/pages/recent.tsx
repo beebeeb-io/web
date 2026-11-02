@@ -11,14 +11,13 @@ import { RenameDialog } from '../components/rename-dialog'
 import { useFilePreview } from '../hooks/use-file-preview'
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
-import { encryptFilename, readFileMetadata, serializeEncryptedBlob } from '../lib/crypto'
-import { renameKeyFor } from '../lib/owner-rename'
+import { readFileMetadata } from '../lib/crypto'
+import { renameOwnerRow } from '../lib/owner-rename'
 import { moveOwnerItems } from '../lib/owner-upload-key'
 import { encryptedDownload } from '../lib/encrypted-download'
 import {
   listFiles,
   toggleStar,
-  updateFile,
   deleteFile,
   bulkTrashFiles,
   type DriveFile,
@@ -33,7 +32,7 @@ import { mergeRecentlyChangedFiles } from '../lib/recent-files'
 const RECENT_LIMIT = 50
 
 export function Recent() {
-  const { getFileKey, getFileKeyForFile, getMasterKey, isUnlocked, cryptoReady } = useKeys()
+  const { getFileKey, getFileKeyForFile, getMasterKey, getResidentUserId, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
   const { setNodeStarred } = useSync()
   const navigate = useNavigate()
@@ -88,7 +87,15 @@ export function Recent() {
     if (!isUnlocked || !cryptoReady || file.is_folder) return
     try {
       const fileKey = await getFileKeyForFile(file)
-      await encryptedDownload(file.id, fileKey, file.name_encrypted, file.mime_type ?? undefined, file.chunk_count, file.size_bytes)
+      await encryptedDownload(
+        file.id,
+        fileKey,
+        file.name_encrypted,
+        file.mime_type ?? undefined,
+        file.chunk_count,
+        file.size_bytes,
+        { masterKey: getMasterKey() },
+      )
     } catch (err) {
       showToast({ icon: 'download', title: 'Download failed', description: err instanceof Error ? err.message : 'Could not decrypt the file.', danger: true })
     }
@@ -111,10 +118,20 @@ export function Recent() {
   async function handleRenameConfirm(newName: string) {
     if (!renameFileId || !isUnlocked || !cryptoReady) return
     try {
-      // rv-web198c P2-4: a guest's or member's row is renamed under ITS key.
-      const fileKey = await renameKeyFor({ fileId: renameFileId, file: files.find((f) => f.id === renameFileId), viewerId: null, getFileKey, getFileKeyForFile, readName: readFileMetadata })
-      const enc = await encryptFilename(fileKey, newName)
-      await updateFile(renameFileId, { name_encrypted: serializeEncryptedBlob(enc.nonce, enc.ciphertext) })
+      // SF-0002 review: the write-time read-only check runs first (the row may
+      // never have been opened). rv-web198c P2-4: a guest's or member's row is
+      // renamed under ITS key.
+      await renameOwnerRow({
+        fileId: renameFileId,
+        file: files.find((f) => f.id === renameFileId),
+        newName,
+        viewerId: null,
+        residentUserId: getResidentUserId(),
+        masterKey: getMasterKey(),
+        getFileKey,
+        getFileKeyForFile,
+        readName: readFileMetadata,
+      })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })
       fetchFiles()
     } catch (err) {
@@ -219,6 +236,7 @@ export function Recent() {
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
       nameEncrypted: file.name_encrypted,
+      writeTarget: file,
       noteEncrypted: file.note_encrypted ?? null,
     }
   }
@@ -278,6 +296,7 @@ export function Recent() {
           fileName={displayName(shareFile)}
           fileSize={shareFile.size_bytes}
           isFolder={shareFile.is_folder}
+          file={shareFile}
         />
       )}
 

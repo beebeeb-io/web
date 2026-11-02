@@ -9,6 +9,7 @@ import { BBButton, Icon } from '@beebeeb/shared'
 import { formatSize } from '../../lib/format-size'
 import { progressCopy } from '../../lib/transfer-progress-copy'
 import type { TransferProgress } from '../../lib/encrypted-download'
+import { editabilityNotice, type EditabilityResult } from '../../lib/text-editability'
 
 /** The one "there is no preview for this type" line, shared by both paths. */
 export const UNSUPPORTED_TYPE_COPY = 'Preview not available for this file type'
@@ -157,6 +158,33 @@ export function PreviewErrorCard({
           </BBButton>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Read-only editor notice (design screen 06): a markdown/code/text file that
+ * failed the byte-level editability gate — too large, binary, or not UTF-8.
+ */
+export function ReadOnlyEditorNotice({
+  editability,
+  onDownload,
+}: {
+  editability: EditabilityResult
+  onDownload: () => void
+}) {
+  return (
+    <div
+      className="flex w-full max-w-[520px] flex-col items-center gap-3 rounded-md border border-line bg-paper p-6 text-center shadow-1"
+      data-testid="editor-readonly-notice"
+    >
+      <Icon name={editability.reason === 'binary' ? 'file' : 'shield'} size={26} className="text-ink-3" />
+      <p className="text-sm font-semibold text-ink">{editabilityNotice(editability.reason).title}</p>
+      <p className="text-[12.5px] leading-relaxed text-ink-3">{editabilityNotice(editability.reason).body}</p>
+      <BBButton variant="amber" size="sm" onClick={onDownload}>
+        <Icon name="download" size={13} className="mr-1.5" />
+        Download
+      </BBButton>
     </div>
   )
 }

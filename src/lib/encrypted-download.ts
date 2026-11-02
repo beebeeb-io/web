@@ -28,6 +28,9 @@ import {
 import { getToken, getApiUrl, ApiError } from './api'
 import { dispatchDecrypted } from './decrypt-events'
 import { mediaKind, TooLargeToPreviewError } from './preview-load-policy'
+import type { FrameOpener } from './direct/download'
+import { pushHeadWithRepair } from './owner-content-repair'
+import { withServerBusyRetry } from './server-busy-retry'
 
 export { UnverifiedFileMetadataError }
 
@@ -68,10 +71,27 @@ const NONCE_LENGTH = 12
 const GCM_TAG_LENGTH = 16
 const CHUNK_OVERHEAD = NONCE_LENGTH + GCM_TAG_LENGTH
 
-function parseHeaderInt(value: string | null): number | null {
+export function parseHeaderInt(value: string | null): number | null {
   if (!value) return null
   const n = Number.parseInt(value, 10)
   return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/**
+ * GET an encrypted body (`/api/v1/files/{id}/download`, or one version's
+ * `/versions/{vid}/download`) with the session's auth, the way the downloads
+ * below do, retrying a `429 server_busy` (task 1870) and honouring `signal`.
+ * The response is returned unread; the caller checks `ok`. Used by the
+ * SF-0002 write-time check; the download paths below keep their own fetch
+ * until they are consolidated (LD-0001 / W1 own them).
+ */
+export function requestEncryptedBody(path: string, signal?: AbortSignal): Promise<Response> {
+  return withServerBusyRetry(() => {
+    const headers: Record<string, string> = {}
+    const token = getToken()
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    return fetch(`${getApiUrl()}${path}`, { headers, signal, credentials: 'include' })
+  }, signal)
 }
 
 export function inferChunkCountFromEncryptedSize(
@@ -102,6 +122,11 @@ export function plaintextSizeFor(
     : sizeBytes
 }
 
+// SF-0002's repair lives in owner-content-repair.ts (the crypto-worker rule),
+// re-exported here because every content reader in this module uses it.
+export { pushHeadWithRepair, type ContentDecryptor } from './owner-content-repair'
+
+
 export async function decryptEncryptedBytes(
   fileKey: Uint8Array,
   content: FileContentRef,
@@ -109,6 +134,7 @@ export async function decryptEncryptedBytes(
   chunkCount: number,
   sizeBytes: number,
   chunkSize = CHUNK_SIZE,
+  masterKey?: Uint8Array,
 ): Promise<Uint8Array> {
   // Detect whether sizeBytes is the plaintext size (legacy/correct) or the
   // encrypted total size (an older server bug stored encrypted blob bytes
@@ -119,7 +145,7 @@ export async function decryptEncryptedBytes(
   const decryptedParts: Uint8Array[] = []
   let offset = 0
 
-  const decryptor = await startDecryptStream(fileKey, content.fileId, content.pin)
+  let decryptor = await startDecryptStream(fileKey, content.fileId, content.pin)
   try {
     for (let i = 0; i < chunkCount; i++) {
       // Calculate the plaintext size for this chunk
@@ -147,7 +173,15 @@ export async function decryptEncryptedBytes(
       // The whole wire frame (nonce || ciphertext || tag), as a copy that owns
       // its buffer: the decryptor transfers it to the crypto worker.
       const frame = encryptedBytes.slice(offset, offset + encryptedChunkSize)
-      decryptedParts.push(await decryptor.pushFrame(frame))
+      if (i === 0) {
+        // SF-0002: only a first frame that fails may resolve as a repaired
+        // version; every later frame keeps the key chunk 0 proved.
+        const head = await pushHeadWithRepair(decryptor, frame, fileKey, content, masterKey)
+        decryptor = head.decryptor
+        decryptedParts.push(head.plaintext)
+      } else {
+        decryptedParts.push(await decryptor.pushFrame(frame))
+      }
 
       offset += encryptedChunkSize
     }
@@ -192,6 +226,12 @@ export interface WholeFileOptions {
   onProgress?: (p: TransferProgress) => void
   signal?: AbortSignal
   /**
+   * SF-0002: the owner master key, held only when the caller resolved an OWNER
+   * content key. It lets chunk 0 fall back to the key of a repaired version
+   * (see `pushHeadWithRepair`); without it a repaired row simply fails to open.
+   */
+  masterKey?: Uint8Array
+  /**
    * Reject a video/audio file larger than this without fetching the body. The
    * decision is made from the file's AUTHENTICATED metadata (the encrypted
    * name/MIME read before any content), never the caller's UI row.
@@ -222,6 +262,11 @@ export interface EncryptedDownloadOptions {
   signal?: AbortSignal
   /** Download this past version instead of the live file (round 3, C1). */
   versionId?: string
+  /**
+   * SF-0002: the owner master key, held only when the caller resolved an OWNER
+   * content key. It lets chunk 0 fall back to the key of a repaired version.
+   */
+  masterKey?: Uint8Array
   /**
    * Refuse rather than buffer (round 3, C2): when the browser cannot stream
    * the save to disk (no service-worker controller, no transferable
@@ -406,6 +451,7 @@ export async function pipeDecryptedChunks(
   signal: AbortSignal | undefined,
   onChunk: (chunk: Uint8Array) => Promise<void>,
   onProgress: ((bytesWritten: number) => void) | undefined,
+  masterKey?: Uint8Array,
 ): Promise<void> {
   const reader = body.getReader()
 
@@ -471,7 +517,16 @@ export async function pipeDecryptedChunks(
         )
       }
 
-      const plaintext = await decryptor.pushFrame(frame)
+      let plaintext: Uint8Array
+      if (chunkIndex === 0) {
+        // SF-0002: only chunk 0 may switch keys (to the repaired version's
+        // owner key); later frames keep the key chunk 0 proved.
+        const head = await pushHeadWithRepair(decryptor, frame, fileKey, content, masterKey)
+        decryptor = head.decryptor
+        plaintext = head.plaintext
+      } else {
+        plaintext = await decryptor.pushFrame(frame)
+      }
       await onChunk(plaintext)
       bytesWritten += plaintext.length
       onProgress?.(bytesWritten)
@@ -502,7 +557,12 @@ export async function pipeDecryptedChunks(
 
 // Import/init failures only select the legacy transport before any bytes arrive.
 // Negotiation/auth/version failures retain their existing terminal semantics.
-async function directResponse(fileKey: Uint8Array, content: FileContentRef, signal: AbortSignal) {
+async function directResponse(
+  fileKey: Uint8Array,
+  content: FileContentRef,
+  signal: AbortSignal,
+  masterKey?: Uint8Array,
+) {
   let transport: typeof import('./direct/download')
   try { transport = await import('./direct/download') }
   catch (error) {
@@ -510,7 +570,32 @@ async function directResponse(fileKey: Uint8Array, content: FileContentRef, sign
     return null
   }
   return transport.directResponse(content.fileId, content.pin, signal,
-    () => startDecryptStream(fileKey, content.fileId, content.pin))
+    () => openRepairingStream(fileKey, content, masterKey))
+}
+
+/**
+ * SF-0002's repair, for the direct path: chunk 0 may switch to the key of a
+ * repaired version (see `pushHeadWithRepair`); every later frame keeps the key
+ * chunk 0 proved. Without it a repaired row could never be streamed from S3.
+ */
+async function openRepairingStream(
+  fileKey: Uint8Array,
+  content: FileContentRef,
+  masterKey: Uint8Array | undefined,
+): Promise<FrameOpener> {
+  let inner = await startDecryptStream(fileKey, content.fileId, content.pin)
+  let headPending = true
+  return {
+    async pushFrame(frame: Uint8Array) {
+      if (!headPending) return inner.pushFrame(frame)
+      headPending = false
+      const head = await pushHeadWithRepair(inner, frame, fileKey, content, masterKey)
+      inner = head.decryptor
+      return head.plaintext
+    },
+    finish: () => inner.finish(),
+    dispose: () => inner.dispose(),
+  }
 }
 
 // ─── Whole-file pipelined read ─────────────────────
@@ -621,6 +706,7 @@ async function decryptWholeFileResponse(
     })
     const decrypted = await decryptEncryptedBytes(
       fileKey, content, encryptedBytes, totalChunks, sizeBytes, effectiveChunkSize,
+      opts?.masterKey,
     )
     try {
       opts?.onProgress?.({
@@ -701,6 +787,7 @@ async function decryptWholeFileResponse(
         emitPart()
       },
       undefined,
+      opts?.masterKey,
     )
     decryptedChunks = totalChunks
     emitNow('done')
@@ -761,7 +848,7 @@ export async function encryptedDownload(
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const direct = await directResponse(fileKey, meta.content, opts?.signal ?? new AbortController().signal)
+  const direct = await directResponse(fileKey, meta.content, opts?.signal ?? new AbortController().signal, opts?.masterKey)
   const res = direct ?? await fetch(downloadUrlFor(fileId, opts?.versionId ?? null), {
     headers,
     signal: opts?.signal,
@@ -828,6 +915,7 @@ export async function encryptedDownload(
           opts?.onProgress
             ? (written: number) => opts.onProgress!(written, effectivePlaintextSize)
             : undefined,
+          opts?.masterKey,
         )
         await handles.close()
       } finally {
@@ -876,6 +964,7 @@ export async function encryptedDownload(
     effectiveChunkCount,
     sizeBytes,
     effectiveChunkSize,
+    opts?.masterKey,
   )
 
   // Fire a single progress event after decryption so observers still see
@@ -976,7 +1065,7 @@ export async function decryptToBlob(
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const direct = await directResponse(fileKey, meta.content, opts?.signal ?? new AbortController().signal)
+  const direct = await directResponse(fileKey, meta.content, opts?.signal ?? new AbortController().signal, opts?.masterKey)
   const res = direct ?? await fetch(downloadUrlFor(fileId, null), {
     headers,
     credentials: 'include',

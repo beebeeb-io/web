@@ -53,7 +53,6 @@ import { useAuth } from '../lib/auth-context'
 import {
   listAllFiles,
   toggleStar,
-  updateFile,
   deleteFile,
   bulkTrashFiles,
   getFile,
@@ -95,8 +94,9 @@ import {
   removeUploadState,
   type UploadState,
 } from '../lib/upload-resume'
-import { encryptFilename, encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata, readFileMetadata } from '../lib/crypto'
-import { renameKeyFor } from '../lib/owner-rename'
+import { encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata, readFileMetadata } from '../lib/crypto'
+import { renameOwnerRow } from '../lib/owner-rename'
+import { assertCurrentVersionWritable } from '../lib/owner-write-guard'
 import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { RestoreFromEraseOffer } from '../components/restore-from-erase'
@@ -108,54 +108,16 @@ import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
 import { isBackupsRoot as isBackupsRootPure } from '../lib/backups-root'
 import { fileStorageCountry } from '../lib/storage-regions'
 import { knownPoolLocation, learnPoolLocations } from '../lib/sync-storage-locations'
+import { inferMimeFromName } from '../lib/mime-from-name'
 
 // ─── Drive component ────────────────────────────────
 // Folders are always grouped before files; the chosen key only orders
 // within each group. localStorage key: 'bb_drive_sort'.
 
-function inferMimeFromName(name: string): string | null {
-  const ext = name.toLowerCase().split('.').pop()
-  switch (ext) {
-    case 'jpg':
-    case 'jpeg':
-      return 'image/jpeg'
-    case 'png':
-      return 'image/png'
-    case 'webp':
-      return 'image/webp'
-    case 'gif':
-      return 'image/gif'
-    case 'heic':
-      return 'image/heic'
-    case 'heif':
-      return 'image/heif'
-    case 'pdf':
-      return 'application/pdf'
-    case 'txt':
-      return 'text/plain'
-    case 'md':
-      return 'text/markdown'
-    case 'csv':
-      return 'text/csv'
-    case 'json':
-      return 'application/json'
-    case 'docx':
-      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    case 'xlsx':
-      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    case 'mp4':
-      return 'video/mp4'
-    case 'mov':
-      return 'video/quicktime'
-    default:
-      return null
-  }
-}
-
 export function Drive() {
   const { isFrozen } = useFrozen()
   const { user } = useAuth()
-  const { getFileKey, getMasterKey, getFileKeyForFile, isUnlocked, cryptoReady, cryptoError } = useKeys()
+  const { getFileKey, getMasterKey, getFileKeyForFile, getResidentUserId, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const { usage: driveUsage, planDetails: drivePlanDetails, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline, unpinFolders, accountDocument: driveAccountDocument } = useDriveData()
   const noCardTrial = noCardTrialStatus(driveAccountDocument)
   const { indexFile, reindexFields, unindexFile } = useSearchIndex()
@@ -1505,6 +1467,15 @@ export function Drive() {
     uploadAbortRef.current.set(uploadId, abortController)
 
     try {
+      if (replaceFileId) {
+        // SF-0002 review: the row may be read-only from its CONTENT alone; a
+        // version gate needs chunk 0 checked, not only a mark set on open.
+        const row = files.find((f) => f.id === replaceFileId) ?? (await getFile(replaceFileId))
+        await assertCurrentVersionWritable(row, getMasterKey(), {
+          viewerId: getResidentUserId(),
+          signal: abortController.signal,
+        })
+      }
       // Replace: the existing file's current name, whose recorded pin decides
       // the format of the new version (task 1943). Read from the listing, or
       // from the server when the row is not loaded here; a new file has none.
@@ -1872,6 +1843,7 @@ export function Drive() {
         file.mime_type ?? undefined,
         file.chunk_count,
         file.size_bytes,
+        { masterKey: getMasterKey() },
       )
     } catch (err) {
       console.error('Download failed:', err)
@@ -2298,6 +2270,7 @@ export function Drive() {
       keyId: isUnlocked ? file.id : undefined,
       region: undefined,
       nameEncrypted: file.name_encrypted,
+      writeTarget: file,
       noteEncrypted: file.note_encrypted ?? null,
     }
   }
@@ -2396,19 +2369,21 @@ export function Drive() {
       return
     }
     try {
-      // rv-web198c P2-4: a guest's or member's row is renamed under ITS key,
-      // proven to open its current name; otherwise the rename is refused.
-      const fileKey = await renameKeyFor({
+      // SF-0002 review: the write-time read-only check runs first (a row whose
+      // current version is still repair-sealed is refused even if it was never
+      // opened). rv-web198c P2-4: a guest's or member's row is renamed under
+      // ITS key, proven to open its current name; otherwise it is refused.
+      await renameOwnerRow({
         fileId: renameFileId,
         file: files.find((f) => f.id === renameFileId),
+        newName,
         viewerId: user?.user_id ?? null,
+        residentUserId: getResidentUserId(),
+        masterKey: getMasterKey(),
         getFileKey,
         getFileKeyForFile,
         readName: readFileMetadata,
       })
-      const enc = await encryptFilename(fileKey, newName)
-      const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      await updateFile(renameFileId, { name_encrypted: nameEncrypted })
       void reindexFields(renameFileId, { name: newName })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })
       fetchFiles()
@@ -2639,6 +2614,7 @@ export function Drive() {
           onProgress: (done, tot) => setBulkZipProgress({ done, total: tot }),
           zipFilename: `beebeeb-files-${new Date().toISOString().slice(0, 10)}.zip`,
         },
+        getMasterKey(),
       )
       if (errorCount > 0) {
         showToast({
@@ -3295,6 +3271,7 @@ export function Drive() {
           fileName={displayName(shareFile)}
           fileSize={shareFile.size_bytes}
           isFolder={shareFile.is_folder}
+          file={shareFile}
           onShareCreated={() => {
             // Advance onboarding context (first_share_done might now be true)
             void refreshOnboarding()
@@ -3384,6 +3361,7 @@ export function Drive() {
             fileName={f ? displayName(f) : ''}
             nameEncrypted={f?.name_encrypted ?? ''}
             mimeType={f?.mime_type ?? undefined}
+            file={f}
             onVersionRestored={fetchFiles}
           />
         )

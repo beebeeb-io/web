@@ -20,6 +20,40 @@ export type DirectPoll =
 
 
 /**
+ * Opaque handle holding ONLY the derived client-metadata key (task 1922).
+ *
+ * Make it once when the vault unlocks, free it on lock. List views and SSE
+ * frames call `seal` / `open` / `openMany` on the handle, so the master key is
+ * not copied into WASM memory on every frame. The derived key never leaves
+ * Rust; the handle is zeroized on drop and `free()` is wasm-bindgen's own.
+ */
+export class ClientMetaKey {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Derive the key from a 32-byte master key. The bytes are taken into a
+     * `Zeroizing` buffer and the master key is dropped before returning.
+     */
+    constructor(master_key: Uint8Array);
+    /**
+     * Open one field's `bbcm1.` envelope.
+     */
+    open(record_key: string, device_key: string | null | undefined, field: number, envelope: string): string;
+    /**
+     * Open many rows in one call: `items` is
+     * `[{ recordKey, deviceKey?, field, envelope? }]`; the result is
+     * `[{ ok: bool, value?: string }]`. One bad row never fails the batch: a
+     * null envelope, a bad field or UUID, a malformed row and a failed open
+     * each yield `{ ok: false }` for that row only.
+     */
+    openMany(items: any): any;
+    /**
+     * Seal one field. `device_key` must be `null` for field 1 and set for 2-4.
+     */
+    seal(record_key: string, device_key: string | null | undefined, field: number, plaintext: string): string;
+}
+
+/**
  * k-anonymity breach check for one password. Core hashes and matches; **JS
  * makes the HTTP call**, to the endpoint the onboarding document declares in
  * `policy.password.breach_check.endpoint` (Beebeeb's own API, never a third
@@ -154,6 +188,20 @@ export class WasmChunkEncryptor {
      * Errors if the source shrank (fewer chunks/bytes than planned).
      */
     finish(): any;
+    /**
+     * Create a push-form encryptor for a NEW row minted by
+     * `newOwnerItemId`/`newForeignItemId` (task 2275, L13).
+     *
+     * The id comes from the handle; the content key is core's derivation under
+     * that id, which is also the member's rule for a new foreign item.
+     */
+    static forNewItem(item_id: WasmNewItemId, file_size: bigint, profile: string): WasmChunkEncryptor;
+    /**
+     * Create a push-form replacement encryptor for a resolved row (task 2275,
+     * L13). The key, the id and the recorded chunk-format pin all come from the
+     * `WasmWriteTarget`, so a caller cannot drop a recorded v2 pin.
+     */
+    static forTarget(target: WasmWriteTarget, file_size: bigint, profile: string): WasmChunkEncryptor;
     /**
      * Create a push-form encryptor whose chunk plan is derived from
      * `file_size` + `profile` (the client ladder).
@@ -403,6 +451,28 @@ export class WasmDownloadPlanner {
 }
 
 /**
+ * An opaque new-item id minted by core for one master key (task 2275, L13).
+ *
+ * There is no constructor from text and no export that turns arbitrary id text
+ * into a sealer input: a new-item write can only use an id core minted (or
+ * resumed from a persisted id + tag) for this master key. `idText` is the wire
+ * form; `tag` is the resume tag to persist with the upload session.
+ */
+export class WasmNewItemId {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * The canonical id text to send on the wire.
+     */
+    readonly idText: string;
+    /**
+     * The resume tag to persist with the upload session (32 bytes).
+     */
+    readonly tag: Uint8Array;
+}
+
+/**
  * A stateful, client-side search index over a vault's file names.
  *
  * Build it from a file list, mutate it incrementally (`upsert`/`remove` return
@@ -613,6 +683,57 @@ export class WasmSignupCeremony {
 }
 
 /**
+ * A storage GET's body as the bytes arrive, counted in core so no client counts its own.
+ * `WasmStorageBody.fromHead(status, contentLength, expected)` starts it; `push(n)` counts the bytes
+ * read and throws as soon as they would pass the grant; `finish()` gives `{ kind: "stored" }` or
+ * `{ kind: "failed", status: 200 }` and consumes the handle. Every count crosses as a JS number.
+ * Because `finish()` takes the handle by value, a JS `push` after `finish` throws wasm-bindgen's
+ * moved-value error, which has no `code` (the count was consumed; there is nothing left to count).
+ */
+export class WasmStorageBody {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * The body's answer; the handle is consumed.
+     */
+    finish(): DirectStorageGet;
+    /**
+     * Start counting. `status` is the head's HTTP status and must be a whole number that fits a
+     * `u16`; `content_length` is the head's `Content-Length` (or `null`). Throws `status_invalid`
+     * for a status that is not one, and `failed` (with its `status`) when the head is not a `200`
+     * whose length is exactly `expected`.
+     */
+    static fromHead(status: number, content_length: number | null | undefined, expected: number): WasmStorageBody;
+    /**
+     * Count `n` more bytes read. Throws `failed` (with its `status`) as soon as they would pass
+     * `expected`, so the caller stops reading.
+     */
+    push(n: number): void;
+}
+
+/**
+ * An opaque write target issued by `resolveOwnedKey` (task 2275, L13).
+ *
+ * A replacement is sealed through this handle only: the id, the key and the
+ * chunk-format pin all come from core's resolution, so a caller cannot point a
+ * write at another row or drop a recorded v2 pin.
+ */
+export class WasmWriteTarget {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * The row id the write must target.
+     */
+    readonly itemId: string;
+    /**
+     * The chunk-format pin the write must keep (0 = unrecorded, 2 = v2).
+     */
+    readonly pin: number;
+}
+
+/**
  * Was the body a storage GET actually delivered the chunk? Same answer shape as
  * `checkStorageGet`, but decided by the counted bytes: `stored` only when `received` is
  * exactly `expected`. `Content-Length` is only the head; a truncated stream ends short.
@@ -621,8 +742,12 @@ export function checkStorageBody(received: number, expected: number): DirectStor
 
 /**
  * Was a storage GET answer the chunk we asked for? `{ kind: "stored" }` or
- * `{ kind: "failed", status }`; status `0` means there was no HTTP answer at all.
- * Only a `200` whose `Content-Length` is exactly `expected` is `stored`.
+ * `{ kind: "failed", status }`; a caller with no HTTP answer passes status `0` (exactly what
+ * `WasmStorageBody.fromHead` reports for it). Only a `200` whose `Content-Length` is exactly
+ * `expected` is `stored`.
+ * `status` crosses as a JS number and is validated exactly as `WasmStorageBody.fromHead` validates
+ * it: a whole number in `0..=65535`, else `status_invalid`. `undefined` is not a number and throws
+ * `status_invalid` too, so a caller cannot omit the answer it means to report.
  */
 export function checkStorageGet(status: number, content_length: number | null | undefined, expected: number): DirectStorageGet;
 
@@ -634,6 +759,11 @@ export function checkStorageGet(status: number, content_length: number | null | 
  * `parseDirectDiscovery` returned; `api_base` is the API origin in use.
  */
 export function checkStorageUrl(url: string, discovery: any, api_base: string): void;
+
+/**
+ * L14: does this row's L7 wrap open to exactly `expectedKey`?
+ */
+export function childWrapMatches(folder_key: Uint8Array, shared_folder_id: string, item_id: string, kind: number, wrapped: Uint8Array, expected_key: Uint8Array): boolean;
 
 /**
  * What an API answer means, as `{ kind, millis?, status?, error? }` with `kind`
@@ -830,6 +960,42 @@ export function directDownloadGrantsPath(file_id: string): string;
 export function directTransferConstants(): any;
 
 /**
+ * Seal a name for a NEW row minted by `newOwnerItemId`/`newForeignItemId`.
+ *
+ * The id handle decides the key (L12): an owner id derives it. A new foreign
+ * id is refused (an F id never derives its name key) — an F name is sealed
+ * through the `writeTarget` it gets after adoption; only its content goes
+ * through `WasmChunkEncryptor.forNewItem`.
+ */
+export function encryptNameForNewItem(item_id: WasmNewItemId, filename: string, mime_type: string | null | undefined, pin: number): string;
+
+/**
+ * Seal a replacement name through the resolved row's write target. The key and
+ * the pin come from the target, so a caller cannot substitute either.
+ */
+export function encryptNameForTarget(target: WasmWriteTarget, filename: string, mime_type?: string | null): string;
+
+/**
+ * Seal a note for a NEW row minted by `newOwnerItemId`/`newForeignItemId`.
+ */
+export function encryptNoteForNewItem(item_id: WasmNewItemId, note: string, pin: number): string;
+
+/**
+ * Seal a replacement note through the resolved row's write target.
+ */
+export function encryptNoteForTarget(target: WasmWriteTarget, note: string): string;
+
+/**
+ * Seal a thumbnail for a NEW row minted by `newOwnerItemId`/`newForeignItemId`.
+ */
+export function encryptThumbnailForNewItem(item_id: WasmNewItemId, plaintext: Uint8Array, pin: number): Uint8Array;
+
+/**
+ * Seal a replacement thumbnail through the resolved row's write target.
+ */
+export function encryptThumbnailForTarget(target: WasmWriteTarget, plaintext: Uint8Array): Uint8Array;
+
+/**
  * Encrypt a plaintext chunk with AES-256-GCM. Returns a JS object
  * `{ cipher_suite: string, nonce: Uint8Array, ciphertext: Uint8Array }`.
  */
@@ -914,6 +1080,12 @@ export function encrypt_thumbnail_for(file_key: Uint8Array, plaintext: Uint8Arra
 export function evaluate_password(password: string, min_length: number): any;
 
 /**
+ * Shorten a client-metadata string for sealing: over 1024 UTF-8 bytes, keep
+ * the last 1021 bytes on a char boundary behind a leading `…`.
+ */
+export function fitForSeal(s: string): string;
+
+/**
  * A shared folder's key id (task 2133): a one-way id of the folder's 32-byte
  * key, for a server to compare folder keys without learning them (HKDF-SHA256,
  * info `beebeeb/folder-key-id/v1`). Returns a 32-byte `Uint8Array`; not secret,
@@ -945,6 +1117,12 @@ export function generate_recovery_phrase(): any;
 export function generate_share_token(): string;
 
 /**
+ * True when `item_id` is a canonical foreign (F) id; InvalidInput (a JS throw)
+ * when the text is not canonical at all.
+ */
+export function isForeignItemId(item_id: string): boolean;
+
+/**
  * Returns `true` if the given MIME type can be previewed in-app.
  */
 export function is_previewable(mime_type?: string | null): boolean;
@@ -974,6 +1152,16 @@ export function list_tar_entries(data: Uint8Array): any;
 export function maxInFlightBytes(_class: string): number;
 
 /**
+ * Mint a new foreign (F) item id (RFC 9562 UUID v8) for `master_key`.
+ */
+export function newForeignItemId(master_key: Uint8Array): WasmNewItemId;
+
+/**
+ * Mint a new owner (O) item id (random UUID v4) for `master_key`.
+ */
+export function newOwnerItemId(master_key: Uint8Array): WasmNewItemId;
+
+/**
  * Finish OPAQUE client login. Returns `{ message: Uint8Array, session_key: Uint8Array, export_key: Uint8Array }`.
  *
  * `ksf_version` selects the KSF the account's password file was registered
@@ -999,6 +1187,22 @@ export function opaque_registration_finish(client_state: Uint8Array, password: U
 export function opaque_registration_start(password: Uint8Array): any;
 
 /**
+ * Open a guest's display name. The envelope must be a JSON object with
+ * exactly the keys `cipher_suite`, `nonce` and `ciphertext` (any key order,
+ * any whitespace) that opens under the one actor-name key; the plaintext then
+ * goes through the same `sanitize_actor_name` rule as the writer and is
+ * returned sanitized. Every refusal is a decryption failure.
+ */
+export function openFolderActorName(folder_key: Uint8Array, shared_folder_id: string, envelope: string): string;
+
+/**
+ * The one legacy (unbound) child opener: a 60-byte frame under the folder
+ * key, refused when its 32-byte plaintext is valid UTF-8 (L9 rule 1).
+ * Returns `undefined` when the frame is not a legacy child wrap.
+ */
+export function openLegacyChildKey(folder_key: Uint8Array, wrapped: Uint8Array): Uint8Array | undefined;
+
+/**
  * L9 (task 2255): open a LEGACY invite owner copy and return its key only when
  * core proves it over the folder's rows, in ONE call. `rows` are the server's
  * `GET /shares/invites/{id}/folder-keys` rows verbatim:
@@ -1014,6 +1218,40 @@ export function openLegacyInviteOwnerCopy(master_key: Uint8Array, folder_id: str
  * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
  */
 export function open_request_upload(r_priv: Uint8Array, e_pub: Uint8Array, file_id: Uint8Array, wrapped_key: Uint8Array): Uint8Array;
+
+/**
+ * Resolve the owner's per-file key for ONE content version of a file from the
+ * canonical `file_id` and that version's first chunk frame, and report which
+ * id convention that version's key came from (SF-0002). Returns
+ * `{ key: Uint8Array, convention }`, where `convention` is `"string"`,
+ * `"binary"` or `"upper_repair"`.
+ *
+ * The first chunk frame may be a v1 legacy frame (`nonce || ciphertext ||
+ * tag`, no AAD — what the iOS File Provider wrote) or core's v2 frame 0.
+ *
+ * A file is READ-ONLY for the client if EITHER
+ * [`ownerFileKeyForName`](owner_file_key_for_name) or ANY of its versions
+ * reports `"upper_repair"`: no rename, no new version; save an edit as a new
+ * file. Resolve each version separately — the name's convention does not
+ * decide the content key.
+ */
+export function ownerFileKeyForContent(master_key: Uint8Array, file_id: string, first_chunk_frame: Uint8Array): any;
+
+/**
+ * Resolve the owner's per-file key for a file from the `(file_id,
+ * name_encrypted)` pair the server stores, and report which id convention the
+ * key came from (SF-0002). Returns `{ key: Uint8Array, convention }`, where
+ * `convention` is `"string"`, `"binary"` or `"upper_repair"`.
+ *
+ * The string convention is tried first, then the legacy binary one, then the
+ * uppercase repair one (only when uppercasing changes the id). The first
+ * candidate whose key authenticates `name_encrypted` wins.
+ *
+ * `"upper_repair"` is READ-ONLY: treat the file as read-only — no rename and
+ * no new version; save an edit as a new file. Core only reports the
+ * convention; it never re-seals or migrates an existing row.
+ */
+export function ownerFileKeyForName(master_key: Uint8Array, file_id: string, name_encrypted: string): any;
 
 /**
  * When `wire_bytes` received since `start_ms` at `kbps` KiB/s lets the next storage
@@ -1094,6 +1332,40 @@ export function recover_from_phrase(phrase: string): Uint8Array;
 export function redactUrl(url: string): string;
 
 /**
+ * Resolve one row's key from its id class (task 2275 L12).
+ *
+ * `kind` is the row kind (1 = file, 2 = folder) and is required: a plaintext
+ * name on a FOLDER uses the string convention, a plaintext name on a FILE must
+ * authenticate content chunk 0 (`firstChunkFrame`) and is refused without one.
+ *
+ * Returns `{ key: Uint8Array, contentKey: Uint8Array | null, origin: string,
+ * name: {name?, mimeType?, plaintext?, chunkFormat}, writeTarget:
+ * WasmWriteTarget | null }`. `origin` is "derived", "derived_binary",
+ * "derived_upper_repair", "owner_wrap" or "folder_wrap". `contentKey` is set
+ * only for an SF-0002 split row (name and content under different
+ * conventions). A row with an upper-repair name or content key is READ-ONLY and
+ * has no write target.
+ *
+ * Owner ids never use `ownerWrap`/the folder wrap; foreign ids never derive a
+ * key and require one of them to open AND authenticate the name.
+ */
+export function resolveOwnedKey(master_key: Uint8Array, item_id: string, kind: number, owner_wrap: Uint8Array | null | undefined, name_encrypted: string, shared_folder_id?: string | null, folder_key?: Uint8Array | null, folder_wrap?: Uint8Array | null, first_chunk_frame?: Uint8Array | null): any;
+
+/**
+ * Resolve a 2236 request row: `{contentKey, nameKey, nameOrigin, name,
+ * mimeType, chunkFormat}`. Read-only; no write target.
+ */
+export function resolveRequestRow(master_key: Uint8Array, item_id: string, request_id: Uint8Array, wrapped_request_private: Uint8Array, wrap_nonce: Uint8Array, sender_ephemeral_pubkey: Uint8Array, wrapped_content_key: Uint8Array, name_encrypted: string): any;
+
+/**
+ * Resume a minted id from the id text and tag persisted with an upload session
+ * (task 2275, L13). The tag is re-checked in constant time; a tampered tag, a
+ * different id or a server-echoed id is refused, so an interrupted upload can
+ * continue but a substituted id cannot be sealed.
+ */
+export function resumeNewItemId(master_key: Uint8Array, item_id: string, tag: Uint8Array): WasmNewItemId;
+
+/**
  * What to do with an unfinished upload found on disk. `recorded` is `"api"` or `"direct"` (what the resume
  * record names); `discovery` is `{ kind, upload? }` with `kind` `"offers"` (and `upload: true | false`),
  * `"not_supported"` (a JSON 404), `"unknown"` (a 5xx, a timeout, a bare 404: no usable answer) or
@@ -1108,6 +1380,18 @@ export function resumeTransport(recorded: string, discovery: any, forced_api: bo
  * Text that may contain URLs, made safe to print.
  */
 export function scrubText(text: string): string;
+
+/**
+ * Seal a guest's display name under the folder key, bound to the shared root.
+ * Seals `sanitize_actor_name(name)` (core `kdf::sanitize_actor_name`): NFC;
+ * controls, bidi controls and the other display controls of its strip table
+ * removed (ZWNJ, ZWJ, variation selectors and tag characters are kept); NFC
+ * again; then a leading combining mark, a result outside 1..64 Unicode scalar
+ * values and a visibly blank name are refused (invalid input). Returns the
+ * envelope: a JSON object with exactly the keys `cipher_suite`, `nonce` and
+ * `ciphertext`.
+ */
+export function sealFolderActorName(folder_key: Uint8Array, shared_folder_id: string, name: string): string;
 
 /**
  * Seal a content key to a request's public key (anonymous uploader path).
@@ -1210,6 +1494,13 @@ export function unwrapFolderCustody(master_key: Uint8Array, folder_id: string, w
 export function unwrapInviteOwnerCopy(master_key: Uint8Array, folder_id: string, wrapped: Uint8Array): Uint8Array;
 
 /**
+ * Open a link label; one key, one shape. Returns the label in NFC (a non-NFC
+ * plaintext is normalized, not refused); invalid UTF-8 or a label outside
+ * 1..40 Unicode scalar values after NFC is a decryption failure.
+ */
+export function unwrapLinkLabel(master_key: Uint8Array, share_id: string, wrapped: Uint8Array): string;
+
+/**
  * Open a link's owner copy of K_c. K_c is the deliberate export: JS puts it
  * in the link fragment. The master key never leaves the caller.
  */
@@ -1246,6 +1537,12 @@ export function wrapFolderCustody(master_key: Uint8Array, folder_id: string, fol
 export function wrapInviteOwnerCopy(master_key: Uint8Array, folder_id: string, folder_key: Uint8Array): Uint8Array;
 
 /**
+ * Seal a link label to the owner's master key, bound to the 16-byte share id.
+ * Wire = nonce(12) || ciphertext+tag, like the L6 wraps.
+ */
+export function wrapLinkLabel(master_key: Uint8Array, share_id: string, label: string): Uint8Array;
+
+/**
  * Seal a folder link's fragment key K_c to the owner's master key, bound to
  * the link's share id (so the owner can copy the link again later).
  */
@@ -1278,19 +1575,28 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_clientmetakey_free: (a: number, b: number) => void;
     readonly __wbg_wasmbreachcheck_free: (a: number, b: number) => void;
     readonly __wbg_wasmchunkdecryptor_free: (a: number, b: number) => void;
     readonly __wbg_wasmchunkencryptor_free: (a: number, b: number) => void;
     readonly __wbg_wasmdirectdiscoverycache_free: (a: number, b: number) => void;
     readonly __wbg_wasmdirecthealth_free: (a: number, b: number) => void;
     readonly __wbg_wasmdownloadplanner_free: (a: number, b: number) => void;
+    readonly __wbg_wasmnewitemid_free: (a: number, b: number) => void;
     readonly __wbg_wasmsearchindex_free: (a: number, b: number) => void;
     readonly __wbg_wasmsignedurl_free: (a: number, b: number) => void;
     readonly __wbg_wasmsignupceremony_free: (a: number, b: number) => void;
+    readonly __wbg_wasmstoragebody_free: (a: number, b: number) => void;
+    readonly __wbg_wasmwritetarget_free: (a: number, b: number) => void;
     readonly checkStorageBody: (a: number, b: number, c: number) => void;
     readonly checkStorageGet: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly checkStorageUrl: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly childWrapMatches: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
     readonly classifyDirectAnswer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+    readonly clientmetakey_new: (a: number, b: number, c: number) => void;
+    readonly clientmetakey_open: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly clientmetakey_openMany: (a: number, b: number, c: number) => void;
+    readonly clientmetakey_seal: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly combineFolderLinkKey: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly compute_recovery_check: (a: number, b: number, c: number) => void;
     readonly decompress_gzip: (a: number, b: number, c: number) => void;
@@ -1315,6 +1621,12 @@ export interface InitOutput {
     readonly derive_x25519_public: (a: number, b: number, c: number) => void;
     readonly directDownloadGrantsPath: (a: number, b: number, c: number) => void;
     readonly directTransferConstants: (a: number) => void;
+    readonly encryptNameForNewItem: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly encryptNameForTarget: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly encryptNoteForNewItem: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly encryptNoteForTarget: (a: number, b: number, c: number, d: number) => void;
+    readonly encryptThumbnailForNewItem: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly encryptThumbnailForTarget: (a: number, b: number, c: number, d: number) => void;
     readonly encrypt_chunk: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_metadata: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_name_for: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
@@ -1324,21 +1636,29 @@ export interface InitOutput {
     readonly encrypt_thumbnail: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_thumbnail_for: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly evaluate_password: (a: number, b: number, c: number, d: number) => void;
+    readonly fitForSeal: (a: number, b: number, c: number) => void;
     readonly folder_key_id: (a: number, b: number, c: number) => void;
     readonly generate_recovery_pdf: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly generate_recovery_phrase: (a: number) => void;
     readonly generate_share_token: (a: number) => void;
+    readonly isForeignItemId: (a: number, b: number, c: number) => void;
     readonly is_previewable: (a: number, b: number) => number;
     readonly is_previewable_by_extension: (a: number, b: number) => number;
     readonly list_archive: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly list_tar_entries: (a: number, b: number, c: number) => void;
     readonly maxInFlightBytes: (a: number, b: number, c: number) => void;
+    readonly newForeignItemId: (a: number, b: number, c: number) => void;
+    readonly newOwnerItemId: (a: number, b: number, c: number) => void;
     readonly opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly opaque_login_start: (a: number, b: number, c: number) => void;
     readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly opaque_registration_start: (a: number, b: number, c: number) => void;
+    readonly openFolderActorName: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly openLegacyChildKey: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly openLegacyInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly open_request_upload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly ownerFileKeyForContent: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly ownerFileKeyForName: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly pacedUntilMs: (a: number, b: number, c: number, d: number) => void;
     readonly pairsAllowed: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly parseDirectDiscovery: (a: number, b: number, c: number) => void;
@@ -1351,8 +1671,12 @@ export interface InitOutput {
     readonly plan_monthly_cost_cents: (a: number, b: number, c: bigint, d: bigint) => bigint;
     readonly recover_from_phrase: (a: number, b: number, c: number) => void;
     readonly redactUrl: (a: number, b: number, c: number) => void;
+    readonly resolveOwnedKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number) => void;
+    readonly resolveRequestRow: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number) => void;
+    readonly resumeNewItemId: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly resumeTransport: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly scrubText: (a: number, b: number, c: number) => void;
+    readonly sealFolderActorName: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly seal_to_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly searchIndexSyncPlan: (a: number, b: number, c: number, d: number) => void;
     readonly storageGetTotalMs: (a: number, b: number) => void;
@@ -1367,6 +1691,7 @@ export interface InitOutput {
     readonly unwrapFolderChild: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly unwrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly unwrapLinkLabel: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
@@ -1386,6 +1711,8 @@ export interface InitOutput {
     readonly wasmchunkencryptor_chunksEmitted: (a: number) => number;
     readonly wasmchunkencryptor_expectedTotalCiphertext: (a: number) => number;
     readonly wasmchunkencryptor_finish: (a: number, b: number) => void;
+    readonly wasmchunkencryptor_forNewItem: (a: number, b: number, c: bigint, d: number, e: number) => void;
+    readonly wasmchunkencryptor_forTarget: (a: number, b: number, c: bigint, d: number, e: number) => void;
     readonly wasmchunkencryptor_format: (a: number) => number;
     readonly wasmchunkencryptor_new: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: number, h: number) => void;
     readonly wasmchunkencryptor_pushChunk: (a: number, b: number, c: number, d: number) => void;
@@ -1418,6 +1745,8 @@ export interface InitOutput {
     readonly wasmdownloadplanner_windowAnswered: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wasmdownloadplanner_windowFailed: (a: number, b: number, c: number, d: number) => void;
     readonly wasmdownloadplanner_windowMalformed: (a: number) => void;
+    readonly wasmnewitemid_idText: (a: number, b: number) => void;
+    readonly wasmnewitemid_tag: (a: number, b: number) => void;
     readonly wasmsearchindex_build: (a: number, b: number, c: number) => void;
     readonly wasmsearchindex_encryptBuckets: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmsearchindex_encryptBucketsWithFolderKey: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
@@ -1451,9 +1780,15 @@ export interface InitOutput {
     readonly wasmsignupceremony_setPasswordUnchecked: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmsignupceremony_startRegistration: (a: number, b: number) => void;
     readonly wasmsignupceremony_step: (a: number, b: number) => void;
+    readonly wasmstoragebody_finish: (a: number, b: number) => void;
+    readonly wasmstoragebody_fromHead: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmstoragebody_push: (a: number, b: number, c: number) => void;
+    readonly wasmwritetarget_itemId: (a: number, b: number) => void;
+    readonly wasmwritetarget_pin: (a: number) => number;
     readonly wrapFolderChild: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly wrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly wrapLinkLabel: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;

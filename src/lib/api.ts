@@ -107,6 +107,7 @@ import { parsePitch } from './coupon'
 import type { CouponPitch, CouponRedeemed } from './coupon'
 import { withServerBusyRetry } from './server-busy-retry'
 import { postEraseRequestOnce } from './erase-request-transport'
+import { assertOwnerRepairWritable } from './owner-repair'
 
 export const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 const STATUS_URL = import.meta.env.VITE_STATUS_URL || 'https://status.beebeeb.io'
@@ -1337,6 +1338,13 @@ export async function updateFile(
   updates: { parent_id?: string | null; name_encrypted?: string; note_encrypted?: string | null },
   signal?: AbortSignal,
 ): Promise<DriveFile> {
+  // SF-0002: a row recovered under the uppercase repair convention is
+  // read-only. Its NAME and NOTE are content of that row — a move (parent_id
+  // only) stays allowed. A repair that resolved on the CONTENT side marks the
+  // id too, so a note write is refused as well.
+  if (updates.name_encrypted !== undefined || updates.note_encrypted !== undefined) {
+    assertOwnerRepairWritable(fileId)
+  }
   return request<DriveFile>(`/api/v1/files/${fileId}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
@@ -1423,6 +1431,8 @@ export async function toggleStar(
  * key before calling this — the server never sees thumbnail plaintext.
  */
 export async function uploadThumbnail(fileId: string, blob: Blob): Promise<void> {
+  // SF-0002: no thumbnail write on a repaired read-only row (reads stay fine).
+  assertOwnerRepairWritable(fileId)
   const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/octet-stream',
@@ -1442,6 +1452,8 @@ export async function uploadThumbnail(fileId: string, blob: Blob): Promise<void>
 }
 
 export async function uploadThumbnailLarge(fileId: string, blob: Blob): Promise<void> {
+  // SF-0002: no thumbnail write on a repaired read-only row (reads stay fine).
+  assertOwnerRepairWritable(fileId)
   const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/octet-stream',
@@ -4539,53 +4551,6 @@ export async function registerSharedFolderKey(
   })
 }
 
-/** One legacy (unbound) child row of a folder that has no custody record yet. */
-export interface LegacyFolderKeyRow {
-  file_id: string
-  /** base64 of the legacy child wrap (empty AAD). */
-  encrypted_file_key: string
-  /** The row's L7 kind once it is re-sealed. */
-  is_folder: boolean
-}
-
-/**
- * Owner, only while the folder has no custody record (task 2237b L7b (a)):
- * every legacy child row of the folder, trashed and moved-out children
- * included. 409 `custody_exists` once custody exists; 413 over the one-call cap.
- */
-export async function listLegacyFolderKeys(folderId: string): Promise<LegacyFolderKeyRow[]> {
-  const body = await request<{ keys: LegacyFolderKeyRow[] }>(
-    `/api/v1/shared-folders/${encodeURIComponent(folderId)}/legacy-keys`,
-  )
-  return body.keys
-}
-
-/**
- * Owner: the custody upgrade of a folder whose legacy rows predate custody
- * (L7b (a), contract 2237 §2): the custody record AND every legacy row,
- * re-sealed as L7, in one atomic call. It always says `format: "l7"` (§1) and
- * always carries `rewrap`, even empty: an upgrade is never a plain registration.
- *
- * THE ONE PLACE to change if server #353 settles a different route or body.
- * Coded against #353 (feat/2237b-a-custody-upgrade) and the contract as of
- * 2026-10-28: `PUT .../key` with `rewrap: { keys }`; 409 `rewrap_incomplete`
- * (the rows changed), 409 `custody_exists` (upgraded elsewhere), 413 (too many).
- */
-export async function upgradeSharedFolderCustody(
-  folderId: string,
-  upgrade: { ownerWrappedFolderKey: string; keys: { file_id: string; encrypted_file_key: string }[] },
-): Promise<{ created: boolean; key_version: number; rewrapped?: number }> {
-  return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/key`, {
-    method: 'PUT',
-    body: JSON.stringify({
-      owner_wrapped_folder_key: upgrade.ownerWrappedFolderKey,
-      key_version: 1,
-      format: 'l7',
-      rewrap: { keys: upgrade.keys },
-    }),
-  })
-}
-
 /** Owner or member: the wrapped key of every file in the shared subtree. */
 export async function listSharedFolderKeys(
   folderId: string,
@@ -4632,6 +4597,8 @@ export async function getSharedFolderActivity(
   const query = limit === undefined ? '' : `?limit=${limit}`
   return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/activity${query}`)
 }
+
+export { listLegacyFolderKeys, upgradeSharedFolderCustody, type LegacyFolderKeyRow } from './api-shared-folder-keys'
 
 /** Runtime feature flags for this session (cached by useFeatureFlag). */
 export async function getEvaluateFlags(): Promise<{ flags: Record<string, boolean> }> {
