@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
+import { encodeEnvelope } from '../src/lib/metadata-envelope'
 
 const wasm = loadWasm()
 const encoder = new TextEncoder()
@@ -72,8 +73,8 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, () => ({
     if (opts.parentId === MOVED_FOLDER) {
       return {
         files: [
-          { id: CHILD_OWN, is_folder: false, uploaded_by: null, acted_via_share_id: null },
-          { id: CHILD_MEMBER, is_folder: false, uploaded_by: 'member-user', acted_via_share_id: null },
+          { id: CHILD_OWN, is_folder: false, uploaded_by: null, acted_via_share_id: null, name_encrypted: nameOf(CHILD_OWN) },
+          { id: CHILD_MEMBER, is_folder: false, uploaded_by: 'member-user', acted_via_share_id: null, name_encrypted: nameOf(CHILD_MEMBER) },
         ],
         next_cursor: null,
       }
@@ -88,12 +89,50 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, () => ({
   },
 }))
 
+// The owned-item port crosses into the worker; the same core calls run here.
+await mockModuleScoped('../src/lib/owned-item', import.meta.dir, (r) => ({
+  ...r,
+  ownedItem: {
+    ...r.ownedItem,
+    async isForeign(itemId: string) {
+      return wasm.isForeignItemId(itemId)
+    },
+    async resolve(args: {
+      masterKey: Uint8Array
+      itemId: string
+      kind: number
+      nameEncrypted: string
+      sharedFolderId?: string | null
+      folderKey?: Uint8Array | null
+    }) {
+      const v = wasm.resolveOwnedKey(
+        args.masterKey,
+        args.itemId,
+        args.kind,
+        null,
+        args.nameEncrypted,
+        args.sharedFolderId ?? null,
+        args.folderKey ?? null,
+        null,
+        null,
+      ) as Record<string, unknown>
+      return {
+        key: v.key as Uint8Array,
+        contentKey: (v.contentKey as Uint8Array | null) ?? null,
+        origin: v.origin as never,
+        name: (v.name as never) ?? null,
+        writeTarget: (v.writeTarget as never) ?? null,
+      }
+    },
+  },
+}))
+
 const { moveOwnerItems, MOVED_BUT_UNPUBLISHED } = await import('../src/lib/owner-upload-key')
 const { renameKeyFor, RENAME_KEY_UNAVAILABLE } = await import('../src/lib/owner-rename')
 const { saveTargetFor } = await import('../src/lib/owner-save-target')
 const { createOwnedItemOps } = await import('../src/lib/owned-item')
 const { clearSharedFolderLookups } = await import('../src/lib/owner-adoption')
-const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
+const { markCustodySeen, resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 
 beforeEach(() => {
   flagOn = true
@@ -105,13 +144,25 @@ beforeEach(() => {
   resetCustodyMemoryForTests()
 })
 
+// L15 (T5.4): the resolver proves an O row's key against its sealed name, so
+// these rows carry the names they really have.
+const nameOf = (id: string): string => {
+  const key = wasm.derive_file_key(MASTER, encoder.encode(id)) as Uint8Array
+  const meta = wasm.encrypt_metadata(key, JSON.stringify({ name: `${id}.bin`, mime_type: null })) as {
+    nonce: Uint8Array
+    ciphertext: Uint8Array
+  }
+  return encodeEnvelope(wasm, meta.nonce, meta.ciphertext)
+}
 const rows = [
-  { id: MOVED_FILE, is_folder: false, uploaded_by: null, acted_via_share_id: null },
-  { id: MOVED_FOLDER, is_folder: true, uploaded_by: null, acted_via_share_id: null },
+  { id: MOVED_FILE, is_folder: false, uploaded_by: null, acted_via_share_id: null, name_encrypted: nameOf(MOVED_FILE) },
+  { id: MOVED_FOLDER, is_folder: true, uploaded_by: null, acted_via_share_id: null, name_encrypted: nameOf(MOVED_FOLDER) },
 ]
 
 describe('P2-5: a move into a custody folder publishes its wraps', () => {
   test('the moved file, the moved folder and its own child get L7 wraps; a member-added child is never re-sealed', async () => {
+    // L15 (T5.4): the move picker showed R is what makes the move a share-time event.
+    markCustodySeen(ROOT)
     await moveOwnerItems({ ids: [MOVED_FILE, MOVED_FOLDER], destinationId: DEST, rows, masterKey: MASTER, viewerId: VIEWER })
     expect(moved.map((m) => m.parent)).toEqual([DEST, DEST])
     const keys = published.flatMap((p) => p.keys)
@@ -139,6 +190,7 @@ describe('P2-5: a move into a custody folder publishes its wraps', () => {
 
   test('a publish that fails after the move says so plainly (the move itself stands)', async () => {
     publishFails = true
+    markCustodySeen(ROOT)
     await expect(
       moveOwnerItems({ ids: [MOVED_FILE], destinationId: DEST, rows, masterKey: MASTER, viewerId: VIEWER }),
     ).rejects.toThrow(MOVED_BUT_UNPUBLISHED)

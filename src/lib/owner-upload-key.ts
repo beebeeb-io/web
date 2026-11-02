@@ -11,7 +11,9 @@
 import { ApiError, createFolder, getFile, publishSharedFolderKeys, updateFile, type DriveFile } from './api'
 import { collectAllChildItems, sealChildKey } from './folder-share-crypto'
 import { adoptForeignTreeBeforeMove, assertNoSeenCustodyAbove, folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
-import { deriveFileKey, zeroize } from './crypto'
+import { zeroize } from './crypto'
+import { hasSeenCustody } from './custody-memory'
+import { ownedItem, type KeyOrigin } from './owned-item'
 import { sharedFoldersEnabled } from './use-feature-flag'
 import { withNetworkRetry } from './net-retry'
 import { canPublishAnchored, deferPublish, localStorageQueue } from './publish-anchor'
@@ -144,8 +146,14 @@ const PUBLISH_BATCH = 1000
 /** Thrown after the move itself succeeded, when its wraps could not be published. */
 export const MOVED_BUT_UNPUBLISHED = "Moved, but it isn't readable in the shared folder yet. Try moving it again."
 
-/** A moved row: enough to know its kind and who added it. */
-export type MovableRow = Pick<DriveFile, 'id'> & Partial<Pick<DriveFile, 'is_folder' | 'uploaded_by' | 'acted_via_share_id'>>
+/** A moved row: enough to know its kind, who added it, and its sealed name. */
+export type MovableRow = Pick<DriveFile, 'id'> &
+  Partial<
+    Pick<
+      DriveFile,
+      'is_folder' | 'uploaded_by' | 'acted_via_share_id' | 'name_encrypted' | 'owner_wrapped_file_key'
+    >
+  >
 
 /**
  * rv-web198c P2-5: move items (the drive's "copy" is a move too) and, when the
@@ -153,18 +161,25 @@ export type MovableRow = Pick<DriveFile, 'id'> & Partial<Pick<DriveFile, 'is_fol
  * and everything under it, as an upload or a folder create does. Without it a
  * moved-in item stayed unreadable to the folder's guests and members.
  *
- * Only rows the owner created are sealed: their key is derived from the master
- * key. A row a guest or member added keeps the wrap it already has; it is never
- * re-sealed under a derived key that is not its key. The one route that moves
- * a row in the web client: a guard test pins it.
+ * Only rows the resolver proves are sealed: an O row's derived key must
+ * authenticate its name, and an F row keeps the wrap it already has (the
+ * resolver key), never a derived key that is not its key. The one route that
+ * moves a row in the web client: a guard test pins it.
+ *
+ * L15 (2275): a move is a share-time event only when the picker showed the
+ * shared root `R` for the chosen destination; `pickerRootId` carries that
+ * answer. When the caller omits it, this client's own custody proof for `R`
+ * stands in for the marker (the picker marks shared roots from that proof).
  */
 export async function moveOwnerItems(args: {
   ids: string[]
   destinationId: string | null
-  /** The listed rows by id, for their kind and uploader. */
+  /** The listed rows by id, for their kind, uploader and sealed name. */
   rows?: ReadonlyMap<string, MovableRow> | MovableRow[]
   masterKey?: Uint8Array
   viewerId?: string | null
+  /** The shared root the picker showed for the destination, or null. */
+  pickerRootId?: string | null
 }): Promise<void> {
   // L12 (2275): moving out of a shared root adopts every F item it takes along
   // FIRST, and a failed adoption refuses the move entirely (before any update).
@@ -172,7 +187,14 @@ export async function moveOwnerItems(args: {
   await Promise.all(args.ids.map((id) => updateFile(id, { parent_id: args.destinationId })))
   if (!args.destinationId || !args.masterKey) return
   try {
-    await publishMovedItems(args.masterKey, args.destinationId, args.ids, args.rows, args.viewerId ?? null)
+    await publishMovedItems({
+      masterKey: args.masterKey,
+      destinationId: args.destinationId,
+      ids: args.ids,
+      rows: args.rows,
+      viewerId: args.viewerId ?? null,
+      pickerRootId: args.pickerRootId,
+    })
   } catch (error) {
     console.warn('[move] shared-folder keys not published after a move', {
       status: error instanceof ApiError ? error.status : undefined,
@@ -226,13 +248,18 @@ export async function publishOrDeferOwnerUpload(args: {
   return 'deferred'
 }
 
-async function publishMovedItems(
-  masterKey: Uint8Array,
-  destinationId: string,
-  ids: string[],
-  rows: ReadonlyMap<string, MovableRow> | MovableRow[] | undefined,
-  viewerId: string | null,
-): Promise<void> {
+/** Origins whose key the resolver proved against the row's own name. */
+const PROVEN_ORIGINS: ReadonlySet<KeyOrigin> = new Set(['derived', 'owner_wrap', 'folder_wrap'])
+
+async function publishMovedItems(args: {
+  masterKey: Uint8Array
+  destinationId: string
+  ids: string[]
+  rows: ReadonlyMap<string, MovableRow> | MovableRow[] | undefined
+  viewerId: string | null
+  pickerRootId: string | null | undefined
+}): Promise<void> {
+  const { masterKey, destinationId, ids, rows, viewerId } = args
   if (!(await sharedFoldersEnabled())) {
     // rv-web198d N2, as for an upload (after the move committed): skip, but
     // never silently under a folder seen with custody.
@@ -242,23 +269,33 @@ async function publishMovedItems(
   const root = await sharedRootFor(destinationId, destinationId)
   if (!root) return
   if ((await folderWrapFormat(root, destinationId)) !== 'l7') return
+  // L15 (b)3: only a destination the user saw inside R. The picker's answer is
+  // authoritative; without one, this client's custody proof for R stands in.
+  const shownRoot = args.pickerRootId === undefined ? (hasSeenCustody(root) ? root : null) : args.pickerRootId
+  if (shownRoot !== root) return
   const byId: ReadonlyMap<string, MovableRow> = Array.isArray(rows)
     ? new Map(rows.map((row) => [row.id, row]))
     : (rows ?? new Map())
 
   // The moved rows, then every descendant of a moved folder.
-  const items: { id: string; isFolder: boolean; foreign: boolean }[] = []
+  const items: { id: string; isFolder: boolean; foreign: boolean; nameEncrypted?: string }[] = []
   for (const id of ids) {
     const row = byId.get(id)
     const isFolder = !!row?.is_folder
     // A row the caller did not list is treated as someone else's: never sealed.
-    items.push({ id, isFolder, foreign: !row || needsOwnership(row, viewerId) })
+    items.push({
+      id,
+      isFolder,
+      foreign: !row || needsOwnership(row, viewerId),
+      nameEncrypted: row?.name_encrypted,
+    })
     if (isFolder) {
       for (const child of await collectAllChildItems(id)) {
         items.push({
           id: child.id,
           isFolder: child.isFolder,
           foreign: needsOwnership({ acted_via_share_id: child.actedViaShareId, uploaded_by: child.uploadedBy }, viewerId),
+          nameEncrypted: child.nameEncrypted,
         })
       }
     }
@@ -269,15 +306,39 @@ async function publishMovedItems(
   try {
     const entries: { file_id: string; encrypted_file_key: string }[] = []
     for (const item of items) {
+      // A guest or member row keeps its own wrap; it is never re-sealed.
       if (item.foreign) continue
-      const key = await deriveFileKey(masterKey, item.id)
+      // A row whose sealed name we do not hold cannot be proven: skip it.
+      if (!item.nameEncrypted) continue
+      let resolved
       try {
+        resolved = await ownedItem.resolve({
+          masterKey,
+          itemId: item.id,
+          kind: item.isFolder ? 2 : 1,
+          nameEncrypted: item.nameEncrypted,
+          sharedFolderId: root,
+          folderKey,
+        })
+      } catch {
+        // Not a row this client can resolve: leave it for "Share N items".
+        continue
+      }
+      try {
+        // Only a key the resolver proved against the row's own name is published:
+        // a plaintext or binary-convention name is never sealed under a guess.
+        if (!PROVEN_ORIGINS.has(resolved.origin)) continue
         entries.push({
           file_id: item.id,
-          encrypted_file_key: await sealChildKey(folderKey, { rootId: root, itemId: item.id, isFolder: item.isFolder }, key),
+          encrypted_file_key: await sealChildKey(
+            folderKey,
+            { rootId: root, itemId: item.id, isFolder: item.isFolder },
+            resolved.key,
+          ),
         })
       } finally {
-        zeroize(key)
+        zeroize(resolved.key)
+        if (resolved.contentKey) zeroize(resolved.contentKey)
       }
     }
     for (let start = 0; start < entries.length; start += PUBLISH_BATCH) {

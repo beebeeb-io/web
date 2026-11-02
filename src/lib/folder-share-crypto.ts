@@ -672,6 +672,8 @@ export interface ChildItem {
   isFolder: boolean
   uploadedBy?: string | null
   actedViaShareId?: string | null
+  /** The row's sealed name, for the resolver (L14/L15). */
+  nameEncrypted?: string
 }
 
 /** Every descendant of `folderId`, with whether it is a folder (the L7 kind). */
@@ -695,6 +697,7 @@ export async function collectAllChildItems(folderId: string): Promise<ChildItem[
           isFolder: !!child.is_folder,
           uploadedBy: child.uploaded_by ?? null,
           actedViaShareId: child.acted_via_share_id ?? null,
+          nameEncrypted: child.name_encrypted,
         })
         if (child.is_folder) queue.push(child.id)
         if (ids.length > FILE_LIST_HARD_CAP) throw new Error(TOO_LARGE_TO_SHARE)
