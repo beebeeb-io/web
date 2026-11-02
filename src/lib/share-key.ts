@@ -16,6 +16,9 @@
  * it with decodeURIComponent, which never treats '+' specially.
  */
 
+import { shareKeyBytes } from 'beebeeb-wasm'
+import './share-links-wasm'
+
 /** Every Beebeeb share/file key is exactly 32 bytes (AES-256). */
 export const SHARE_KEY_BYTES = 32
 
@@ -94,16 +97,11 @@ export function decodeShareKeyToken(token: string): Uint8Array {
   if (!BASE64_ALPHABET.test(token)) {
     throw new ShareKeyParseError('invalid-characters')
   }
-  const normalized = token.replace(/-/g, '+').replace(/_/g, '/')
-  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
-  try {
-    const binary = atob(padded)
-    const bytes = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-    return bytes
-  } catch {
-    throw new ShareKeyParseError('invalid-base64')
-  }
+  // Both alphabets, padded or not, legacy standard base64 included: core's
+  // decoder is the one grammar (beebeeb_core::share_link::key_bytes).
+  const bytes = shareKeyBytes(token)
+  if (!bytes) throw new ShareKeyParseError('invalid-base64')
+  return bytes
 }
 
 /**

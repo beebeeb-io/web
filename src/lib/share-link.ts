@@ -1,6 +1,7 @@
 // Builds and rebuilds share links from a share's context.
 import type { MyShare } from '@beebeeb/shared'
 import { fromBase64, toBase64url, unwrapKeyFromShare, initCrypto } from './crypto'
+import { buildFullShareLink } from './share-full-link'
 
 /**
  * Rebuild a full, working recipient link for one of the OWNER's shares.
@@ -56,8 +57,9 @@ export async function buildShareLink(share: MyShare, ctx: ShareLinkContext): Pro
     if (!token) return null
 
     const origin = ctx.origin ?? (typeof window !== 'undefined' ? window.location.origin : '')
-    // Matches ShareDialog: #key carries base64url(K_c), URL-encoded.
-    return `${origin}/s/${token}#key=${encodeURIComponent(toBase64url(kc))}`
+    // Same builder as the share dialog: `#key` carries base64url(K_c), and the
+    // URL-encoding of that value is core's (beebeeb_core::share_link).
+    return buildFullShareLink(origin, token, toBase64url(kc))
   } catch {
     return null
   }

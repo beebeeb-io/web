@@ -34,6 +34,7 @@ Modules 134–170, sorted by path.
 | `share-full-link.ts` | buildFullShareLink — the ONE builder for share links (task 1690). | — |
 | `share-key.ts` | Task 1531 — one shared share-decryption-key parser, used by BOTH the automatic `#key=…` URL-fragment path and the manual key-entry form (sha | — |
 | `share-link.ts` | Builds and rebuilds share links from a share's context. | — |
+| `share-links-wasm.ts` | One initialisation for core's share-link grammar (`beebeeb-wasm`). | — |
 | `share-options.ts` | ─── Share link options ──────────────────────────── The expiry and max-opens rows the share dialog offers (moved out of share-dialog.tsx unc | — |
 | `shared-folder-index-shards.ts` | Task 2237b — transport for a shared folder's encrypted search-index shards. | — |
 | `shared-folder-index.ts` | Task 2237b — shared-folder search index client. | — |
@@ -42,4 +43,3 @@ Modules 134–170, sorted by path.
 | `shared-parent-context.ts` | SF-0001 round 5, F7 — the upload context for a paused upload whose parent is inside a folder shared TO this user (a member's upload). | — |
 | `sign-in-unlock.ts` | Task 1810 (P0) — what a sign-in does with this device's local vault, once the server has PROVEN the password (OPAQUE finish succeeded). | — |
 | `signup-email-code.ts` | Task 1525 — verify the email with a code BEFORE the account is created. | — |
-| `signup-pilot-gate.ts` | Task 1520 — the /signup pilot-key decision. | — |

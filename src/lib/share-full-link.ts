@@ -17,12 +17,20 @@
  * The default keeps every pre-2237b caller byte-identical, and the fragment
  * rule is unchanged: a folder link ALWAYS carries `#key=`, passphrase-protected
  * or not (the passphrase only stretches the unwrap key, it never replaces K_c).
+ *
+ * The grammar itself is core's (`beebeeb_core::share_link`): core trims the
+ * trailing slashes, percent-encodes the fragment exactly as
+ * `encodeURIComponent` does, and keeps legacy standard-base64 keys readable.
+ * This file only supplies the app URL, the token and the minted key.
  */
+import { buildShareLink as coreBuildShareLink } from 'beebeeb-wasm'
+import './share-links-wasm'
+
 export function buildFullShareLink(
   baseUrl: string,
   token: string,
   decryptionKey: string,
   path: 's' | 'f' = 's',
 ): string {
-  return `${baseUrl.replace(/\/+$/, '')}/${path}/${token}#key=${encodeURIComponent(decryptionKey)}`
+  return coreBuildShareLink(baseUrl, token, decryptionKey, path)
 }
