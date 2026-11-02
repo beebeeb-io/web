@@ -1,11 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'
-import { Breadcrumb } from '../components/breadcrumb'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '@beebeeb/shared'
 import { FileList } from '../components/file-list'
-import { PresenceAvatars } from '../components/presence-avatars'
 import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
 import { TrustDetailsPanel, type TrustFile } from '../components/trust-details-panel'
 import { ShareDialog } from '../components/share-dialog'
@@ -17,6 +15,7 @@ import type { UploadItem } from '../components/upload-progress'
 import { UploadCards } from '../components/upload-progress-card'
 import { NewFolderDialog } from '../components/new-folder-dialog'
 import { NewMenu } from '../components/new-menu'
+import { DriveTopBar } from './drive/drive-top-bar'
 import { NewDocumentDialog } from '../components/new-document-dialog'
 import { foldName, getNewDocumentType, NewDocumentNameClashError, type NewDocumentType } from '../lib/new-document'
 import { blankDocumentBytes } from '../lib/office/blank-documents'
@@ -47,7 +46,7 @@ import { useWsEvent } from '../lib/ws-context'
 import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { useSync } from '../lib/sync-context'
 import { useKeys } from '../lib/key-context'
-import { useKeyboardShortcuts, isMac } from '../hooks/use-keyboard-shortcuts'
+import { useKeyboardShortcuts } from '../hooks/use-keyboard-shortcuts'
 import { useFrozen } from '../hooks/use-frozen'
 import { useAuth } from '../lib/auth-context'
 import {
@@ -2707,101 +2706,22 @@ export function Drive() {
       <HiddenFolderInput />
       <HiddenResumeInput />
       {/* Top bar */}
-        <div className="px-3 md:px-5 py-2.5 border-b border-line flex items-center gap-2 md:gap-3 flex-wrap md:flex-nowrap">
-          {/* Breadcrumbs */}
-          <Breadcrumb items={breadcrumbs} onNavigate={handleBreadcrumbNav} />
-
-          {/* Presence avatars — shown when the current folder is shared */}
-          {currentParentId && (
-            <PresenceAvatars
-              folderId={
-                myShares.some((s) => s.file_id === currentParentId)
-                  ? currentParentId
-                  : null
-              }
-              currentUserId={user?.user_id ?? null}
-            />
-          )}
-
-          {/* Search — opens the command palette (task 0842). Mobile collapses to
-              an icon button; desktop shows a field-styled button with the ⌘K hint
-              inside on the right (task 0841). ⌘K itself is handled globally. */}
-          <button
-            type="button"
-            aria-label="Search files and folders"
-            aria-keyshortcuts={isMac ? 'Meta+K' : 'Control+K'}
-            onClick={() => window.dispatchEvent(new Event('beebeeb:open-command-palette'))}
-            className="ml-auto md:hidden inline-flex items-center justify-center w-8 h-8 rounded-md border border-line bg-paper text-ink-3 hover:text-ink hover:bg-paper-2 transition-colors"
-          >
-            <Icon name="search" size={14} />
-          </button>
-          <button
-            type="button"
-            aria-label="Search files and folders"
-            aria-keyshortcuts={isMac ? 'Meta+K' : 'Control+K'}
-            onClick={() => window.dispatchEvent(new Event('beebeeb:open-command-palette'))}
-            className="hidden md:flex ml-auto items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1.5 w-[260px] text-left hover:bg-paper-2 hover:border-line-2 transition-colors group"
-          >
-            <Icon name="search" size={13} className="text-ink-4 shrink-0" />
-            <span className="flex-1 text-sm text-ink-4 truncate">Search files and folders...</span>
-            <kbd className="inline-flex items-center self-center gap-0.5 px-1.5 py-[3px] text-[10px] leading-none font-mono text-ink-4 bg-paper-2 border border-line rounded shrink-0">
-              {isMac ? <><span className="text-[11px] leading-none">⌘</span>K</> : 'Ctrl+K'}
-            </kbd>
-          </button>
-
-          {/* New + Upload */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            <NewMenu
-              officeAvailable={officeAvailable}
-              onNewFolder={openNewFolderDialog}
-              onNewDocument={setNewDocType}
-              disabled={isFrozen}
-              disabledReason="Account is frozen"
-            />
-            <BBButton size="sm" onClick={browse} className="gap-1.5" aria-label="Upload files" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined} data-tour="upload">
-              <Icon name="upload" size={13} /> <span className="hidden sm:inline" aria-hidden="true">Upload</span>
-            </BBButton>
-            <BBButton size="sm" onClick={browseFolder} className="hidden sm:inline-flex gap-1.5" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined}>
-              <Icon name="folder" size={13} /> Upload folder
-            </BBButton>
-            {/* Mobile-only overflow: surfaces "Upload folder" below sm where the
-                dedicated button is hidden. Keeps the toolbar from getting wider. */}
-            <div className="relative sm:hidden">
-              <button
-                type="button"
-                onClick={() => setUploadMenuOpen((v) => !v)}
-                disabled={isFrozen}
-                aria-label="More upload options"
-                aria-haspopup="menu"
-                aria-expanded={uploadMenuOpen}
-                title={isFrozen ? 'Account is frozen' : undefined}
-                className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-line bg-paper text-ink-2 hover:text-ink hover:bg-paper-2 transition-colors disabled:opacity-50"
-              >
-                <Icon name="chevron-down" size={11} />
-              </button>
-              {uploadMenuOpen && (
-                <>
-                  <div className="fixed inset-0 z-30" onClick={() => setUploadMenuOpen(false)} />
-                  <div
-                    role="menu"
-                    className="absolute right-0 top-full mt-1 z-40 bg-paper border border-line-2 rounded-md shadow-2 py-1 min-w-[180px]"
-                  >
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => { setUploadMenuOpen(false); browseFolder() }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-ink-2 hover:bg-paper-2 hover:text-ink transition-colors"
-                    >
-                      <Icon name="folder" size={11} />
-                      Upload folder
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-        </div>
+      {/* Top bar: breadcrumbs, presence, search, new/upload. */}
+      <DriveTopBar
+        breadcrumbs={breadcrumbs}
+        onNavigate={handleBreadcrumbNav}
+        folderId={currentParentId ?? null}
+        sharedFolderIds={new Set(myShares.map((s) => s.file_id))}
+        currentUserId={user?.user_id ?? null}
+        officeAvailable={officeAvailable}
+        frozen={isFrozen}
+        uploadMenuOpen={uploadMenuOpen}
+        onToggleUploadMenu={() => setUploadMenuOpen((v) => !v)}
+        onNewFolder={openNewFolderDialog}
+        onNewDocument={setNewDocType}
+        onUpload={browse}
+        onUploadFolder={browseFolder}
+      />
 
         {/* Resume banner */}
         {pausedUploads.length > 0 && (
