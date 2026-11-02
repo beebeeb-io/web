@@ -24,6 +24,8 @@ import type { DriveFile } from '../../lib/api'
 import { abandonUpload, listVersions } from '../../lib/api'
 import { discardInFlightUpload } from '../../lib/upload-discard'
 import { encryptedUpload } from '../../lib/encrypted-upload'
+import { isRequestUpload } from '../../lib/file-request-crypto'
+import { saveTargetFor } from '../../lib/owner-save-target'
 import { useKeys } from '../../lib/key-context'
 import { useTheme } from '../../lib/theme-context'
 import type { OfficeApp } from '../../lib/office/office-file-kind'
@@ -176,7 +178,7 @@ export function OfficeEditor({
   onShare,
   thumbnailUrl = null,
 }: OfficeEditorProps) {
-  const { getFileKey, getMasterKey, getResidentUserId } = useKeys()
+  const { getFileKey, getFileKeyForFile, getMasterKey, getResidentUserId } = useKeys()
   const { resolved: appTheme } = useTheme()
 
   const [activeTab, setActiveTab] = useState('Home')
@@ -580,20 +582,28 @@ export function OfficeEditor({
     [officeApp],
   )
 
-  async function performUpload(uploadFileId: string, conflictCreated: boolean, signal: AbortSignal, savedBytes: Uint8Array, nameOverride?: string): Promise<DriveFile> {
+  async function performUpload(targetFileId: string | undefined, conflictCreated: boolean, signal: AbortSignal, savedBytes: Uint8Array, nameOverride?: string): Promise<DriveFile> {
+    // A9b: a save that targets a REQUEST row's own id mints a fresh owner item
+    // and lands there — never as a version under the request row's id and never
+    // under its content key C. Every other save keeps its id and replaces the
+    // row's current version.
+    const target = await saveTargetFor({ file, targetFileId, masterKey: getMasterKey() })
+    const uploadFileId = target.uploadFileId
     // SF-0002 review: a new version under this id needs the CURRENT version's
-    // content writable, not only a mark set when the file was opened.
-    if (uploadFileId === file.id) await assertCurrentVersionWritable(file, getMasterKey(), { viewerId: getResidentUserId() })
-    const fileKey = await getFileKey(uploadFileId)
+    // content writable, not only a mark set when the file was opened. A request
+    // row is never versioned here (it saves as a new owner item), so it skips
+    // the check with its content key untouched.
+    if (target.replaceOf) await assertCurrentVersionWritable(file, getMasterKey(), { viewerId: getResidentUserId() })
+    // A same-row save goes through the RESOLVED key (SF-0002: a binary-convention
+    // or repair row opens under its own key, not the plain derivation). A new
+    // item's key is the plain derivation of its freshly minted id.
+    const fileKey = target.replaceOf ? await getFileKeyForFile(file) : await getFileKey(uploadFileId)
     const name = nameOverride ?? decryptedName
     const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
     const mimeType = EXT_MIME[ext] ?? 'application/octet-stream'
     const uploadFile = new File([savedBytes as BlobPart], name, { type: mimeType })
     const masterKey = getMasterKey()
-    // Same file id = a new version of THIS file: its recorded pin decides the
-    // format (task 1943). Keep Both is a new file and has none.
-    const replaceOf = uploadFileId === file.id ? { nameEncrypted: file.name_encrypted } : undefined
-    return encryptedUpload(uploadFile, uploadFileId, fileKey, masterKey, file.parent_id ?? undefined, undefined, undefined, undefined, signal, { conflictCreated, replaceOf })
+    return encryptedUpload(uploadFile, uploadFileId, fileKey, masterKey, file.parent_id ?? undefined, undefined, undefined, undefined, signal, { conflictCreated, replaceOf: target.replaceOf, newItemId: target.newItemId })
   }
 
   const handleSave = useCallback(async () => {
@@ -610,21 +620,41 @@ export function OfficeEditor({
     // to abort/await (same convention as file-editor.tsx's own handleSave).
     const controller = new AbortController()
     inFlightUploadRef.current = controller
-    inFlightFileIdRef.current = file.id
+    // A9b: a request row's edit lands as a NEW owner item whose id is minted
+    // inside performUpload, so this caller never knows the upload id to
+    // abandon — same gap as "Keep Both". Abandoning the REQUEST row's id would
+    // target the wrong row, so leave it null.
+    const requestSave = isRequestUpload(file)
+    inFlightFileIdRef.current = requestSave ? null : file.id
     const runSave = (async () => {
       try {
-        const { current_version: serverVersion } = await listVersions(file.id)
-        if (controller.signal.aborted) return
-        if (hasVersionConflict({ openedVersion: versionNumber, serverVersion })) {
-          setConflict({ latestVersionNumber: serverVersion })
-          return
+        // A request row is never versioned by the owner's editor (A9b: the edit
+        // becomes a new owner item), so its request-side version history is not
+        // this save's baseline and must not raise a conflict dialog.
+        if (!requestSave) {
+          const { current_version: serverVersion } = await listVersions(file.id)
+          if (controller.signal.aborted) return
+          if (hasVersionConflict({ openedVersion: versionNumber, serverVersion })) {
+            setConflict({ latestVersionNumber: serverVersion })
+            return
+          }
         }
         const savedBytes = await bridgeRef.current!.save()
         const updated = await performUpload(file.id, false, controller.signal, savedBytes)
         reportDirty(false)
-        setVersionNumber(updated.version_number ?? versionNumber + 1)
         setLastSavedAt(new Date())
-        onSaved(updated, savedBytes)
+        if (updated.id === file.id) {
+          setVersionNumber(updated.version_number ?? versionNumber + 1)
+          onSaved(updated, savedBytes)
+        } else {
+          // A9b: the request row's edit is now a separate owner item. This
+          // session belongs to it, so the conflict baseline must move with it
+          // (same rule as Keep Both in handleConflictAction): leaving the
+          // original's opened version behind would disable the write-ahead
+          // check on the new item until its own version climbed past it.
+          setVersionNumber(updated.version_number ?? 1)
+          onSiblingCreated(updated, decryptedName)
+        }
       } catch (err) {
         if (!(err instanceof DOMException && err.name === 'AbortError')) {
           setSaveError(err instanceof Error ? err.message : 'Save failed. Try again.')
@@ -640,7 +670,7 @@ export function OfficeEditor({
     inFlightUploadPromiseRef.current = runSave
     await runSave
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saving, dirty, file, versionNumber, reportDirty, onSaved])
+  }, [saving, dirty, file, versionNumber, reportDirty, onSaved, onSiblingCreated, decryptedName])
 
   handleSaveRef.current = handleSave
 
@@ -664,20 +694,25 @@ export function OfficeEditor({
       if (saving) return
       setSaving(true)
       setSaveError(null)
-      // Keep Both's `resolution.fileId` is undefined (a brand-new sibling) —
-      // resolve the real target id HERE, before the first await, so it's
-      // the same id `discardInFlightUpload` can call `abandonUpload` on if
-      // "Discard" lands while this is still in flight (same fix/race as
-      // handleSave above).
-      const uploadFileId = resolution.fileId ?? crypto.randomUUID()
+      // "Keep both" (resolution.fileId undefined) mints a brand-new random id
+      // INSIDE performUpload, which this caller never sees — a discard during
+      // THAT specific upload can't be abandoned by id here. It's not a
+      // correctness gap: a discarded "Keep both" upload has no previous
+      // version to protect, so it still resolves exactly like an ordinary
+      // abandoned first-ever upload once the server's 7-day TTL sweep reaches
+      // it (same gap and reasoning as file-editor.tsx's handleConflictAction).
+      //
+      // A9b: a request row's "Save as version" names the request row's id but
+      // saveTargetFor mints a fresh OWNER id inside performUpload — abandoning
+      // the request row's id would target the wrong row, so leave it null.
       const controller = new AbortController()
       inFlightUploadRef.current = controller
-      inFlightFileIdRef.current = uploadFileId
+      inFlightFileIdRef.current = isRequestUpload(file) ? null : (resolution.fileId ?? null)
       const runSave = (async () => {
         try {
           const savedBytes = await bridgeRef.current!.save()
           const nameOverride = resolution.nameSuffix ? insertBeforeExtension(decryptedName, resolution.nameSuffix) : undefined
-          const updated = await performUpload(uploadFileId, resolution.conflictCreated, controller.signal, savedBytes, nameOverride)
+          const updated = await performUpload(resolution.fileId, resolution.conflictCreated, controller.signal, savedBytes, nameOverride)
           reportDirty(false)
           setConflict(null)
           if (updated.id === file.id) {

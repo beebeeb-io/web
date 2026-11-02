@@ -219,6 +219,42 @@ export async function childWrapMatchesWorker(
   return withProxy((p) => p.childWrapMatches(folderKey, sharedFolderId, itemId, kind, wrapped, expectedKey))
 }
 
+// ─── 2275 L13: the request-row resolver ─────────────────────────────────────
+// A request row's CONTENT stays under the request content key C; its NAME key
+// is derived-or-C (derived first). Core returns both so a reader never seals a
+// name under C and never opens content with the derived key. Read-only.
+
+export interface ResolveRequestRowArgs {
+  masterKey: Uint8Array
+  itemId: string
+  requestId: Uint8Array
+  wrappedRequestPrivate: Uint8Array
+  wrapNonce: Uint8Array
+  senderEphemeralPubkey: Uint8Array
+  wrappedContentKey: Uint8Array
+  nameEncrypted: string
+}
+
+export async function resolveRequestRowWorker(args: ResolveRequestRowArgs): Promise<{
+  contentKey: Uint8Array
+  nameKey: Uint8Array
+  nameOrigin: string
+  name: { name?: string; mimeType?: string | null; plaintext?: string; chunkFormat: number } | null
+}> {
+  return withProxy((p) =>
+    p.resolveRequestRow(
+      args.masterKey,
+      args.itemId,
+      args.requestId,
+      args.wrappedRequestPrivate,
+      args.wrapNonce,
+      args.senderEphemeralPubkey,
+      args.wrappedContentKey,
+      args.nameEncrypted,
+    ),
+  )
+}
+
 /** The worker calls a content decryptor needs. Production: the crypto worker over Comlink. */
 export interface DecryptorPort {
   decryptorPushFrame(handle: number, frame: Uint8Array): Promise<Uint8Array>

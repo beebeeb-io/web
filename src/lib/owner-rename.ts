@@ -12,6 +12,7 @@
  */
 import { getFile, updateFile, type DriveFile } from './api'
 import { encryptFilename, serializeEncryptedBlob } from './crypto'
+import { isRequestUpload } from './file-request-crypto'
 import { needsOwnership } from './owner-adoption'
 import { assertOwnerRepairWritable } from './owner-repair'
 import { assertCurrentVersionWritable } from './owner-write-guard'
@@ -33,6 +34,14 @@ export interface RenameKeyArgs {
 export async function renameKeyFor(args: RenameKeyArgs): Promise<Uint8Array> {
   const { file } = args
   if (!file) return args.getFileKey(args.fileId)
+  // L13: a request row's content stays sealed under the request content key C,
+  // reached through the request keypair. Its NAME belongs to the string
+  // convention derived from its id — sealing the new name under C would mix the
+  // conventions and leave the name unreadable to the owner's derived key. So a
+  // request row is renamed under the plain derivation, and its content is never
+  // touched here. getFileKeyForFile returns C for these rows, so it must not be
+  // consulted for the name.
+  if (isRequestUpload(file)) return args.getFileKey(args.fileId)
   // SF-0002 review: an OWNER row is renamed under the key that authenticated
   // its name (the resolved key), not the plain string derivation. A binary-
   // convention row therefore stays on its binary key and no mixed-key row is

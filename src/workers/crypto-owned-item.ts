@@ -47,6 +47,21 @@ export interface OwnedItemWorkerOps {
     wrapped: Uint8Array,
     expectedKey: Uint8Array,
   ): Promise<boolean>
+  resolveRequestRow(
+    masterKey: Uint8Array,
+    itemId: string,
+    requestId: Uint8Array,
+    wrappedRequestPrivate: Uint8Array,
+    wrapNonce: Uint8Array,
+    senderEphemeralPubkey: Uint8Array,
+    wrappedContentKey: Uint8Array,
+    nameEncrypted: string,
+  ): Promise<{
+    contentKey: Uint8Array
+    nameKey: Uint8Array
+    nameOrigin: string
+    name: { name?: string; mimeType?: string | null; plaintext?: string; chunkFormat: number } | null
+  }>
   createEncryptorForNewItem(
     masterKey: Uint8Array,
     itemId: string,
@@ -122,6 +137,46 @@ export function ownedItemWorkerOps(ensureWasm: () => Promise<Wasm>, register: (e
     /** L14: does this wrap open to exactly the expected key? */
     async childWrapMatches(folderKey, sharedFolderId, itemId, kind, wrapped, expectedKey) {
       return (await ensureWasm()).childWrapMatches(folderKey, sharedFolderId, itemId, kind, wrapped, expectedKey)
+    },
+
+    /**
+     * L13's request-row resolver: a request row's NAME key is derived-or-C
+     * (derived first), while its CONTENT stays under C. Core returns both so a
+     * reader never seals a name under C and never opens content with the
+     * derived key. Read-only: there is no write target.
+     */
+    async resolveRequestRow(
+      masterKey,
+      itemId,
+      requestId,
+      wrappedRequestPrivate,
+      wrapNonce,
+      senderEphemeralPubkey,
+      wrappedContentKey,
+      nameEncrypted,
+    ) {
+      const wasm = await ensureWasm()
+      const resolved = wasm.resolveRequestRow(
+        masterKey,
+        itemId,
+        requestId,
+        wrappedRequestPrivate,
+        wrapNonce,
+        senderEphemeralPubkey,
+        wrappedContentKey,
+        nameEncrypted,
+      ) as {
+        contentKey: Uint8Array
+        nameKey: Uint8Array
+        nameOrigin: string
+        name?: { name?: string; mimeType?: string | null; plaintext?: string; chunkFormat: number } | null
+      }
+      return {
+        contentKey: resolved.contentKey,
+        nameKey: resolved.nameKey,
+        nameOrigin: resolved.nameOrigin,
+        name: resolved.name ?? null,
+      }
     },
 
     /**

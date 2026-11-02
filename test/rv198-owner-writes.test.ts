@@ -90,6 +90,8 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, () => ({
 
 const { moveOwnerItems, MOVED_BUT_UNPUBLISHED } = await import('../src/lib/owner-upload-key')
 const { renameKeyFor, RENAME_KEY_UNAVAILABLE } = await import('../src/lib/owner-rename')
+const { saveTargetFor } = await import('../src/lib/owner-save-target')
+const { createOwnedItemOps } = await import('../src/lib/owned-item')
 const { clearSharedFolderLookups } = await import('../src/lib/owner-adoption')
 const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 
@@ -223,5 +225,64 @@ describe("P2-4: renaming a guest's or member's row seals under ITS key or not at
         },
       }),
     ).rejects.toThrow(RENAME_KEY_UNAVAILABLE)
+  })
+
+  test('A9: a request row is renamed under the string-derived key, never under its content key', async () => {
+    // L13: a request row's content stays sealed under the request content key C
+    // (reached through the request keypair); only its NAME moves to the string
+    // convention derived from its id. getFileKeyForFile would return C, which
+    // would seal the name under C and mix the conventions.
+    const requestRow = {
+      id: MOVED_FILE, name_encrypted: 'NAME', acted_via_share_id: null, uploaded_by: null,
+      file_request_id: 'req-1', sender_ephemeral_pubkey: 'ePub', wrapped_content_key: 'wrapped',
+    } as never
+    const key = await renameKeyFor({
+      fileId: MOVED_FILE, file: requestRow, viewerId: VIEWER,
+      getFileKey: async () => new Uint8Array(derived),
+      getFileKeyForFile: async () => {
+        throw new Error('the request content key C is not used for the name')
+      },
+      readName: async () => undefined,
+    })
+    expect(Array.from(key)).toEqual(Array.from(derived))
+  })
+})
+
+describe('A9b: a request-row content edit is saved as a NEW owner item', () => {
+  const requestRow = {
+    id: MOVED_FILE, name_encrypted: 'NAME', parent_id: ROOT, acted_via_share_id: null, uploaded_by: null,
+    file_request_id: 'req-1', sender_ephemeral_pubkey: 'ePub', wrapped_content_key: 'wrapped',
+  } as never
+  const ownerRow = {
+    id: MOVED_FILE, name_encrypted: 'NAME', parent_id: ROOT, acted_via_share_id: null, uploaded_by: null,
+  } as never
+  const ops = createOwnedItemOps(wasm)
+  const mint = (masterKey: Uint8Array) => ops.mint(masterKey, 'owner')
+
+  test('a save targeting the request row id mints a fresh owner id and never replaces that row', async () => {
+    const target = await saveTargetFor({ file: requestRow, targetFileId: MOVED_FILE, masterKey: MASTER, mint })
+    expect(target.uploadFileId).not.toBe(MOVED_FILE)
+    expect(target.isNewItem).toBe(true)
+    expect(target.newItemId?.idText).toBe(target.uploadFileId)
+    expect(target.replaceOf).toBeUndefined()
+    // Core's id class: the minted item is an owner row, so its key is the plain
+    // string derivation — never the request row's content key C.
+    expect(await wasm.isForeignItemId(target.uploadFileId)).toBe(false)
+    expect((wasm.derive_file_key(MASTER, encoder.encode(target.uploadFileId)) as Uint8Array).length).toBe(32)
+  })
+
+  test('a save on an owner row still replaces that row under its own id', async () => {
+    const target = await saveTargetFor({ file: ownerRow, targetFileId: MOVED_FILE, masterKey: MASTER, mint })
+    expect(target.uploadFileId).toBe(MOVED_FILE)
+    expect(target.isNewItem).toBe(false)
+    expect(target.replaceOf).toEqual({ nameEncrypted: 'NAME' })
+    expect(target.newItemId).toBeUndefined()
+  })
+
+  test('Keep Both on a request row stays a brand-new id with no replacement', async () => {
+    const target = await saveTargetFor({ file: requestRow, targetFileId: undefined, masterKey: MASTER, mint })
+    expect(target.uploadFileId).not.toBe(MOVED_FILE)
+    expect(target.isNewItem).toBe(true)
+    expect(target.replaceOf).toBeUndefined()
   })
 })

@@ -31,6 +31,8 @@ import { decryptToBlob } from '../../lib/encrypted-download'
 import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly } from '../../lib/owner-repair'
 import { assertCurrentVersionWritable } from '../../lib/owner-write-guard'
 import { encryptedUpload } from '../../lib/encrypted-upload'
+import { isRequestUpload } from '../../lib/file-request-crypto'
+import { saveTargetFor } from '../../lib/owner-save-target'
 import { useKeys } from '../../lib/key-context'
 import {
   hasVersionConflict,
@@ -133,7 +135,7 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
   toolbarSlotEl,
   onRequestExitEdit,
 }, ref) {
-  const { getFileKey, getMasterKey, getResidentUserId } = useKeys()
+  const { getFileKey, getFileKeyForFile, getMasterKey, getResidentUserId } = useKeys()
   // SF-0002: a file repaired from the iOS Files-app convention opens and
   // downloads, but every write would have to re-key an existing object.
   const ownerReadOnly = isOwnerRepairReadOnly(file.id)
@@ -217,11 +219,23 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
     signal: AbortSignal,
     nameOverride?: string,
   ): Promise<DriveFile> {
-    const uploadFileId = targetFileId ?? crypto.randomUUID()
+    // A9b: a save that targets a REQUEST row's own id mints a fresh owner item
+    // and lands there — never as a version under the request row's id and never
+    // under its content key C. Every other save keeps its id and replaces the
+    // row's current version.
+    const target = await saveTargetFor({ file, targetFileId, masterKey: getMasterKey() })
+    const uploadFileId = target.uploadFileId
     // SF-0002 review: a new version under this id needs the CURRENT version's
-    // content writable, not only a mark set when the file was opened.
-    if (uploadFileId === file.id) await assertCurrentVersionWritable(file, getMasterKey(), { viewerId: getResidentUserId() })
-    const fileKey = await getFileKey(uploadFileId)
+    // content writable, not only a mark set when the file was opened. A request
+    // row is never versioned here (it saves as a new owner item), so it skips
+    // the check with its content key untouched.
+    if (target.replaceOf) {
+      await assertCurrentVersionWritable(file, getMasterKey(), { viewerId: getResidentUserId() })
+    }
+    // A same-row save goes through the RESOLVED key (SF-0002: a binary-convention
+    // or repair row opens under its own key, not the plain derivation). A new
+    // item's key is the plain derivation of its freshly minted id.
+    const fileKey = target.replaceOf ? await getFileKeyForFile(file) : await getFileKey(uploadFileId)
     const name = nameOverride ?? decryptedName
     const effectiveType = mimeType ?? (isMarkdown ? 'text/markdown' : 'text/plain')
     const uploadFile = new File([doc], name, { type: effectiveType })
@@ -239,8 +253,10 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
       {
         conflictCreated,
         // Same file id = a new version of THIS file: its recorded pin decides
-        // the format (task 1943). Keep Both is a new file and has none.
-        replaceOf: uploadFileId === file.id ? { nameEncrypted: file.name_encrypted } : undefined,
+        // the format (task 1943). Keep Both is a new file and has none. A
+        // request row's edit is a new owner item and has none either.
+        replaceOf: target.replaceOf,
+        newItemId: target.newItemId,
       },
     )
   }
@@ -267,64 +283,84 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
     // abort. See performUpload's comment for the failure this closed.
     const controller = new AbortController()
     inFlightUploadRef.current = controller
-    inFlightFileIdRef.current = file.id
+    // A9b: a request row's edit lands as a NEW owner item whose id is minted
+    // inside performUpload, so this caller never knows the upload id to
+    // abandon — same gap as "Keep Both". Abandoning the REQUEST row's id would
+    // target the wrong row, so leave it null.
+    const requestSave = isRequestUpload(file)
+    inFlightFileIdRef.current = requestSave ? null : file.id
     // The whole operation below, captured as ITS OWN promise before the
     // first await, so `abortInFlightSave` can wait for it to fully settle
     // before calling `abandonUpload` (task 1571 web PR #106, Codex P1) —
     // see `inFlightUploadPromiseRef`'s doc comment.
     const runSave = (async () => {
       try {
-        // Write-ahead conflict check (design: "checks the latest version
-        // before it saves") — never upload blind.
-        //
-        // Uses listVersions(), NOT getFile(): GET /api/v1/files/:id (server
-        // beebeeb-api/src/routes/files.rs get_file()) never selects/returns
-        // version_number at all, so `getFile(id).version_number` is always
-        // undefined and every conflict check silently no-ops (reproduced live
-        // via the task-1563 concurrent-edit e2e test — a second save landed
-        // as a plain new version, no dialog). GET .../versions
-        // (beebeeb-api/src/routes/versions.rs:114) reads `files.version_number`
-        // directly and is what the rest of this file already uses for the
-        // version scrubber, so this fix adds no new server surface.
-        const { current_version: serverVersion } = await listVersions(file.id)
-        if (controller.signal.aborted) return // discarded while the pre-check was in flight
-        if (hasVersionConflict({ openedVersion: versionNumber, serverVersion })) {
-          setConflict({ latestVersionNumber: serverVersion, latestText: null })
-          // Decrypt the racing (current LIVE) content for the diff view. This
-          // is NOT a historical version lookup — serverVersion IS the file's
-          // current version by definition here, so its bytes come from the
-          // normal download path (decryptToBlob), using getFile() ONLY for
-          // its accurate chunk_count/size_bytes (the version_number field is
-          // the one that's missing from that response — see the comment
-          // above; size_bytes/chunk_count are both present and correct).
-          try {
-            const latest = await getFile(file.id)
-            const fileKey = await getFileKey(file.id)
-            const { plaintext } = await decryptToBlob(
-              file.id,
-              fileKey,
-              file.name_encrypted,
-              mimeType ?? undefined,
-              latest.chunk_count,
-              latest.size_bytes,
-              { masterKey: getMasterKey() },
-            )
-            const text = await plaintext.text()
-            setConflict({ latestVersionNumber: serverVersion, latestText: text })
-          } catch {
-            // Diff content failed to load — the dialog still offers all three
-            // actions, just without a preview of the other side.
+        // A request row is never versioned by the owner's editor (A9b: the edit
+        // becomes a new owner item), so its request-side version history is not
+        // this save's baseline and must not raise a conflict dialog.
+        if (!requestSave) {
+          // Write-ahead conflict check (design: "checks the latest version
+          // before it saves") — never upload blind.
+          //
+          // Uses listVersions(), NOT getFile(): GET /api/v1/files/:id (server
+          // beebeeb-api/src/routes/files.rs get_file()) never selects/returns
+          // version_number at all, so `getFile(id).version_number` is always
+          // undefined and every conflict check silently no-ops (reproduced live
+          // via the task-1563 concurrent-edit e2e test — a second save landed
+          // as a plain new version, no dialog). GET .../versions
+          // (beebeeb-api/src/routes/versions.rs:114) reads `files.version_number`
+          // directly and is what the rest of this file already uses for the
+          // version scrubber, so this fix adds no new server surface.
+          const { current_version: serverVersion } = await listVersions(file.id)
+          if (controller.signal.aborted) return // discarded while the pre-check was in flight
+          if (hasVersionConflict({ openedVersion: versionNumber, serverVersion })) {
+            setConflict({ latestVersionNumber: serverVersion, latestText: null })
+            // Decrypt the racing (current LIVE) content for the diff view. This
+            // is NOT a historical version lookup — serverVersion IS the file's
+            // current version by definition here, so its bytes come from the
+            // normal download path (decryptToBlob), using getFile() ONLY for
+            // its accurate chunk_count/size_bytes (the version_number field is
+            // the one that's missing from that response — see the comment
+            // above; size_bytes/chunk_count are both present and correct).
+            try {
+              const latest = await getFile(file.id)
+              const fileKey = await getFileKey(file.id)
+              const { plaintext } = await decryptToBlob(
+                file.id,
+                fileKey,
+                file.name_encrypted,
+                mimeType ?? undefined,
+                latest.chunk_count,
+                latest.size_bytes,
+                { masterKey: getMasterKey() },
+              )
+              const text = await plaintext.text()
+              setConflict({ latestVersionNumber: serverVersion, latestText: text })
+            } catch {
+              // Diff content failed to load — the dialog still offers all three
+              // actions, just without a preview of the other side.
+            }
+            return
           }
-          return
         }
 
         const updated = await performUpload(file.id, false, controller.signal)
         lastSavedTextRef.current = doc
         setDirty(false)
         onDirtyChange(false)
-        setVersionNumber(updated.version_number ?? versionNumber + 1)
         setLastSavedAt(new Date())
-        onSaved(updated, doc)
+        if (updated.id === file.id) {
+          setVersionNumber(updated.version_number ?? versionNumber + 1)
+          onSaved(updated, doc)
+        } else {
+          // A9b: the request row's edit is now a separate owner item. This
+          // session belongs to it, so the conflict baseline must move with it
+          // (same rule as Keep Both in handleConflictAction): leaving the
+          // original's opened version behind would disable the write-ahead
+          // check on the new item until its own version climbed past it.
+          setVersionNumber(updated.version_number ?? 1)
+          onSiblingCreated(updated)
+        }
       } catch (err) {
         if (!isAbortError(err)) {
           setSaveError(err instanceof Error ? err.message : 'Save failed. Try again.')
@@ -340,7 +376,7 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
     inFlightUploadPromiseRef.current = runSave
     await runSave
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saving, dirty, file, versionNumber, doc, mimeType, onDirtyChange, onSaved])
+  }, [saving, dirty, file, versionNumber, doc, mimeType, onDirtyChange, onSaved, onSiblingCreated])
 
   const handleConflictAction = useCallback(
     async (action: ConflictAction) => {
@@ -372,7 +408,12 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
       // still resolves exactly like an ordinary abandoned first-ever upload
       // once the server's 7-day TTL sweep (task 1571) reaches it — just not
       // as immediately as the reused-file_id case below.
-      inFlightFileIdRef.current = resolution.fileId ?? null
+      //
+      // A9b: a request row's "Save as version" names the request row's id but
+      // saveTargetFor mints a fresh OWNER id inside performUpload — abandoning
+      // the request row's id would target the wrong row, so leave it null
+      // (same gap as "Keep both").
+      inFlightFileIdRef.current = isRequestUpload(file) ? null : (resolution.fileId ?? null)
       // Captured as its own promise for the same reason as handleSave's
       // `runSave` — see `inFlightUploadPromiseRef`'s doc comment.
       const runResolution = (async () => {

@@ -22,7 +22,9 @@ import {
   isForeignItemIdWorker,
   mintItemIdWorker,
   resolveOwnedItemWorker,
+  resolveRequestRowWorker,
   resumeItemIdWorker,
+  type ResolveRequestRowArgs,
 } from './crypto'
 
 /** L12: an F id is UUID v8 (version nibble 8). */
@@ -91,6 +93,7 @@ export type OwnedItemWasm = Pick<
   | 'isForeignItemId'
   | 'resolveOwnedKey'
   | 'childWrapMatches'
+  | 'resolveRequestRow'
 >
 
 export interface OwnedItemOps {
@@ -114,6 +117,19 @@ export interface OwnedItemOps {
     wrapped: Uint8Array,
     expectedKey: Uint8Array,
   ): Promise<boolean>
+  /**
+   * L13's request-row resolver: name key is derived-or-C (derived first), the
+   * content key stays C. Read-only — request rows have no write target.
+   */
+  resolveRequestRow(args: ResolveRequestRowArgs): Promise<ResolvedRequestRow>
+}
+
+/** The dual key structure a request row needs (L13). */
+export interface ResolvedRequestRow {
+  contentKey: Uint8Array
+  nameKey: Uint8Array
+  nameOrigin: string
+  name: ResolvedName | null
 }
 
 function handle(value: { idText: string; tag: Uint8Array }, idClass: IdClass): NewItemIdHandle {
@@ -165,6 +181,29 @@ export function createOwnedItemOps(wasm: OwnedItemWasm): OwnedItemOps {
     async childWrapMatches(folderKey, sharedFolderId, itemId, kind, wrapped, expectedKey) {
       return wasm.childWrapMatches(folderKey, sharedFolderId, itemId, kind, wrapped, expectedKey)
     },
+    async resolveRequestRow(args) {
+      const resolved = wasm.resolveRequestRow(
+        args.masterKey,
+        args.itemId,
+        args.requestId,
+        args.wrappedRequestPrivate,
+        args.wrapNonce,
+        args.senderEphemeralPubkey,
+        args.wrappedContentKey,
+        args.nameEncrypted,
+      ) as {
+        contentKey: Uint8Array
+        nameKey: Uint8Array
+        nameOrigin: string
+        name?: ResolvedName
+      }
+      return {
+        contentKey: resolved.contentKey,
+        nameKey: resolved.nameKey,
+        nameOrigin: resolved.nameOrigin,
+        name: resolved.name ?? null,
+      }
+    },
   }
 }
 
@@ -189,6 +228,7 @@ export const ownedItem: OwnedItemOps = {
   },
   childWrapMatches: (folderKey, sharedFolderId, itemId, kind, wrapped, expectedKey) =>
     childWrapMatchesWorker(folderKey, sharedFolderId, itemId, kind, wrapped, expectedKey),
+  resolveRequestRow: (args) => resolveRequestRowWorker(args),
 }
 
 /** Convenience: the id class, or null when core says the text is not canonical. */
