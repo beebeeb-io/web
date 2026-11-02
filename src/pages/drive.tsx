@@ -1,45 +1,43 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { BBButton } from '@beebeeb/shared'
+
 import { DriveLayout } from '../components/drive-layout'
-import { Icon } from '@beebeeb/shared'
-import { FileList } from '../components/file-list'
-import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
-import { TrustDetailsPanel, type TrustFile } from '../components/trust-details-panel'
-import { ShareDialog } from '../components/share-dialog'
-import { ShareInfoModal } from '../components/share-info-modal'
-import { MoveModal } from '../components/move-modal'
-import { RenameDialog } from '../components/rename-dialog'
-import { UploadZone, useBrowseFiles, useBrowseFolders, type FolderFile } from '../components/upload-zone'
+import type { FileDetailsMeta } from '../components/file-details-panel'
+
+
+
+
+
+
+import { useBrowseFiles, useBrowseFolders, type FolderFile } from '../components/upload-zone'
 import type { UploadItem } from '../components/upload-progress'
-import { UploadCards } from '../components/upload-progress-card'
-import { NewFolderDialog } from '../components/new-folder-dialog'
-import { NewMenu } from '../components/new-menu'
+
+
+
 import { DriveTopBar } from './drive/drive-top-bar'
-import { NewDocumentDialog } from '../components/new-document-dialog'
+import { DriveBanners, type DedupWarning, type FolderSuggestion } from './drive/drive-banners'
+import { DriveFileList } from './drive/drive-file-list'
+import { DriveCreationOverlays } from './drive/drive-creation-overlays'
+import { DriveFileOverlays } from './drive/drive-file-overlays'
+import { DriveGuideOverlays } from './drive/drive-guide-overlays'
+
 import { foldName, getNewDocumentType, NewDocumentNameClashError, type NewDocumentType } from '../lib/new-document'
 import { blankDocumentBytes } from '../lib/office/blank-documents'
 import { FEATURE_OFFICE_EDITOR } from '../lib/flags'
-import { DeleteBackupsDialog } from '../components/delete-backups-dialog'
-import { VersionHistory } from '../components/version-history'
-import { DuplicateFileDialog, getUniqueName, type ConflictItem } from '../components/duplicate-file-dialog'
-import { ShortcutsCheatsheet } from '../components/shortcuts-cheatsheet'
-import { WelcomeTour } from '../components/welcome-tour'
-import { OnboardingTour } from '../components/onboarding-tour'
-import { FilePreview } from '../components/preview/file-preview'
+
+
+import { getUniqueName, type ConflictItem } from '../components/duplicate-file-dialog'
+
+
+
+
 import { useFilePreview } from '../hooks/use-file-preview'
 import { useOnboarding } from '../lib/onboarding-context'
 import { getPreference, setPreference } from '../lib/api'
 import { applyKnownLargeThumbFlags, recordLargeThumbFlags } from '../lib/sync-thumb-flags'
-import {
-  createAttributionRefresher,
-  learnAttribution,
-  rowsMissingAttribution,
-  withAttribution,
-  type RowAttribution,
-} from '../lib/row-attribution'
-import { EncryptionStatus } from '../components/encryption-status'
-import { FILE_STATUS_BAR } from '../components/file-browser-row'
+import { createAttributionRefresher, learnAttribution, rowsMissingAttribution, withAttribution, type RowAttribution } from '../lib/row-attribution'
+
+
 import { useDriveData } from '../lib/drive-data-context'
 import { useToast } from '../components/toast'
 import { useWsEvent } from '../lib/ws-context'
@@ -49,22 +47,7 @@ import { useKeys } from '../lib/key-context'
 import { useKeyboardShortcuts } from '../hooks/use-keyboard-shortcuts'
 import { useFrozen } from '../hooks/use-frozen'
 import { useAuth } from '../lib/auth-context'
-import {
-  listAllFiles,
-  toggleStar,
-  deleteFile,
-  bulkTrashFiles,
-  getFile,
-  getPendingApprovals,
-  listMyShares,
-  listVersions,
-  getSharesForFile,
-  getFolderMembers,
-  type DriveFile,
-  type MyShare,
-  type StorageUsage,
-  type SyncNode,
-} from '../lib/api'
+import { listAllFiles, toggleStar, deleteFile, bulkTrashFiles, getFile, getPendingApprovals, listMyShares, listVersions, getSharesForFile, getFolderMembers, type DriveFile, type MyShare, type StorageUsage, type SyncNode } from '../lib/api'
 import { createOwnerFolder, moveOwnerItems } from '../lib/owner-upload-key'
 import { createNamedOwnerFolder, folderCreateFailureToast } from '../lib/new-folder'
 import { userFriendlyError } from '../lib/user-friendly-error'
@@ -74,44 +57,28 @@ import type { FileActivityEntry } from '../components/file-details-panel'
 import { timeAgo } from '../components/file-list'
 import { getRemainingBytes } from '../components/quota-warning'
 import { requiredQuotaBytes, UploadQuotaLedger, type QuotaCheckItem } from '../lib/upload-quota'
-import {
-  buildNameToFileMap as buildNameToFileMapPure,
-  siblingLowercaseNames,
-} from '../lib/name-collision'
-import {
-  UpgradeNudgeModal,
-  StorageFullBanner,
-  shouldShowUpgradeNudge,
-} from '../components/upgrade-nudge-modal'
+import { buildNameToFileMap as buildNameToFileMapPure, siblingLowercaseNames } from '../lib/name-collision'
+import { shouldShowUpgradeNudge } from '../components/upgrade-nudge-modal'
 import { encryptedUpload, type SharedFolderUploadContext } from '../lib/encrypted-upload'
 import { resolveParentUploadContext, sharedParentFailureMessage } from '../lib/shared-parent-context'
 import { UploadRestartFailedError } from '../lib/upload-session-reinit'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../lib/bulk-download'
-import {
-  computeFingerprint,
-  getActiveUploads,
-  findByFingerprint,
-  planResume,
-  pausedRowCheckFailedMessage,
-  PausedVersionRefusedError,
-  removeUploadState,
-  type UploadState,
-} from '../lib/upload-resume'
+import { computeFingerprint, getActiveUploads, findByFingerprint, planResume, pausedRowCheckFailedMessage, PausedVersionRefusedError, removeUploadState, type UploadState } from '../lib/upload-resume'
 import { encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata, readFileMetadata } from '../lib/crypto'
 import { renameOwnerRow } from '../lib/owner-rename'
 import { assertCurrentVersionWritable } from '../lib/owner-write-guard'
 import { lookupOwnRow } from '../lib/stored-row'
 import { useSearchIndex } from '../hooks/use-search-index'
-import { EmptyDrive } from '../components/empty-states/empty-drive'
-import { RestoreFromEraseOffer } from '../components/restore-from-erase'
+
+
 import { formatBytes } from '../lib/format'
 import { cacheFileList, getCachedFileList, invalidateFileListCache, getOfflineCacheScope, isCurrentOfflineCacheScope } from '../lib/offline-cache'
 import { decideSyncRows, EMPTY_CONFIRM_MS } from '../lib/sync-rows'
 import { createScopedTimer } from '../lib/scoped-timer'
 import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
 import { isBackupsRoot as isBackupsRootPure } from '../lib/backups-root'
-import { fileStorageCountry } from '../lib/storage-regions'
+
 import { knownPoolLocation, learnPoolLocations } from '../lib/sync-storage-locations'
 import { inferMimeFromName } from '../lib/mime-from-name'
 
@@ -302,7 +269,6 @@ export function Drive() {
   const [pendingConflict, setPendingConflict] = useState<PendingConflictUpload | null>(null)
 
   // ─── Smart folder suggestion state ───────────────────
-  type FolderSuggestion = { type: 'images'; count: number } | { type: 'pdfs'; count: number }
   const DISMISSED_SUGGESTIONS_KEY = 'bb_dismissed_folder_suggestions'
 
   function getDismissedSuggestions(): Set<string> {
@@ -332,16 +298,6 @@ export function Drive() {
 
   // ─── Dedup banner state ──────────────────────────────
   // Shows when a file whose hash was already uploaded this session is selected.
-  interface DedupWarning {
-    /** The file that looks like a duplicate */
-    file: File
-    /** Hash used to look it up */
-    hash: string
-    /** Name of the previously uploaded file */
-    existingName: string
-    /** Remaining files that are not duplicates — queued if the user skips */
-    otherFiles: File[]
-  }
   const [dedupWarning, setDedupWarning] = useState<DedupWarning | null>(null)
 
   // ─── Storage quota state (from shared DriveDataContext) ──────────────────
@@ -2784,585 +2740,203 @@ export function Drive() {
         onUploadFolder={browseFolder}
       />
 
-        {/* Resume banner */}
-        {pausedUploads.length > 0 && (
-          <div className="px-5 py-2.5 border-b border-amber/30 bg-amber-bg/40 flex items-center gap-3 text-sm">
-            <Icon name="upload" size={14} className="text-amber-deep shrink-0" />
-            <span className="text-ink">
-              {pausedUploads.length === 1
-                ? `1 upload paused`
-                : `${pausedUploads.length} uploads paused`}
-              {' -- '}
-              <span className="text-ink-3">
-                {pausedUploads.map((u) => u.fileName).join(', ')}
-              </span>
-            </span>
-            <BBButton
-              size="sm"
-              variant="amber"
-              className="ml-auto gap-1.5"
-              onClick={browseResume}
-            >
-              Select file to resume
-            </BBButton>
-            <BBButton
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                for (const u of pausedUploads) {
-                  removeUploadState(u.fileId)
-                }
-                setPausedUploads([])
-              }}
-            >
-              Dismiss
-            </BBButton>
-          </div>
-        )}
+        <DriveBanners
+          pausedUploads={pausedUploads}
+          onResumeSelect={browseResume}
+          onDismissPaused={() => {
+            for (const u of pausedUploads) removeUploadState(u.fileId)
+            setPausedUploads([])
+          }}
+          loadError={loadError}
+          onRetryLoad={fetchFiles}
+          dedupWarning={dedupWarning}
+          onDedupUpload={() => {
+            if (!dedupWarning) return
+            const { file, hash, otherFiles } = dedupWarning
+            setDedupWarning(null)
+            // Mark as already-acknowledged so it won't re-trigger
+            recordUpload(hash, file.name)
+            // Queue this file directly (skip dedup for it — already confirmed)
+            queueResolvedUploads([{ file }])
+            // Check remaining files through the normal pipeline
+            if (otherFiles.length > 0) void handleFilesSelected(otherFiles)
+          }}
+          onDedupSkip={() => {
+            if (!dedupWarning) return
+            const { otherFiles } = dedupWarning
+            setDedupWarning(null)
+            // Skip this file and continue with remaining
+            if (otherFiles.length > 0) void handleFilesSelected(otherFiles)
+          }}
+          storageUsage={storageUsage}
+          accountState={driveAccountDocument?.account?.state}
+          subscription={drivePlanDetails.subscription}
+          onUpgrade={() => setShowUpgradeNudge(true)}
+          incomingInviteCount={incomingInviteCount}
+          pendingApprovalCount={pendingApprovalCount}
+          pendingSharesDismissed={pendingSharesDismissed}
+          onDismissPendingShares={() => setPendingSharesDismissed(true)}
+          onViewPendingShares={() => navigate('/shared?tab=pending')}
+          folderSuggestion={folderSuggestion}
+          suggestionCreating={suggestionCreating}
+          isRoot={!currentParentId}
+          onAcceptSuggestion={handleAcceptFolderSuggestion}
+          onDismissSuggestion={handleDismissFolderSuggestion}
+        />
 
-        {/* Offline banner now rendered by DriveLayout via useDriveData().isOffline. */}
+        <DriveFileList
+          files={files}
+          loading={loading}
+          syncHydrating={syncHydrating}
+          currentParentId={currentParentId}
+          officeAvailable={officeAvailable}
+          isFrozen={isFrozen}
+          onUpload={browse}
+          onFiles={handleFilesSelected}
+          onFolderFiles={handleFolderFilesSelected}
+          onNewFolder={openNewFolderDialog}
+          onNewDocument={setNewDocType}
+          onNavigateFolder={handleFolderOpen}
+          selectedFileId={selectedFileId}
+          onSelectFile={(file) => file && setSelectedFileId(file.id)}
+          onSelectionChange={setExternalSelectedIds}
+          onDecryptedNamesChange={setExternalDecryptedNames}
+          onFileAction={handleFileAction}
+          onToggleStar={handleToggleStar}
+          onDropToFolder={handleDropToFolder}
+          onBulkTrash={handleBulkTrash}
+          onBulkMove={(ids) => { setBulkMoveIds(ids); setBulkMoveOpen(true) }}
+          onBulkShare={handleBulkShare}
+          onBulkDownload={handleBulkDownload}
+          bulkZipProgress={bulkZipProgress}
+          trashingIds={trashingIds}
+          starPulseId={starPulseId}
+          recentlyUploaded={recentlyUploaded}
+          onShowTrustDetails={(file) => setTrustFileId(file.id)}
+          myShares={myShares}
+          folderViewerCounts={folderViewerCounts}
+          uploads={uploads}
+          onCancelUpload={handleCancelUpload}
+          onRetryUpload={handleRetryUpload}
+          unlocked={isUnlocked}
+          hasCryptoError={!!cryptoError}
+          syncedAgo={syncedAgo}
+        />
 
-        {/* Inline failure + retry — the toast alone left the page empty. */}
-        {loadError && (
-          <div className="px-5 py-2 border-b border-red/30 bg-red/5 flex items-center justify-between gap-3 text-[12px] text-red">
-            <div className="flex items-center gap-2 min-w-0">
-              <Icon name="x" size={13} className="shrink-0" />
-              <span className="truncate">Couldn't load files. {loadError}</span>
-            </div>
-            <BBButton size="sm" variant="default" onClick={fetchFiles}>
-              Try again
-            </BBButton>
-          </div>
-        )}
-
-        {/* Duplicate file warning banner */}
-        {dedupWarning && (
-          <div className="px-5 py-2.5 border-b border-amber/40 bg-amber-bg/50 flex items-start gap-3 text-sm">
-            <Icon name="shield" size={14} className="text-amber-deep shrink-0 mt-0.5" />
-            <span className="flex-1 text-ink">
-              <span className="font-medium">
-                &apos;{dedupWarning.file.name}&apos;
-              </span>{' '}
-              looks like a file you already uploaded
-              {dedupWarning.existingName !== dedupWarning.file.name && (
-                <> (as &apos;{dedupWarning.existingName}&apos;)</>
-              )}
-              . Upload anyway?
-            </span>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <BBButton
-                size="sm"
-                variant="amber"
-                onClick={() => {
-                  const { file, hash, otherFiles } = dedupWarning
-                  setDedupWarning(null)
-                  // Mark as already-acknowledged so it won't re-trigger
-                  recordUpload(hash, file.name)
-                  // Queue this file directly (skip dedup for it — already confirmed)
-                  queueResolvedUploads([{ file }])
-                  // Check remaining files through the normal pipeline
-                  if (otherFiles.length > 0) void handleFilesSelected(otherFiles)
-                }}
-              >
-                Upload
-              </BBButton>
-              <BBButton
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  const { otherFiles } = dedupWarning
-                  setDedupWarning(null)
-                  // Skip this file and continue with remaining
-                  if (otherFiles.length > 0) void handleFilesSelected(otherFiles)
-                }}
-              >
-                Skip
-              </BBButton>
-            </div>
-          </div>
-        )}
-
-        {/* Storage-full banner — always visible when quota is hit */}
-        {/* Task 1757: not after a trial that ended over the allowance: the account banner at the top
-            already says what is read-only, until when, and how to trim; "Storage full, upgrade"
-            beside it would be a second, vaguer answer to the same question. */}
-        {storageUsage &&
-          storageUsage.plan_limit_bytes > 0 &&
-          storageUsage.used_bytes >= storageUsage.plan_limit_bytes &&
-          driveAccountDocument?.account?.state !== 'trial_ended' && (
-          <StorageFullBanner
-            currentPlan={storageUsage.plan_name}
-            onUpgrade={() => setShowUpgradeNudge(true)}
-            subscription={drivePlanDetails.subscription}
-          />
-        )}
-
-        {/* Pending shares banner */}
-        {!pendingSharesDismissed && (incomingInviteCount > 0 || pendingApprovalCount > 0) && (
-          <div className="px-5 py-2.5 border-b border-amber/30 border-l-4 border-l-amber bg-amber-bg flex flex-col gap-1.5 text-sm">
-            {incomingInviteCount > 0 && (
-              <div className="flex items-center gap-3">
-                <Icon name="share" size={14} className="text-amber-deep shrink-0" />
-                <span className="text-ink">
-                  You have {incomingInviteCount} file share{incomingInviteCount !== 1 ? 's' : ''} waiting
-                </span>
-                <BBButton
-                  size="sm"
-                  variant="amber"
-                  className="ml-auto gap-1.5"
-                  onClick={() => navigate('/shared?tab=pending')}
-                >
-                  View
-                </BBButton>
-                {pendingApprovalCount === 0 && (
-                  <button
-                    onClick={() => setPendingSharesDismissed(true)} aria-label="Dismiss notification" type="button"
-                    className="p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
-                  >
-                    <Icon name="x" size={14} />
-                  </button>
-                )}
-              </div>
-            )}
-            {pendingApprovalCount > 0 && (
-              <div className="flex items-center gap-3">
-                <Icon name="shield" size={14} className="text-amber-deep shrink-0" />
-                <span className="text-ink">
-                  {pendingApprovalCount} share{pendingApprovalCount !== 1 ? 's' : ''} waiting for your approval
-                </span>
-                <BBButton
-                  size="sm"
-                  variant="amber"
-                  className="ml-auto gap-1.5"
-                  onClick={() => navigate('/shared?tab=pending')}
-                >
-                  Review
-                </BBButton>
-                {incomingInviteCount === 0 && (
-                  <button
-                    onClick={() => setPendingSharesDismissed(true)} aria-label="Dismiss notification" type="button"
-                    className="p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
-                  >
-                    <Icon name="x" size={14} />
-                  </button>
-                )}
-              </div>
-            )}
-            {incomingInviteCount > 0 && pendingApprovalCount > 0 && (
-              <div className="flex justify-end -mt-1">
-                <button
-                  onClick={() => setPendingSharesDismissed(true)} aria-label="Dismiss notification" type="button"
-                  className="p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
-                >
-                  <Icon name="x" size={14} />
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Smart folder suggestion banner */}
-        {folderSuggestion && !currentParentId && (
-          <div className="px-5 py-3 border-b border-amber/30 border-l-4 border-l-amber bg-paper-2 flex items-center gap-3 text-sm">
-            <Icon name="folder" size={14} className="text-amber-deep shrink-0" />
-            <span className="flex-1 text-ink">
-              {folderSuggestion.type === 'images'
-                ? `You have ${folderSuggestion.count} images in your root folder. Create a Photos folder and move them there?`
-                : `You have ${folderSuggestion.count} PDFs in your root folder. Create a Documents folder and move them there?`}
-            </span>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <BBButton
-                size="sm"
-                variant="amber"
-                disabled={suggestionCreating}
-                onClick={handleAcceptFolderSuggestion}
-              >
-                {suggestionCreating
-                  ? 'Creating…'
-                  : folderSuggestion.type === 'images'
-                    ? 'Create Photos folder'
-                    : 'Create Documents folder'}
-              </BBButton>
-              <BBButton
-                size="sm"
-                variant="ghost"
-                disabled={suggestionCreating}
-                onClick={handleDismissFolderSuggestion}
-              >
-                Dismiss
-              </BBButton>
-            </div>
-          </div>
-        )}
-
-        {/* File list with upload zone. flex-1 + flex-col lets UploadZone fill the
-            remaining viewport height so dragging files to the empty area below
-            the list still triggers the drop zone. */}
-        <div className="flex-1 flex flex-col min-h-0">
-        <UploadZone onFiles={handleFilesSelected} onFolderFiles={handleFolderFilesSelected}>
-          <FileList
-            files={files}
-            loading={loading || syncHydrating}
-            parentId={currentParentId ?? null}
-            emptyState={
-              currentParentId ? (
-                <div className="flex flex-col items-center justify-center h-full text-center py-20">
-                  <div
-                    className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-                    style={{ background: 'var(--color-amber-bg)', border: '1.5px dashed var(--color-line-2)' }}
-                  >
-                    <Icon name="folder" size={24} className="text-amber-deep" />
-                  </div>
-                  <h2 className="text-[15px] font-semibold text-ink mb-1.5">This folder is empty</h2>
-                  <p className="text-[13px] text-ink-3 max-w-[340px] leading-relaxed mb-5">
-                    Drag files here or use the buttons below to add content to this folder.
-                  </p>
-                  <div className="flex gap-2">
-                    <BBButton size="md" variant="amber" onClick={browse} className="gap-1.5">
-                      <Icon name="upload" size={13} /> Upload files
-                    </BBButton>
-                    <NewMenu
-                      officeAvailable={officeAvailable}
-                      onNewFolder={openNewFolderDialog}
-                      onNewDocument={setNewDocType}
-                      disabled={isFrozen}
-                      disabledReason="Account is frozen"
-                      variant="ghost"
-                      size="md"
-                      align="center"
-                      testIdPrefix="empty-new-menu"
-                    />
-                  </div>
-                </div>
-              ) : (
-                <EmptyDrive
-                  onUpload={browse}
-                  onCreateFolder={openNewFolderDialog}
-                  // Task 1918 round 4: after an erase the drive is empty and everything is in the
-                  // trash; offer it all back here, where the owner looks first.
-                  notice={<RestoreFromEraseOffer className="mb-6" />}
-                  newMenu={
-                    <NewMenu
-                      officeAvailable={officeAvailable}
-                      onNewFolder={openNewFolderDialog}
-                      onNewDocument={setNewDocType}
-                      disabled={isFrozen}
-                      disabledReason="Account is frozen"
-                      variant="ghost"
-                      size="lg"
-                      align="center"
-                      testIdPrefix="empty-new-menu"
-                    />
-                  }
-                />
-              )
-            }
-            onNavigateFolder={handleFolderOpen}
-            selectedFileId={selectedFileId}
-            onSelectFile={(file) => file && setSelectedFileId(file.id)}
-            onSelectionChange={setExternalSelectedIds}
-            onDecryptedNamesChange={setExternalDecryptedNames}
-            onFileAction={handleFileAction}
-            onToggleStar={handleToggleStar}
-            onDropToFolder={handleDropToFolder}
-            onBulkTrash={handleBulkTrash}
-            onBulkMove={(ids) => { setBulkMoveIds(ids); setBulkMoveOpen(true) }}
-            onBulkShare={handleBulkShare}
-            onBulkDownload={handleBulkDownload}
-            bulkZipProgress={bulkZipProgress}
-            trashingIds={trashingIds}
-            starPulseId={starPulseId}
-            recentlyUploadedIds={recentlyUploaded}
-            onShowTrustDetails={(file) => setTrustFileId(file.id)}
-            myShares={myShares}
-            folderViewerCounts={folderViewerCounts}
-            uploadCards={
-              <UploadCards
-                uploads={uploads}
-                onCancel={handleCancelUpload}
-                onRetry={handleRetryUpload}
-              />
-            }
-          />
-        </UploadZone>
-        </div>
-
-        {/* Status bar */}
-        <div className={FILE_STATUS_BAR}>
-          <span className="font-mono">{files.length} item{files.length !== 1 ? 's' : ''}</span>
-          <span>·</span>
-          <EncryptionStatus unlocked={isUnlocked} error={!!cryptoError} />
-          <span className="ml-auto flex items-center gap-1.5">
-            <Icon name="cloud" size={12} />
-            Synced {syncedAgo}s ago
-          </span>
-        </div>
       {/* ─── Overlays ────────────────────────── */}
-      <NewFolderDialog
-        open={folderDialogOpen}
-        onClose={() => setFolderDialogOpen(false)}
-        onCreate={handleCreateFolder}
-      />
-      <NewDocumentDialog
-        type={newDocType}
-        existingNames={files.map((f) => externalDecryptedNames[f.id]).filter((n): n is string => !!n)}
-        // Every sibling name must be known before a name can be checked: the
-        // server cannot catch a clash between encrypted names (PR #117
-        // review). `undefined` = still decrypting; `null` = failed, which
-        // can never resolve, so it does not block.
+      <DriveCreationOverlays
+        folderDialogOpen={folderDialogOpen}
+        onCloseFolderDialog={() => setFolderDialogOpen(false)}
+        onCreateFolder={handleCreateFolder}
+        newDocType={newDocType}
+        existingDocNames={files.map((f) => externalDecryptedNames[f.id]).filter((n): n is string => !!n)}
         namesReady={!loading && files.every((f) => externalDecryptedNames[f.id] !== undefined)}
-        onClose={() => setNewDocType(null)}
-        onCreate={handleCreateDocument}
+        onCloseNewDocument={() => setNewDocType(null)}
+        onCreateDocument={handleCreateDocument}
+        backupsDeleteRequest={backupsDeleteRequest}
+        files={files}
+        isBackupsRoot={isBackupsRoot}
+        summarizeBackups={summarizeBackups}
+        onCancelBackups={() => setBackupsDeleteRequest(null)}
+        onConfirmBackups={(req) => {
+          setBackupsDeleteRequest(null)
+          if (req.kind === 'single') performSingleTrash(req.file)
+          else performBulkTrash(req.ids)
+        }}
+        pendingConflict={pendingConflict}
+        onConflictReplace={handleConflictReplace}
+        onConflictKeepBoth={handleConflictKeepBoth}
+        onConflictCancel={handleConflictCancel}
       />
 
-      {/* Extra guard before trashing the device-backup root (task 0838) */}
-      {backupsDeleteRequest && (() => {
-        const backupsId =
-          backupsDeleteRequest.kind === 'single'
-            ? backupsDeleteRequest.file.id
-            : files.find((f) => backupsDeleteRequest.ids.includes(f.id) && isBackupsRoot(f))?.id ?? null
-        const summary = backupsId ? summarizeBackups(backupsId) : { deviceCount: 0, itemCount: 0 }
-        return (
-          <DeleteBackupsDialog
-            open
-            deviceCount={summary.deviceCount}
-            itemCount={summary.itemCount}
-            onCancel={() => setBackupsDeleteRequest(null)}
-            onConfirm={() => {
-              const req = backupsDeleteRequest
-              setBackupsDeleteRequest(null)
-              if (req.kind === 'single') performSingleTrash(req.file)
-              else performBulkTrash(req.ids)
-            }}
-          />
-        )
-      })()}
-
-      {/* Duplicate-file conflict dialog — shown before uploading when names collide */}
-      <DuplicateFileDialog
-        open={pendingConflict !== null}
-        conflicts={pendingConflict?.conflicts ?? []}
-        onReplace={handleConflictReplace}
-        onKeepBoth={handleConflictKeepBoth}
-        onCancel={handleConflictCancel}
-      />
-
-      {/* Upload progress — inline cards inside the file list (spec 024 §4).
-          The floating UploadProgress panel is replaced by UploadCards rendered
-          via the FileList uploadCards prop. Paused-upload summary is still shown
-          in the status bar (see below). */}
-
-      <FileDetailsPanel
-        open={selectedFile !== null}
-        onClose={() => setSelectedFileId(null)}
-        file={selectedFile ? buildDetailsMeta(selectedFile) : null}
-        activity={fileActivity}
-        onDownload={() => {
-          if (!selectedFile) return
-          if (selectedFile.is_folder) handleBulkDownload([selectedFile.id])
-          else handleFileDownload(selectedFile)
+      <DriveFileOverlays
+        selectedFile={selectedFile}
+        onCloseDetails={() => setSelectedFileId(null)}
+        buildDetailsMeta={buildDetailsMeta}
+        fileActivity={fileActivity}
+        onDownloadSelected={(file) => {
+          if (file.is_folder) handleBulkDownload([file.id])
+          else void handleFileDownload(file)
         }}
-        onShare={() => {
-          if (selectedFile) {
-            setShareFileId(selectedFile.id)
-            setSelectedFileId(null)
-          }
+        onShareSelected={(file) => {
+          setShareFileId(file.id)
+          setSelectedFileId(null)
         }}
-        onStar={() => selectedFile && handleToggleStar(selectedFile.id)}
-        isStarred={selectedFile?.is_starred ?? false}
-        onMove={() => {
-          if (selectedFile) {
-            setMoveFileId(selectedFile.id)
-            setSelectedFileId(null)
-          }
+        onStarSelected={(file) => void handleToggleStar(file.id)}
+        onMoveSelected={(file) => {
+          setMoveFileId(file.id)
+          setSelectedFileId(null)
         }}
-        onTrash={() => {
-          if (selectedFile) {
-            handleFileAction('trash', selectedFile)
-            setSelectedFileId(null)
-          }
+        onTrashSelected={(file) => {
+          handleFileAction('trash', file)
+          setSelectedFileId(null)
         }}
-        onVersionHistory={() => {
-          if (selectedFile && !selectedFile.is_folder) {
-            setVersionFileId(selectedFile.id)
-            setSelectedFileId(null)
-          }
+        onVersionHistorySelected={(file) => {
+          if (file.is_folder) return
+          setVersionFileId(file.id)
+          setSelectedFileId(null)
         }}
-        onPreview={() => {
-          if (selectedFile && !selectedFile.is_folder) {
-            openPreview(selectedFile)
-            setSelectedFileId(null)
-          }
+        onPreviewSelected={(file) => {
+          if (file.is_folder) return
+          openPreview(file)
+          setSelectedFileId(null)
         }}
-        onNoteUpdated={(fid, enc) => {
+        onNoteUpdated={(fileId, encrypted) => {
           setFiles((prev) =>
-            prev.map((f) => (f.id === fid ? { ...f, note_encrypted: enc } : f)),
+            prev.map((f) => (f.id === fileId ? { ...f, note_encrypted: encrypted } : f)),
           )
         }}
+        previewFile={previewFile}
+        externalDecryptedNames={externalDecryptedNames}
+        previewEditFileId={previewEditFileId}
+        onClosePreview={() => {
+          setPreviewEditFileId(null)
+          closePreview()
+        }}
+        files={files}
+        onOpenPreview={openPreview}
+        onDeletePreview={performSingleTrash}
+        trustFileId={trustFileId}
+        onCloseTrust={() => setTrustFileId(null)}
+        displayName={displayName}
+        shareFileId={shareFileId}
+        shareFile={shareFile}
+        onCloseShare={() => setShareFileId(null)}
+        onShareCreated={() => {
+          // Advance onboarding context (first_share_done might now be true)
+          void refreshOnboarding()
+          // Refresh share indicators on file rows.
+          void fetchMyShares()
+        }}
+        bundleFiles={bundleFiles}
+        onCloseBundle={() => setBundleFileIds([])}
+        manageSharesFileId={manageSharesFileId}
+        onCloseManageShares={() => setManageSharesFileId(null)}
+        myShares={myShares}
+        currentParentId={currentParentId ?? null}
+        onCreateNewShare={(file) => setShareFileId(file.id)}
+        onSharesRevoked={() => { void fetchMyShares() }}
+        moveFileId={moveFileId}
+        moveFile={moveFile}
+        onCloseMove={() => setMoveFileId(null)}
+        onMoveConfirm={handleMoveConfirm}
+        bulkMoveOpen={bulkMoveOpen}
+        bulkMoveIds={bulkMoveIds}
+        onCloseBulkMove={() => { setBulkMoveOpen(false); setBulkMoveIds([]) }}
+        onBulkMoveConfirm={handleBulkMoveConfirm}
+        renameFileId={renameFileId}
+        renameFile={renameFile}
+        onCloseRename={() => setRenameFileId(null)}
+        onRenameConfirm={handleRenameConfirm}
+        renameSiblingNames={renameSiblingNames}
+        versionFileId={versionFileId}
+        onCloseVersionHistory={() => setVersionFileId(null)}
+        onVersionRestored={fetchFiles}
       />
 
-      {/* Full-screen file preview overlay */}
-      {previewFile && (() => {
-        const previewIdx = files.findIndex((f) => f.id === previewFile.id)
-        const hasPrev = previewIdx > 0
-        const hasNext = previewIdx < files.length - 1
-        return (
-          <FilePreview
-            file={previewFile}
-            decryptedName={externalDecryptedNames[previewFile.id] ?? undefined}
-            onClose={() => {
-              setPreviewEditFileId(null)
-              closePreview()
-            }}
-            startInEditMode={previewEditFileId === previewFile.id}
-            folderId={currentParentId ?? undefined}
-            onDelete={(f) => performSingleTrash(f)}
-            hasPrev={hasPrev}
-            hasNext={hasNext}
-            onPrev={hasPrev ? () => openPreview(files[previewIdx - 1]) : undefined}
-            onNext={hasNext ? () => openPreview(files[previewIdx + 1]) : undefined}
-          />
-        )
-      })()}
-
-      <TrustDetailsPanel
-        open={trustFileId !== null}
-        onClose={() => setTrustFileId(null)}
-        file={(() => {
-          const f = files.find((x) => x.id === trustFileId)
-          if (!f) return null
-          const trust: TrustFile = {
-            id: f.id,
-            name: displayName(f),
-            sizeBytes: f.size_bytes,
-            createdAt: f.created_at,
-            cipher: 'AES-256-GCM',
-            region: 'Europe',
-            country: fileStorageCountry(f) ?? undefined,
-          }
-          return trust
-        })()}
-      />
-
-      {shareFile && (
-        <ShareDialog
-          open={shareFileId !== null}
-          onClose={() => setShareFileId(null)}
-          fileId={shareFile.id}
-          fileName={displayName(shareFile)}
-          fileSize={shareFile.size_bytes}
-          isFolder={shareFile.is_folder}
-          file={shareFile}
-          onShareCreated={() => {
-            // Advance onboarding context (first_share_done might now be true)
-            void refreshOnboarding()
-            // Refresh share indicators on file rows.
-            void fetchMyShares()
-          }}
-        />
-      )}
-
-      {/* Bundle share dialog (task 0417): ONE link over the selected file set. */}
-      {bundleFiles.length > 1 && (
-        <ShareDialog
-          open={true}
-          onClose={() => setBundleFileIds([])}
-          fileId={bundleFiles[0].id}
-          fileName={bundleFiles[0].name}
-          fileSize={bundleFiles[0].size}
-          bundleFiles={bundleFiles}
-          onShareCreated={() => {
-            void refreshOnboarding()
-            void fetchMyShares()
-          }}
-        />
-      )}
-
-      {manageSharesFileId && (() => {
-        const file = files.find((f) => f.id === manageSharesFileId)
-        if (!file) return null
-        return (
-          <ShareInfoModal
-            isOpen={true}
-            onClose={() => setManageSharesFileId(null)}
-            fileId={file.id}
-            fileName={displayName(file)}
-            myShares={myShares}
-            onCreateNew={() => setShareFileId(file.id)}
-            onRevoked={() => { void fetchMyShares() }}
-          />
-        )
-      })()}
-
-      {moveFile && (
-        <MoveModal
-          open={moveFileId !== null}
-          onClose={() => setMoveFileId(null)}
-          items={[{
-            id: moveFile.id,
-            name: displayName(moveFile),
-            isFolder: moveFile.is_folder,
-          }]}
-          mode="move"
-          onConfirm={handleMoveConfirm}
-        />
-      )}
-
-      {bulkMoveOpen && bulkMoveIds.length > 0 && (
-        <MoveModal
-          open={bulkMoveOpen}
-          onClose={() => { setBulkMoveOpen(false); setBulkMoveIds([]) }}
-          items={files
-            .filter((f) => bulkMoveIds.includes(f.id))
-            .map((f) => ({
-              id: f.id,
-              name: displayName(f),
-              isFolder: f.is_folder,
-            }))}
-          mode="move"
-          onConfirm={handleBulkMoveConfirm}
-        />
-      )}
-
-      <RenameDialog
-        open={renameFileId !== null}
-        onClose={() => setRenameFileId(null)}
-        currentName={renameFile ? displayName(renameFile) : ''}
-        onRename={handleRenameConfirm}
-        existingNames={renameSiblingNames}
-      />
-
-      {versionFileId && (() => {
-        const f = files.find((x) => x.id === versionFileId)
-        return (
-          <VersionHistory
-            open={true}
-            onClose={() => setVersionFileId(null)}
-            fileId={versionFileId}
-            fileName={f ? displayName(f) : ''}
-            nameEncrypted={f?.name_encrypted ?? ''}
-            mimeType={f?.mime_type ?? undefined}
-            file={f}
-            onVersionRestored={fetchFiles}
-          />
-        )
-      })()}
-
-      <WelcomeTour
-        open={tourOpen}
-        // Task 1526: without this the tour's "Upload a file" step had no
-        // handler (the step has no href) and the button did nothing.
-        onUpload={browse}
-        completedSteps={tourCompletedForDisplay}
-        // Task 1527: used only by the 'share'/'device' steps now (no cheap
-        // real-state signal exists for either) to hide the board while the
-        // user acts on the destination page — never sets seen:true, so it
-        // reappears on the next drive mount. The 'upload' step is marked
-        // done from queueResolvedUploads instead; the 'security' step is
-        // derived live from user.totp_enabled (tourCompletedForDisplay,
-        // above) and never reaches here.
-        onCompleteStep={(id) => markTourStepDone(id, { hideBoard: true })}
-        onClose={() => {
+      <DriveGuideOverlays
+        tourOpen={tourOpen}
+        onCloseTour={() => {
           setTourOpen(false)
           // Skip for now / Close is one of the two places allowed to set
           // seen:true (task 1527 fix-round) — update the mirror ref too so
@@ -3374,47 +2948,18 @@ export function Drive() {
             completed: [...tourCompleted],
           }).catch(() => {})
         }}
+        onUpload={browse}
+        tourCompletedForDisplay={tourCompletedForDisplay}
+        markTourStepDone={markTourStepDone}
+        showUpgradeNudge={showUpgradeNudge}
+        storageUsage={storageUsage}
+        subscription={drivePlanDetails.subscription ?? null}
+        onCloseUpgrade={() => setShowUpgradeNudge(false)}
+        previewOpen={previewFile !== null}
+        showShortcuts={showShortcuts}
+        onToggleShortcuts={() => setShowShortcuts((v) => !v)}
+        onCloseShortcuts={() => setShowShortcuts(false)}
       />
-
-      {/* First-run spotlight tour — 3 steps: upload, share, mobile */}
-      <OnboardingTour />
-
-      {/* Upgrade nudge modal — shown at >= 80% quota, once per session */}
-      {showUpgradeNudge && storageUsage && (
-        <UpgradeNudgeModal
-          usedBytes={storageUsage.used_bytes}
-          quotaBytes={storageUsage.plan_limit_bytes}
-          currentPlan={storageUsage.plan_name}
-          subscription={drivePlanDetails.subscription}
-          onClose={() => setShowUpgradeNudge(false)}
-        />
-      )}
-
-      {/* Keyboard shortcuts help button — bottom-right FAB.
-          Hidden while a file preview is open: it's `position: fixed`
-          (viewport-relative, z-40) so it floats ABOVE the preview overlay
-          (z-30) regardless of DOM nesting — inside the task-1563 editor,
-          whose status bar spans the full width with no right rail to push
-          it clear, this opaque circle visually painted over the status
-          bar's rightmost text ("saved as version N · HH:MM" truncated to
-          "versi…", task 1563 PR #103 review). The preview is already a
-          full-screen surface with its own back control, so the global
-          shortcuts FAB has nothing useful to float over here anyway. */}
-      {!previewFile && (
-        <button
-          type="button"
-          aria-label="Keyboard shortcuts"
-          title="Keyboard shortcuts (?)"
-          onClick={() => setShowShortcuts((v) => !v)}
-          className="hidden sm:flex fixed right-5 z-40 items-center justify-center w-8 h-8 rounded-full bg-paper border border-line-2 shadow-2 text-ink-3 hover:text-ink hover:border-line hover:shadow-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
-          style={{ bottom: 'max(1.25rem, env(safe-area-inset-bottom, 1.25rem))' }}
-        >
-          <span className="text-sm font-mono font-semibold leading-none select-none">?</span>
-        </button>
-      )}
-
-      {/* Shortcuts cheatsheet — also opens on '?' key via GlobalShortcuts in app.tsx */}
-      <ShortcutsCheatsheet open={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </DriveLayout>
   )
 }
