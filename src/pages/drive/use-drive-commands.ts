@@ -115,7 +115,6 @@ export function useDriveCommands(params: DriveCommandsParams) {
         seal: encryptFileMetadata,
       })
 
-      // Update the encrypted search index with the new folder
       const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
       indexFile(result.id, {
         name,
@@ -261,7 +260,6 @@ export function useDriveCommands(params: DriveCommandsParams) {
 
     setSuggestionCreating(true)
     try {
-      // Create the folder
       const folderId = crypto.randomUUID()
       const folderKey = await getFileKey(folderId)
       const enc = await encryptFileMetadata(folderKey, folderName)
@@ -395,7 +393,6 @@ export function useDriveCommands(params: DriveCommandsParams) {
 
   const selectedFile = files.find((f) => f.id === selectedFileId) ?? null
 
-  // Load activity feed when the details panel opens for a file
   useEffect(() => {
     if (!selectedFileId || !selectedFile) {
       setFileActivity([])

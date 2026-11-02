@@ -138,7 +138,6 @@ export function useDriveUploads(params: DriveUploadsParams) {
         },
       ])
 
-      // Remove from paused list immediately
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== match.fileId))
 
       // L13 (SF-0001): only a session this client minted may be resumed. A
@@ -604,7 +603,6 @@ export function useDriveUploads(params: DriveUploadsParams) {
       }, undefined, undefined, abortController.signal, { conflictCreated, replaceOf })
       const uploadedFileId = uploadedFile.id
 
-      // Update the encrypted search index with the new file
       const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
       indexFile(uploadedFileId, {
         name: file.name,
@@ -625,7 +623,6 @@ export function useDriveUploads(params: DriveUploadsParams) {
       // below will make storageUsage reflect this for real; drop the
       // reservation that stood in for it until now (task 1544 finding 2a).
       quotaLedgerRef.current.release(uploadId)
-      // Remove from paused list if this was a resume
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
       // Notify sidebar badge that a file was uploaded
@@ -763,7 +760,6 @@ export function useDriveUploads(params: DriveUploadsParams) {
     const folderPaths = new Set<string>()
     for (const ff of folderFiles) {
       const parts = ff.relativePath.split('/')
-      // Build all ancestor folder paths (excluding the filename itself)
       for (let i = 1; i < parts.length; i++) {
         folderPaths.add(parts.slice(0, i).join('/'))
       }

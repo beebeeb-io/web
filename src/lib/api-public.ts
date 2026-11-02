@@ -107,7 +107,7 @@ export async function getActiveIncidents(): Promise<ActiveIncident[]> {
   const res = await fetch(`${STATUS_URL}/api/v1/status/incidents`)
   if (!res.ok) return []
   const body = (await res.json()) as { incidents: ActiveIncident[] }
-  // Filter to only non-resolved, non-draft incidents
+  // Resolved, completed and draft incidents are history; the banner is current status only.
   return (body.incidents ?? []).filter(
     (i) => i.status !== 'resolved' && i.status !== 'completed' && i.status !== 'draft',
   )

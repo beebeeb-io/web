@@ -373,7 +373,6 @@ export function useDriveActions(params: DriveActionsParams) {
       return
     }
 
-    // Check size warning before starting
     const nonFolderItems = selectedItems.filter(f => !f.is_folder)
     const estimatedBytes = nonFolderItems.reduce((s, f) => s + (f.size_bytes ?? 0), 0)
     if (estimatedBytes > ZIP_SIZE_WARNING_BYTES) {
