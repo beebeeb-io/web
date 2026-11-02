@@ -12,17 +12,19 @@
 
 ## Preview copy
 - Every string in the previews and docs is shipped copy from `src/` (checked with grep), so the design agent imitates real wording. Two invented lines were caught and replaced: the activity-tracking description (the shipped setting does log file activity) and an encryption tagline. Re-check copy against `src/` when editing a preview.
+- The product names in the `BBProductIcon` / `BBProductLockup` previews (Drive, Pass, VPN, Mail, Chat) come from the lockup spec (`design/system/cards/products-lockups.html`), not from `src/`: the web app ships Drive only. The lockup header's "Share" is shipped copy.
 - Billing chips follow `statusVariant` in `src/components/billing/TransactionList.tsx`: paid green, pending/open amber, failed red.
 
 ## Known render warns
 - Skeleton cards are low-contrast (`bg-paper-2` on `bg-paper`, `animate-pulse`); that is the shipped look, not a blank render.
 - `BBButton` and `BBInput` "Disabled" cells look the same as enabled: neither component has disabled styling in code. Graded good as a faithful render; the gap is a product finding (see below).
-- Seven wide components use `cardMode: column` (the row skeletons, CardSkeleton, PhotoGroupSkeleton, Icon, BBLogo).
+- Nine wide components use `cardMode: column` (the row skeletons, CardSkeleton, PhotoGroupSkeleton, Icon, BBLogo, BBProductIcon, BBProductLockup).
 
 ## Findings in the shipped code (not fixed here)
 - `BBButton` and `BBInput` have no disabled styles.
-- The `key` icon draws a stray line (design PR beebeeb-io/workspace#488, `_shots/defect-key-icon-split.png`).
+- ~~The `key` icon draws a stray line~~ (design PR beebeeb-io/workspace#488, `_shots/defect-key-icon-split.png`): fixed in the shared `Icon` by task 2322 (one `<path>` per glyph; the split at `z` cut the relative `m0 0` loose from its start point). The web app's own `src/components/icons.tsx` is a divergent copy with the same split and still draws the line; it is not part of the sync and was not touched.
 - `BBLogo` renders the wordmark as live text, while the brand rule says the mark comes from `repos/core/brand/` as paths.
+- `BBProductIcon` / `BBProductLockup` (task 2322) restate the geometry of `repos/core/brand/products/build.py` as constants; the web test run does not read core, so a change to the generator needs the same numbers here (checked once, 2026-11-02: all 10 icons pixel-identical at 512).
 
 ## Re-sync risks
 - `buildCmd` pins Tailwind 4.3.0 by hand: when `bun.lock` moves, update it, or the compiled classes drift from the product.

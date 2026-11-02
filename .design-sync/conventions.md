@@ -3,7 +3,7 @@
 Beebeeb is end-to-end encrypted cloud storage made in Europe. Drive, Pass, VPN, Mail and Chat are ONE system: the same tokens, components and single Amber accent. A product differs by its name and icon only: no per-product colour, typeface, radius or shadow.
 
 ## Setup
-- No provider or wrapper. `styles.css` carries the tokens, the fonts (Inter 400-700, JetBrains Mono 400-500) and every utility class the product uses. Components are on `window.Beebeeb` (`BBButton`, `BBInput`, `BBChip`, `BBCheckbox`, `BBToggle`, `BBLogo`, `Icon`, the skeletons).
+- No provider or wrapper. `styles.css` carries the tokens, the fonts (Inter 400-700, JetBrains Mono 400-500) and every utility class the product uses. Components are on `window.Beebeeb` (`BBButton`, `BBInput`, `BBChip`, `BBCheckbox`, `BBToggle`, `BBLogo`, `BBProductIcon`, `BBProductLockup`, `Icon`, the skeletons).
 - Put `bg-paper text-ink font-sans` on the page root. Dark mode: add the class `dark` to a root element; every token switches under it. Never write `dark:` variants or colour literals.
 - Only classes compiled into `styles.css` resolve. For anything else, use the CSS variables inline: `style={{ width: 420, boxShadow: 'var(--shadow-3)' }}`.
 
@@ -26,7 +26,10 @@ Amber (`--color-amber`) means encryption state and the one primary action of a v
 Inter (`font-sans`) for what people read. JetBrains Mono (`font-mono`) for what machines produce: sizes, dates, IDs, hashes, speeds, key fragments.
 
 ## Components
-Read each component's `.prompt.md` and `.d.ts` before using it. Two shipped behaviours to know: `BBButton` and `BBInput` have no disabled styling, so pair `disabled` with a label that says what is happening ("Saving…", "Deleting…"); `BBLogo` is the text wordmark `beebeeb.io` with an Amber `.io`. A product lockup puts the product name in Inter next to it; never recolour it.
+Read each component's `.prompt.md` and `.d.ts` before using it. Two shipped behaviours to know: `BBButton` and `BBInput` have no disabled styling, so pair `disabled` with a label that says what is happening ("Saving…", "Deleting…"); `BBLogo` is the text wordmark `beebeeb.io` with an Amber `.io`; never recolour it.
+
+## Products
+Any product mark (Drive, Pass, VPN, Mail, Chat) is `BBProductIcon` (the icon alone) or `BBProductLockup` (the icon plus "Beebeeb" and the product name). Never draw a product tile, glyph or name by hand and never recolour one: every product uses the same pattern, the Beebeeb "b" on the tile with the product's glyph on a round badge, and differs by that glyph and its name only. Pick `tone="dark"` on dark surfaces. The shield is for encryption state only, so VPN's glyph is the globe.
 
 ## Copy
 Honest over reassuring, sentence case, no emojis. Say "Europe" or "the EU"; never name a hosting provider or a city, and never show a location that is not live. Errors say what happened and what to do: "Wrong password. Try again."

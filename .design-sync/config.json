@@ -24,6 +24,12 @@
     "BBLogo": {
       "cardMode": "column"
     },
+    "BBProductIcon": {
+      "cardMode": "column"
+    },
+    "BBProductLockup": {
+      "cardMode": "column"
+    },
     "Icon": {
       "cardMode": "column"
     },
