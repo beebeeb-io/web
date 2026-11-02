@@ -18,7 +18,7 @@ import { computeFingerprint, findByFingerprint, planResume, pausedRowCheckFailed
 import { hashFile, checkDuplicate, recordUpload } from '../../lib/upload-dedup'
 import { encryptedUpload } from '../../lib/encrypted-upload'
 import { encryptedDownload } from '../../lib/encrypted-download'
-import { createOwnerFolder } from '../../lib/owner-upload-key'
+import { createOwnerFolder, publishOrDeferOwnerUpload } from '../../lib/owner-upload-key'
 import { encryptFileMetadata, serializeEncryptedBlob } from '../../lib/crypto'
 import { getFile } from '../../lib/api'
 import { assertCurrentVersionWritable } from '../../lib/owner-write-guard'
@@ -608,6 +608,17 @@ export function useDriveUploads(params: DriveUploadsParams) {
         newItemId: identity ? { idText: identity.idText, tag: identity.tag } : undefined,
       })
       const uploadedFileId = uploadedFile.id
+      // L15 (2275): publish only from an anchored call site — this tab's own
+      // click trail must contain the destination; otherwise the key is
+      // deferred (localStorage) and no wrap is sent on trust of parent_id.
+      if (identity && currentParentId) {
+        await publishOrDeferOwnerUpload({
+          masterKey: getMasterKey(),
+          parentId: currentParentId,
+          fileId: uploadedFileId,
+          fileKey,
+        }).catch(() => {})
+      }
 
       const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
       indexFile(uploadedFileId, {

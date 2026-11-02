@@ -14,6 +14,7 @@ import { adoptForeignTreeBeforeMove, assertNoSeenCustodyAbove, folderKeyForRoot,
 import { deriveFileKey, zeroize } from './crypto'
 import { sharedFoldersEnabled } from './use-feature-flag'
 import { withNetworkRetry } from './net-retry'
+import { canPublishAnchored, deferPublish, localStorageQueue } from './publish-anchor'
 
 /**
  * Publish the wrap of an item the owner just added under its shared root: a
@@ -196,6 +197,33 @@ async function adoptBeforeLeavingRoot(args: {
     if (!source || source === destinationRoot) continue
     await adoptForeignTreeBeforeMove({ masterKey: args.masterKey, rootId: source, itemIds: [id] })
   }
+}
+
+/**
+ * L15 (2275) publish-or-defer for an anchored create. The destination must
+ * have a proven custody root and an L7 format; only this tab's own click trail
+ * may publish. Otherwise the (item, parent, root) is deferred for 7 days and
+ * nothing is sent now.
+ */
+export async function publishOrDeferOwnerUpload(args: {
+  masterKey: Uint8Array
+  parentId: string
+  fileId: string
+  fileKey: Uint8Array
+  isFolder?: boolean
+}): Promise<'published' | 'deferred' | 'not_published'> {
+  const { masterKey, parentId, fileId, fileKey, isFolder = false } = args
+  if (!(await sharedFoldersEnabled())) return 'not_published'
+  const root = await sharedRootFor(parentId, parentId)
+  if (!root) return 'not_published'
+  if ((await folderWrapFormat(root, parentId)) !== 'l7') return 'not_published'
+  if (canPublishAnchored(parentId, root)) {
+    await publishOwnerUploadKey(masterKey, parentId, fileId, fileKey, isFolder)
+    return 'published'
+  }
+  const store = localStorageQueue()
+  if (store) deferPublish(store, { id: fileId, parentId, rootId: root, at: Date.now(), own: true })
+  return 'deferred'
 }
 
 async function publishMovedItems(

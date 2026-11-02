@@ -58,9 +58,14 @@ describe('final review P2: a failed flag read after the upload committed', () =>
     expect(cap.ownerKeys).toHaveLength(0)
   })
 
-  test('the same, into a folder seen with custody: the publish still fails (never a silent skip under custody)', async () => {
+  // Contract 2275 L15: "No publish hook in an upload sink" — the upload path
+  // never publishes, so a custody folder cannot make it fail. The anchored call
+  // site (`publishOrDeferOwnerUpload`) still refuses to skip under custody when
+  // its own flag read fails, which this checks.
+  test('a custody folder no longer fails the upload: the sink does not publish at all', async () => {
     markCustodySeen(PARENT)
-    await expect(upload(PARENT)).rejects.toThrow("This folder's keys are unavailable")
+    const uploaded = await upload(PARENT)
+    expect(uploaded.id).toBe('proposed')
     expect(cap.ownerKeys).toHaveLength(0)
   })
 })
