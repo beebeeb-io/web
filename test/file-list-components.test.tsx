@@ -217,7 +217,9 @@ describe('FileListHeader', () => {
   })
 
   test('the select-all box is drawn only when there are rows', () => {
-    expect(html(<FileListHeader {...base} />)).toContain('type="checkbox"')
-    expect(html(<FileListHeader {...base} totalCount={0} />)).not.toContain('type="checkbox"')
+    // BBCheckbox is a role="checkbox" button (not a native input) — the same
+    // control FileList drew before the split.
+    expect(html(<FileListHeader {...base} />)).toContain('role="checkbox"')
+    expect(html(<FileListHeader {...base} totalCount={0} />)).not.toContain('role="checkbox"')
   })
 })

@@ -100,6 +100,7 @@ export function SharedLinkCard({
             type="button"
             onClick={(e) => { e.stopPropagation(); onCopy() }}
             title="Copy link"
+            aria-label="Copy link"
             className="shrink-0 p-1.5 rounded-md text-ink-3 hover:text-ink hover:bg-paper-3 transition-colors cursor-pointer md:opacity-0 md:group-hover:opacity-100"
           >
             <Icon name="copy" size={13} />
