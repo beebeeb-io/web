@@ -63,6 +63,14 @@ test/ (bun test, KAT vectors)   e2e/ (Playwright)   scripts/ (test-order-guard, 
   (`test/thumbnail-kat.test.ts`, `share-wrap-kat.test.ts`, `search-index-kat.test.ts`); keep them green.
 - Brand: amber ONLY for encryption state and primary CTAs; mono for machine text; no emojis in UI; honest copy ("We can't recover this").
 
+## Never break
+
+The rules whose breakage costs data, a key, a credential or a user. One line each; the detail is in `docs/agent-notes.md`.
+
+- When core's WASM surface changes you MUST regenerate + commit this package or web won't see it (`packages/beebeeb-wasm`, `make wasm-sync`).
+- `maybeRestart()` skips the 256 MiB worker recycle while `liveEncryptorCount() > 0`, so an in-flight upload is never orphaned.
+- Folder shares: active invites with no usable owner blob abort (never mint); only an authentication failure skips a blob (task 2133).
+
 ## How we work
 
 Workspace `CLAUDE.md` → "How we work" is the rule set. Here: the truth lines above; design before code (`../../design/hifi/*.jsx` wins over
