@@ -1,0 +1,8 @@
+/* The stylesheet Claude Design renders with: the shared tokens compiled by the web app's own
+   Tailwind (4.3.0, bun.lock), over the shared components, the web app's sources and the authored
+   previews, so a design gets the same utility classes the product ships. */
+@import "tailwindcss";
+@import "../packages/shared/src/tokens.css";
+@source "../packages/shared/src";
+@source "../src";
+@source "./previews";
