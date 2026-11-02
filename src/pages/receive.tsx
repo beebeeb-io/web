@@ -50,6 +50,7 @@ import {
   transferGenerateKeypair,
 } from '../lib/crypto'
 import { useAuth } from '../lib/auth-context'
+import { formatBinarySize as formatBytes } from '../lib/format'
 import { useKeys } from '../lib/key-context'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { userFriendlyError } from '../lib/user-friendly-error'
@@ -811,13 +812,6 @@ function Spinner({ large = false }: { large?: boolean }) {
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
   )
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
 function escapeHtml(s: string): string {

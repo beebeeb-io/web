@@ -2,18 +2,12 @@
 import { useEffect, useState } from 'react'
 import { Icon, BBButton } from '@beebeeb/shared'
 import { readZipListing, type ZipListing } from '../../lib/zip-listing'
+import { formatBinarySize as formatSize } from '../../lib/format'
 import { UnsupportedPreview } from './unsupported-preview'
 
 interface ZipListingPreviewProps {
   blob: Blob
   filename: string
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
 /**

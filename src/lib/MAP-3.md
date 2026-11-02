@@ -41,7 +41,7 @@ Modules 94–133, sorted by path.
 | `photo-library.ts` | ─── Photo-library heuristics (cover.jpg stopgap) ────────────────────────── The Photos view shows every file the client flagged `is_media` a | — |
 | `plan-constants.ts` | Plan constants — single source of truth for plan metadata, pricing, and ordering. | — |
 | `plan-intent.ts` | Plan intent — the plan + billing cycle a visitor picked on the marketing site before they had an account (flow-4 money flow, P1). | — |
-| `plan-pricing.ts` | Plan pricing utilities — delegates to WASM core (beebeeb-types::quota). | ensureWasm |
+| `plan-pricing.ts` | Plan pricing utilities — delegates to WASM core (beebeeb-types::quota). | ensureWasm, formatStorageSI, isWasmReady |
 | `post-reset-lock.ts` | Task 1704 SLICE 2 — the post-reset locked-device signal. | — |
 | `preview-load-policy.ts` | LD-0001 §4 row 5 — the whole-file media cap. | — |
 | `preview.ts` | Decides whether a MIME type can be previewed in the app. | — |

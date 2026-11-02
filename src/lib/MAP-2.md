@@ -18,7 +18,7 @@ Modules 50–93, sorted by path.
 | `device-provision-logic.ts` | ─── Device provision — pure decision logic ───────── Factored out of components/device-provision.tsx (a React component — no DOM/React-rende | — |
 | `display-context.tsx` | Display preferences (font size, sidebar density) and their provider. | — |
 | `drive-data-context.tsx` | Shares the drive's file data with panels rendered outside the drive page. | — |
-| `dropbox-import.ts` | Dropbox import helpers — pure async functions, no React. | — |
+| `dropbox-import.ts` | Dropbox import helpers — pure async functions, no React. | formatBinarySize |
 | `editor-conflict.ts` | Save-conflict decision logic for the in-browser text editor (task 1563). | — |
 | `encrypted-download.ts` | ─── Encrypted download ──────────────────────────── Downloads encrypted file data, decrypts chunks + filename, triggers browser download. | UnverifiedFileMetadataError, pushHeadWithRepair, type ContentDecryptor |
 | `encrypted-upload.ts` | Encrypts and uploads one file, reporting honest progress and shared-folder context. | — |
@@ -40,7 +40,7 @@ Modules 50–93, sorted by path.
 | `folder-link-types.ts` | Task 2237b — typed surface for shared-folder links. | — |
 | `folder-share-crypto.ts` | Folder-key crypto for shared folders: generate, wrap for recipients, seal custody. | generateLinkKey, linkKeyFragment, ownerWrappedLinkKey, wrapFolderKeyForLink |
 | `folder-upgrade.ts` | Frozen contract 2237 §2 (lead, 2026-10-28): a folder that already holds shared_folder_keys rows and has NO custody record cannot get fresh c | — |
-| `format-size.ts` | One binary-unit size format for preview surfaces (LD-0001 PR-C review, reuse item): the file info rail and the progress copy share this, so | — |
+| `format-size.ts` | One binary-unit size format for preview surfaces (LD-0001 PR-C review, reuse item): the file info rail and the progress copy share this, so | formatBinarySize |
 | `format.ts` | Formatting helpers for bytes, storage, dates, and relative time. | — |
 | `google-import.ts` | Google Drive import helpers — pure async functions, no React. | — |
 | `guest-actor-name.ts` | Task 2237b — the guest's display name. | — |

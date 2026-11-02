@@ -36,13 +36,7 @@ function timeAgo(dateStr: string | null): string {
   return `${weeks}w ago`
 }
 
-function formatBytes(bytes: number | null): string {
-  if (bytes == null || bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1000)), units.length - 1)
-  const value = bytes / Math.pow(1000, i)
-  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`
-}
+import { formatSize } from '../lib/format'
 
 function platformLabel(platform: string): string {
   const map: Record<string, string> = {
@@ -607,12 +601,12 @@ export function DevicesPage() {
                                 )}
                                 {session.bytes_synced != null && (
                                   <span>
-                                    {formatBytes(session.bytes_synced)}
-                                    {session.bytes_total != null && ` / ${formatBytes(session.bytes_total)}`}
+                                    {formatSize(session.bytes_synced)}
+                                    {session.bytes_total != null && ` / ${formatSize(session.bytes_total)}`}
                                   </span>
                                 )}
                                 {session.speed_bps != null && session.speed_bps > 0 && (
-                                  <span>{formatBytes(session.speed_bps)}/s</span>
+                                  <span>{formatSize(session.speed_bps)}/s</span>
                                 )}
                                 {session.current_file && (
                                   <span className="truncate max-w-[200px]" title={session.current_file}>

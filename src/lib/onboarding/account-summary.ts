@@ -60,20 +60,10 @@ export interface AccountSummary {
   canOfferPurchase: boolean
 }
 
-const MB = 1_000_000
-const GB = 1_000_000_000
-const TB = 1_000_000_000_000
+/** "2 GB", "6.3 GB", "10 GB", "500 MB". Decimal units — core's formatter. */
+import { formatSize } from '../format'
 
-/** "2 GB", "6.3 GB", "10 GB", "500 MB". Decimal units. */
-export function formatSize(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return '0 B'
-  const trim = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, ''))
-  if (bytes >= TB) return `${trim(Math.round((bytes / TB) * 10) / 10)} TB`
-  if (bytes >= GB) return `${trim(Math.round((bytes / GB) * 10) / 10)} GB`
-  if (bytes >= MB) return `${trim(Math.round(bytes / MB))} MB`
-  if (bytes >= 1_000) return `${Math.round(bytes / 1_000)} KB`
-  return `${bytes} B`
-}
+export { formatSize }
 
 /** "18 Oct 2026", or null for a missing or unparseable value. */
 export function formatDay(iso: string | null | undefined, timeZone?: string): string | null {
