@@ -30,8 +30,8 @@ export function BBProductLockup({ product, size = 40, tone = 'light' }: BBProduc
         className="font-bold leading-none text-ink"
         style={{ fontSize: nameSize, letterSpacing: '-0.02em' }}
       >
-        Beebeeb
-        <span className="ml-[0.28em] font-medium text-ink-2">{BB_PRODUCT_NAMES[product]}</span>
+        Beebeeb{' '}
+        <span className="font-medium text-ink-2">{BB_PRODUCT_NAMES[product]}</span>
       </span>
     </span>
   )
