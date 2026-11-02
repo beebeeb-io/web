@@ -97,6 +97,10 @@ export class SyncClient {
   private lastUserSeq = 0
   /** The ops this tab is waiting on: persisted, confirmed by position or identity. */
   private readonly queue: SyncQueue
+  /** The live pending-op array (`queue.ops`), kept under its pre-split name. */
+  private get pendingOps(): PendingOp[] {
+    return this.queue.ops
+  }
   /** The global cursor this tab booted with: the lookup floor for old entries. */
   private readonly bootLastSeq = this.lastSeq
   private deviceId = getDeviceId()
