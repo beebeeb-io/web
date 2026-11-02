@@ -1,3 +1,4 @@
+// Design-sync preview of BBToggle for the Claude Design project.
 import { useState } from 'react'
 import { BBToggle } from '@beebeeb/shared'
 

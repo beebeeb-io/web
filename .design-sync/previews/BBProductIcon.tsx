@@ -1,3 +1,4 @@
+// Design-sync preview of BBProductIcon for the Claude Design project.
 import { BBProductIcon } from '@beebeeb/shared'
 import type { BBProduct } from '@beebeeb/shared'
 

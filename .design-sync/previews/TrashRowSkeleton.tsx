@@ -1,3 +1,4 @@
+// Design-sync preview of TrashRowSkeleton for the Claude Design project.
 import { TrashRowSkeleton } from '@beebeeb/shared'
 
 export const Rows = () => (

@@ -1,3 +1,4 @@
+// Design-sync preview of BBButton for the Claude Design project.
 import { BBButton, Icon } from '@beebeeb/shared'
 
 export const Variants = () => (

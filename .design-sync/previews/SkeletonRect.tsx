@@ -1,3 +1,4 @@
+// Design-sync preview of SkeletonRect for the Claude Design project.
 import { SkeletonLine, SkeletonRect } from '@beebeeb/shared'
 
 export const Shapes = () => (

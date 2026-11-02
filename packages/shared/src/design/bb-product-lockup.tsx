@@ -1,3 +1,4 @@
+// BBProductLockup: the product glyph locked up with the Beebeeb wordmark (task 2322).
 import { BB_PRODUCT_NAMES, BBProductIcon } from './bb-product-icon'
 import type { BBProduct, BBProductTone } from './bb-product-icon'
 

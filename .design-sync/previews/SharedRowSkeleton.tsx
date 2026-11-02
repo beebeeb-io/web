@@ -1,3 +1,4 @@
+// Design-sync preview of SharedRowSkeleton for the Claude Design project.
 import { SharedRowSkeleton } from '@beebeeb/shared'
 
 export const Rows = () => (

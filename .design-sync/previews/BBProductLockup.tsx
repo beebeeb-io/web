@@ -1,3 +1,4 @@
+// Design-sync preview of BBProductLockup for the Claude Design project.
 import { BBButton, BBProductLockup } from '@beebeeb/shared'
 import type { BBProduct } from '@beebeeb/shared'
 

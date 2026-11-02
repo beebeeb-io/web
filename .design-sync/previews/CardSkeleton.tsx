@@ -1,3 +1,4 @@
+// Design-sync preview of CardSkeleton for the Claude Design project.
 import { CardSkeleton } from '@beebeeb/shared'
 
 export const Single = () => (

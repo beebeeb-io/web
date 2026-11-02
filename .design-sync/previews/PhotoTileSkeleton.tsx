@@ -1,3 +1,4 @@
+// Design-sync preview of PhotoTileSkeleton for the Claude Design project.
 import { PhotoTileSkeleton } from '@beebeeb/shared'
 
 export const Tiles = () => (
