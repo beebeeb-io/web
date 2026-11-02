@@ -6,7 +6,7 @@ const ALL = [
   'file-audio', 'file-video', 'file-data', 'users', 'search', 'plus', 'star', 'trash', 'settings',
   'share', 'cloud', 'link', 'clock', 'download', 'copy', 'mail', 'bell', 'x', 'image', 'more',
   'arrow-up', 'pause', 'play', 'menu', 'info', 'activity', 'camera', 'scan', 'pin', 'flag', 'edit',
-  'columns',
+  'columns', 'globe', 'chat',
 ] as const
 
 export const AllGlyphs = () => (
