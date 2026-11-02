@@ -6,6 +6,7 @@ Modules 50–93, sorted by path.
 
 | Module | Purpose | Public API |
 |---|---|---|
+| `content-crypto.ts` | ─── File content + note crypto (core chunk format v2, task 1908 / 1943) ───── Core 1908 binds every file-content frame to its file, its uplo | — |
 | `countries.ts` | ISO-3166-1 alpha-2 country list for the billing form (task 0919). | — |
 | `coupon.ts` | Coupon links (task 1814, slice A: free grants). | — |
 | `crypto-stream-encrypt.ts` | ─── Streaming encryption (core's ChunkEncryptor) ─── The WASM encryptor is a pointer into the worker's linear memory, so it cannot cross Com | — |
@@ -49,4 +50,3 @@ Modules 50–93, sorted by path.
 | `guest-upload.ts` | Task 2237b — uploads through a folder link. | — |
 | `guest-zip.ts` | Task 2237b — guest zip downloads. | — |
 | `i18n.ts` | The i18n instance and locale loading for the app's translated strings. | — |
-| `impersonation-context.tsx` | Admin impersonation state: session detection, lock reconciliation, and useImpersonation. | — |

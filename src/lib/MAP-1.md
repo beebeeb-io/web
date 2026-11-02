@@ -36,6 +36,7 @@ Modules 1–49, sorted by path.
 | `api-vault-escrow.ts` | ─── API: Vault key escrow ─── SECTION_MARKER_END | — |
 | `api.ts` | The web API facade: one named re-export per endpoint module, no endpoint logic here. | API_URL, STATUS_URL, clearEmail, getEmail, hexToBytes, setEmail, CAPABILITIES_HEADER, RESET_2FA_CAPABILITY, login, logout, opaqueLoginFinish, opaqueLoginStart, … (+408 more) |
 | `approve-invite-crypto.ts` | Pure key-material logic for approving a pending share invite (task 1545, finding 1). | — |
+| `archive-name.ts` | Archive entry names from core's one path-safety rule (`beebeeb-wasm`). | — |
 | `auth-context.tsx` | Auth state provider: session restore, login/logout callbacks, and useAuth. | — |
 | `auto-upgrade.ts` | auto-upgrade — NON-DESTRUCTIVE OPAQUE credential upgrade to the current KSF. | — |
 | `backups-root.ts` | Backups-root detection — pure, testable guard (task 0838 / 0848). | — |
@@ -54,4 +55,3 @@ Modules 1–49, sorted by path.
 | `cli-auth-relay.ts` | Reading the answer of `POST /api/v1/auth/cli-authorize` (task 1734). | — |
 | `confirm-payment.ts` | Task 2106 — the client side of server 2092b (3-D Secure at renewal and at trial end). | — |
 | `consent.ts` | Cookie consent store. | — |
-| `content-crypto.ts` | ─── File content + note crypto (core chunk format v2, task 1908 / 1943) ───── Core 1908 binds every file-content frame to its file, its uplo | — |

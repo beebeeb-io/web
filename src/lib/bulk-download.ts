@@ -22,6 +22,7 @@ import { Zip, ZipPassThrough, ZipDeflate, strToU8 } from 'fflate'
 import { decryptToBlob } from './encrypted-download'
 import { listFiles, type DriveFile } from './api'
 import { decryptFileMetadata } from './crypto'
+import { ensureArchiveNameWasm, safeArchiveName } from './archive-name'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -88,6 +89,9 @@ async function expandToFiles(
   prefix = '',
   onListError?: (prefix: string, err: unknown) => void,
 ): Promise<QueueEntry[]> {
+  // Names are rewritten by core's path-safety rule, which needs the module in
+  // memory before the first folder name is turned into a path.
+  await ensureArchiveNameWasm()
   const queue: QueueEntry[] = []
 
   for (const item of items) {
@@ -107,8 +111,9 @@ async function expandToFiles(
       // Use fallback name — continue rather than failing the whole zip
     }
 
-    // Sanitise for zip path (no slashes inside segment names)
-    const safeName = folderName.replace(/[/\\]/g, '_')
+    // One segment per folder: core's archive rule, with the id-based name as
+    // the fallback when the decrypted name is structurally unsafe.
+    const safeName = safeArchiveName(folderName, `folder-${item.id.slice(0, 8)}`)
     const childPrefix = `${prefix}${safeName}/`
 
     let children: DriveFile[] = []
@@ -383,6 +388,9 @@ export async function packageZip(
   if (sources.length === 0) {
     return { errorCount: 0, sizeWarning: false }
   }
+
+  // Every entry name below goes through core's archive rule.
+  await ensureArchiveNameWasm()
 
   const sizeWarning = totalEstimatedBytes > ZIP_SIZE_WARNING_BYTES
 
@@ -661,7 +669,10 @@ export async function downloadAsZipWith(
 
   return packageZip(
     entries.map(({ file, prefix }) => ({
-      pathFor: (filename: string) => `${prefix}${filename}`,
+      // The resolved name is one component of the path; a refused name keeps
+      // its own last segment or the file's id name, never a `..` entry.
+      pathFor: (filename: string) =>
+        `${prefix}${safeArchiveName(filename, `file-${file.id.slice(0, 8)}`)}`,
       fallbackName: `file-${file.id.slice(0, 8)}`,
       load: async () => {
         const key = await ports.getFileKey(file)

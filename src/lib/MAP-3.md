@@ -6,6 +6,7 @@ Modules 94–133, sorted by path.
 
 | Module | Purpose | Public API |
 |---|---|---|
+| `impersonation-context.tsx` | Admin impersonation state: session detection, lock reconciliation, and useImpersonation. | — |
 | `import-folders.ts` | L13 (contract 2275, SF-0001) — the folder tree an import recreates, and the per-file step of the import worker (settings/import.tsx). | — |
 | `item-id-echo.ts` | L13 (contract 2275) / SF-0001 — a write is sealed under the id the CLIENT chose, never under an id offered in an answer. | — |
 | `key-cache.ts` | ─── Key cache strategies ─────────────────────────── Two ways key-context.tsx caches an unlocked master key, factored out of the KeyProvider | — |
@@ -45,4 +46,3 @@ Modules 94–133, sorted by path.
 | `post-reset-lock.ts` | Task 1704 SLICE 2 — the post-reset locked-device signal. | — |
 | `preview-load-policy.ts` | LD-0001 §4 row 5 — the whole-file media cap. | — |
 | `preview.ts` | Decides whether a MIME type can be previewed in the app. | — |
-| `progress-throttle.ts` | LD-0001 PR-C review item 12 — the preview re-renders at most once per 150 ms while a whole-file transfer runs, plus on every phase change an | — |
