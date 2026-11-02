@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { PRICING_PAGE_PLANS } from '../src/lib/plan-constants'
 
@@ -50,7 +50,13 @@ describe('static location copy says the EU / Europe, not Falkenstein', () => {
   }
 
   test('share-recipient footers (unknown type + expired/revoked) say "Stored in the EU"', () => {
-    const src = read('src/pages/share-view.tsx')
+    // One footer stays in the page, the other moved into share-view's modules
+    // with the split: the underline still needs both, exactly twice.
+    const src = [
+      read('src/pages/share-view.tsx'),
+      ...readdirSync(fileURLToPath(new URL('../src/pages/share-view', import.meta.url)))
+        .map((f) => read(`src/pages/share-view/${f}`)),
+    ].join('\n')
     expect((src.match(/End-to-end encrypted · Stored in the EU/g) ?? []).length).toBe(2)
     expect(src).not.toContain('Stored in Europe')
   })

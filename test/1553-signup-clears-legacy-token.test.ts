@@ -263,10 +263,14 @@ describe('packages/shared/src/api/token.ts — clearLegacyBearer() drops the tok
     expect(barrel).toMatch(/\bclearLegacyBearer\b/)
 
     const apiTs = read('src/lib/api.ts')
-    // Imported from '@beebeeb/shared' AND re-exported so app code can use it.
-    const importBlock = apiTs.slice(0, apiTs.indexOf('} from \'@beebeeb/shared\''))
-    expect(importBlock).toMatch(/\bclearLegacyBearer\b/)
-    const reExportBlock = apiTs.slice(apiTs.indexOf('export {'), apiTs.indexOf('}', apiTs.indexOf('export {')))
+    // Re-exported from '@beebeeb/shared' (the facade's explicit shared block)
+    // so app code can use it, and never re-implemented here.
+    const sharedFrom = "} from '@beebeeb/shared'"
+    const first = apiTs.indexOf(sharedFrom)
+    const reExportEnd = apiTs.indexOf(sharedFrom, first + 1)
+    expect(reExportEnd).toBeGreaterThan(first)
+    const reExportBlock = apiTs.slice(apiTs.lastIndexOf('export {', reExportEnd), reExportEnd)
     expect(reExportBlock).toMatch(/\bclearLegacyBearer\b/)
+    expect(apiTs).not.toMatch(/function clearLegacyBearer/)
   })
 })
