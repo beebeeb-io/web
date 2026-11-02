@@ -27,7 +27,31 @@
 
 import type { DriveFile } from './api'
 import { listFileRequests, type FileRequest } from './api'
-import { fromBase64, openRequestUpload, unwrapRequestPrivate, zeroize } from './crypto'
+import {
+  FILE_REQUEST_EMPTY_ID,
+  fromBase64,
+  openRequestUpload,
+  resolveRequestRowWorker,
+  unwrapRequestPrivate,
+  zeroize,
+} from './crypto'
+
+/**
+ * 2275 L13 / A9c — the dual-key view of a request row. The row's CONTENT stays
+ * under the sealed content key C; its NAME is derived-or-C (derived first),
+ * because an old client may have renamed the row under the string convention.
+ * Core `resolveRequestRow` decides which name key opens and returns it with the
+ * decrypted name. Read-only: a request row has no write target.
+ */
+export interface ResolvedRowKeys {
+  contentKey: Uint8Array
+  nameKey: Uint8Array
+  nameOrigin: string
+  /** Core returns the name FLAT (a string), not a nested object. */
+  name: string | null
+  mimeType?: string | null
+  chunkFormat?: number
+}
 
 /** True when a file must be decrypted via the request-key path, not derive_file_key. */
 export function isRequestUpload(file: Pick<DriveFile, 'file_request_id' | 'sender_ephemeral_pubkey' | 'wrapped_content_key'>): boolean {
@@ -94,6 +118,17 @@ export interface RequestKeyResolver {
     file: Pick<DriveFile, 'file_request_id' | 'sender_ephemeral_pubkey' | 'wrapped_content_key'>,
     masterKey: Uint8Array,
   ): Promise<Uint8Array>
+  /**
+   * 2275 L13 / A9c — resolve BOTH keys of a request row through core
+   * `resolveRequestRow`: content stays under C, name is derived-or-C with the
+   * derived key tried first. Returns the name core decrypted, so callers never
+   * re-implement the "derived first" choice. Read-only; there is no write
+   * target to return.
+   */
+  resolveRow(
+    file: Pick<DriveFile, 'id' | 'name_encrypted' | 'file_request_id' | 'sender_ephemeral_pubkey' | 'wrapped_content_key'>,
+    masterKey: Uint8Array,
+  ): Promise<ResolvedRowKeys>
   /** Zero cached R_priv buffers and drop the memoised request list. */
   clear(): void
 }
@@ -107,6 +142,24 @@ export function createRequestKeyResolver(): RequestKeyResolver {
     return requestsPromise
   }
 
+  /** The owning request row, reloading once when a newer request is missing. */
+  const requestFor = async (
+    requestId: string,
+  ): Promise<FileRequest & { wrapped_private_key: string; wrap_nonce: string }> => {
+    let reqMap = await loadRequests(false)
+    let req = reqMap.get(requestId)
+    if (!req) {
+      // The request may have been created after our first load — reload once.
+      reqMap = await loadRequests(true)
+      req = reqMap.get(requestId)
+    }
+    if (!req || !req.wrapped_private_key || !req.wrap_nonce) {
+      throw new Error('owning file request (or its wrapped key) not found — cannot decrypt')
+    }
+    // Re-assert the guarded fields so callers see them as non-null strings.
+    return { ...req, wrapped_private_key: req.wrapped_private_key, wrap_nonce: req.wrap_nonce }
+  }
+
   return {
     async resolveFileKey(file, masterKey) {
       if (!isRequestUpload(file)) {
@@ -117,16 +170,7 @@ export function createRequestKeyResolver(): RequestKeyResolver {
       // Reuse the unwrapped R_priv if we've already opened a file for this request.
       let rPriv = rPrivCache.get(requestId)
       if (!rPriv) {
-        let reqMap = await loadRequests(false)
-        let req = reqMap.get(requestId)
-        if (!req) {
-          // The request may have been created after our first load — reload once.
-          reqMap = await loadRequests(true)
-          req = reqMap.get(requestId)
-        }
-        if (!req || !req.wrapped_private_key || !req.wrap_nonce) {
-          throw new Error('owning file request (or its wrapped key) not found — cannot decrypt')
-        }
+        const req = await requestFor(requestId)
         rPriv = await unwrapRequestPrivate(masterKey, fromBase64(req.wrapped_private_key), fromBase64(req.wrap_nonce))
         rPrivCache.set(requestId, rPriv)
       }
@@ -134,6 +178,33 @@ export function createRequestKeyResolver(): RequestKeyResolver {
       const ePub = fromBase64(file.sender_ephemeral_pubkey!)
       const wrappedKey = fromBase64(file.wrapped_content_key!)
       return openRequestUpload(rPriv, ePub, wrappedKey)
+    },
+
+    async resolveRow(file, masterKey) {
+      if (!isRequestUpload(file)) {
+        throw new Error('resolveRow called on a non-request file')
+      }
+      const req = await requestFor(file.file_request_id!)
+      const row = await resolveRequestRowWorker({
+        masterKey,
+        itemId: file.id,
+        // Core opens the per-upload seal with the ROW's id bytes as HKDF info,
+        // while the request-private wrap uses the fixed EMPTY convention.
+        requestId: FILE_REQUEST_EMPTY_ID,
+        wrappedRequestPrivate: fromBase64(req.wrapped_private_key),
+        wrapNonce: fromBase64(req.wrap_nonce),
+        senderEphemeralPubkey: fromBase64(file.sender_ephemeral_pubkey!),
+        wrappedContentKey: fromBase64(file.wrapped_content_key!),
+        nameEncrypted: file.name_encrypted,
+      })
+      return {
+        contentKey: row.contentKey,
+        nameKey: row.nameKey,
+        nameOrigin: row.nameOrigin,
+        name: row.name,
+        mimeType: row.mimeType,
+        chunkFormat: row.chunkFormat,
+      }
     },
 
     clear() {

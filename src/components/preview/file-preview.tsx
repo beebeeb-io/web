@@ -41,6 +41,7 @@ import { MAX_ZOOM, MIN_ZOOM, ZOOM_STEP, pickRenderer, type ImageControlProps } f
 import type { RawExifInfo } from '../../lib/raw-embedded-jpeg'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
+import { isRequestUpload } from '../../lib/file-request-crypto'
 import { needsOwnership, sharedRootFor } from '../../lib/owner-adoption'
 import { sharedFoldersEnabled } from '../../lib/use-feature-flag'
 import { useAuth } from '../../lib/auth-context'
@@ -75,7 +76,7 @@ interface FilePreviewProps {
 
 
 export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext, startInEditMode, folderId, onDelete }: FilePreviewProps) {
-  const { getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
+  const { getFileKeyForFile, getFileKeysForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
   // SF-0002: the row's name or a version was sealed under the iOS Files-app
   // convention, so it is openable/downloadable but not writable in place.
   const ownerReadOnly = isOwnerRepairReadOnly(file.id)
@@ -197,18 +198,33 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // Only then may a content read ask core for the read-only repair key: a
   // shared-folder or foreign key is never switched to an owner key (SF-0002
   // review).
-  const resolveFileKey = useCallback(async (): Promise<{ key: Uint8Array; ownerDerived: boolean }> => {
-    if (!sharedFile) return { key: await getFileKeyForFile(file), ownerDerived: true }
+  const resolveFileKey = useCallback(async (): Promise<{ key: Uint8Array; nameKey: Uint8Array; ownerDerived: boolean }> => {
+    // 2275 L13 / A9c: a request row's content stays under C while its name key
+    // is derived-or-C (derived first) — an old client may have renamed the row
+    // under the string convention. Core's request-row resolver picks both and
+    // is read-only. Checked before the shared walk: a request uploader's row is
+    // not a guest/member-added row in a shared folder.
+    if (isRequestUpload(file)) {
+      const row = await getFileKeysForFile(file)
+      return { key: row.contentKey, nameKey: row.nameKey, ownerDerived: false }
+    }
+    if (!sharedFile) {
+      const key = await getFileKeyForFile(file)
+      return { key, nameKey: key, ownerDerived: true }
+    }
     // rv-web198d R1: with the flag off there is no shared-folder walk for the
     // owner (no invites read, no link route asked); the key is derived, as on main.
-    if (!(await sharedFoldersEnabled())) return { key: await getFileKeyForFile(file), ownerDerived: true }
+    if (!(await sharedFoldersEnabled())) {
+      const key = await getFileKeyForFile(file)
+      return { key, nameKey: key, ownerDerived: true }
+    }
     const root = await sharedRootFor(folderId ?? null, file.id)
     const key = root ? await getFileKeyForSharedFile(file, root) : null
-    if (key) return { key, ownerDerived: false }
+    if (key) return { key, nameKey: key, ownerDerived: false }
     const label = root ? await getSharedFileOrigin(file, root) : null
     setShareOrigin(label)
     throw new Error(label ? `Can't open this file (added via ${label})` : "Can't open this file")
-  }, [sharedFile, getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, file, folderId])
+  }, [sharedFile, getFileKeyForFile, getFileKeysForFile, getFileKeyForSharedFile, getSharedFileOrigin, file, folderId])
 
   // Display name: use prop, then locally decrypted, then raw
   const name = decryptedNameProp ?? localDecryptedName ?? file.name_encrypted
@@ -223,8 +239,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     let cancelled = false
     async function decrypt() {
       try {
-        const { key: fileKey } = await resolveFileKey()
-        const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted)
+        const { nameKey } = await resolveFileKey()
+        const { name, mimeType } = await decryptFileMetadata(nameKey, file.name_encrypted)
         if (!cancelled) {
           setLocalDecryptedName(name)
           setLocalMimeType(mimeType)
@@ -345,7 +361,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
     async function loadAndDecrypt() {
       try {
-        const { key: fileKey, ownerDerived } = await resolveFileKey()
+        const { key: fileKey, nameKey, ownerDerived } = await resolveFileKey()
 
         // Thumbnail-first path for images (current version only)
         if (isImageFile && selectedVersionId === null) {
@@ -410,6 +426,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
               rowMimeType: file.mime_type ?? null,
               // SF-0002: only an OWNER key may fall back to a repaired key.
               masterKey: ownerDerived ? getMasterKey() : undefined,
+              // A9c: a request row's name lives under its own key, its content under C.
+              nameKey,
             },
           )
           plaintext = res.plaintext
@@ -433,6 +451,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
               rowMimeType: file.mime_type ?? null,
               // SF-0002: only an OWNER key may fall back to a repaired key.
               masterKey: ownerDerived ? getMasterKey() : undefined,
+              // A9c: a request row's name lives under its own key, its content under C.
+              nameKey,
             },
           )
         }
@@ -738,7 +758,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
     try {
       setDownloading(true)
-      const { key: fileKey, ownerDerived } = await resolveFileKey()
+      const { key: fileKey, nameKey, ownerDerived } = await resolveFileKey()
       if (action.kind === 'stream-to-disk') {
         // The over-cap card has no Blob and must NEVER load the whole file into
         // memory: stream the plaintext to disk through the service worker, the
@@ -757,6 +777,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             versionId: action.versionId,
             chunkCount: action.chunkCount,
             sizeBytes: action.sizeBytes,
+            // A9c: a request row's name lives under its own key, its content under C.
+            nameKey,
           },
           {
             signal: abort.signal,
@@ -777,7 +799,11 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           effectiveMime ?? undefined,
           file.chunk_count,
           file.size_bytes,
-          { masterKey: ownerDerived ? getMasterKey() : undefined },
+          {
+            masterKey: ownerDerived ? getMasterKey() : undefined,
+            // A9c: a request row's name lives under its own key, its content under C.
+            nameKey,
+          },
         )
         original = res.plaintext
       } else {
@@ -789,7 +815,11 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           effectiveMime ?? undefined,
           action.chunkCount,
           action.sizeBytes,
-          { masterKey: ownerDerived ? getMasterKey() : undefined },
+          {
+            masterKey: ownerDerived ? getMasterKey() : undefined,
+            // A9c: a request row's name lives under its own key, its content under C.
+            nameKey,
+          },
         )
       }
       saveBlob(original)

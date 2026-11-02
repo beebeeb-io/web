@@ -21,7 +21,7 @@ export function useDecryptedNames(
   files: DriveFile[],
   externalDecryptedNames?: Record<string, string>,
 ): DecryptedNames {
-  const { getFileKeyForFile, isUnlocked } = useKeys()
+  const { getFileKeysForFile, isUnlocked } = useKeys()
   const [decryptedNames, setDecryptedNames] = useState<DecryptedNames>({})
 
   useEffect(() => {
@@ -69,10 +69,13 @@ export function useDecryptedNames(
       }
       try {
         // A file another person added to a shared folder is sealed under a key
-        // this account cannot derive; getFileKeyForFile takes the folder-key
+        // this account cannot derive; getFileKeysForFile takes the folder-key
         // path for it (owner wrap, then `shared_folder_keys` under the shared
         // ROOT), the same path download, rename and zip use (task 2237b).
-        const fileKey = await getFileKeyForFile(file)
+        // A9c: a request row's NAME lives under its own key (derived-or-C,
+        // derived first) while its content stays under C — read the name with
+        // the name key so a row renamed under the string convention still shows.
+        const { nameKey: fileKey } = await getFileKeysForFile(file)
         return { id: file.id, status: 'ok', fileKey, nameEncrypted: file.name_encrypted }
       } catch (err) {
         return { id: file.id, status: 'error', error: err }
@@ -160,7 +163,7 @@ export function useDecryptedNames(
     }
     decryptAll()
     return () => { cancelled = true }
-  }, [files, isUnlocked, getFileKeyForFile, externalDecryptedNames])
+  }, [files, isUnlocked, getFileKeysForFile, externalDecryptedNames])
 
   return decryptedNames
 }

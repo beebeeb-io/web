@@ -60,7 +60,10 @@ export interface OwnedItemWorkerOps {
     contentKey: Uint8Array
     nameKey: Uint8Array
     nameOrigin: string
-    name: { name?: string; mimeType?: string | null; plaintext?: string; chunkFormat: number } | null
+    /** Core returns the name FLAT (a string), not a nested object. */
+    name: string | null
+    mimeType?: string | null
+    chunkFormat?: number
   }>
   createEncryptorForNewItem(
     masterKey: Uint8Array,
@@ -169,13 +172,17 @@ export function ownedItemWorkerOps(ensureWasm: () => Promise<Wasm>, register: (e
         contentKey: Uint8Array
         nameKey: Uint8Array
         nameOrigin: string
-        name?: { name?: string; mimeType?: string | null; plaintext?: string; chunkFormat: number } | null
+        name?: string | null
+        mimeType?: string | null
+        chunkFormat?: number
       }
       return {
         contentKey: resolved.contentKey,
         nameKey: resolved.nameKey,
         nameOrigin: resolved.nameOrigin,
         name: resolved.name ?? null,
+        mimeType: resolved.mimeType ?? null,
+        chunkFormat: resolved.chunkFormat,
       }
     },
 

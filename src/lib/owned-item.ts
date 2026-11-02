@@ -129,7 +129,10 @@ export interface ResolvedRequestRow {
   contentKey: Uint8Array
   nameKey: Uint8Array
   nameOrigin: string
-  name: ResolvedName | null
+  /** Core returns the name FLAT (a string), not a nested object. */
+  name: string | null
+  mimeType?: string | null
+  chunkFormat?: number
 }
 
 function handle(value: { idText: string; tag: Uint8Array }, idClass: IdClass): NewItemIdHandle {
@@ -195,13 +198,17 @@ export function createOwnedItemOps(wasm: OwnedItemWasm): OwnedItemOps {
         contentKey: Uint8Array
         nameKey: Uint8Array
         nameOrigin: string
-        name?: ResolvedName
+        name?: string | null
+        mimeType?: string | null
+        chunkFormat?: number
       }
       return {
         contentKey: resolved.contentKey,
         nameKey: resolved.nameKey,
         nameOrigin: resolved.nameOrigin,
         name: resolved.name ?? null,
+        mimeType: resolved.mimeType ?? null,
+        chunkFormat: resolved.chunkFormat,
       }
     },
   }

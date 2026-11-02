@@ -64,7 +64,7 @@ import { activeFolderInvites } from './folder-share-crypto'
 import { decryptActorName } from './guest-actor-name'
 import { useAuth } from './auth-context'
 import { isImpersonationSessionActive, shouldReconcileLock } from './impersonation-context'
-import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver } from './file-request-crypto'
+import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver, type ResolvedRowKeys } from './file-request-crypto'
 import { backfillRecoveryCheckIfAbsent, recoveredKeyMatchesAccount } from './recovery-validation'
 import { getAuthStamp, setExpectedUserProvider, registerAccountMismatchHandler } from '@beebeeb/shared'
 
@@ -156,6 +156,13 @@ interface KeyState {
    *  getFileKey wherever the full file object is available (naming, preview,
    *  download). `expectedUserId` — see `getFileKey`. */
   getFileKeyForFile: (file: DriveFile, expectedUserId?: string) => Promise<Uint8Array>
+  /** 2275 L13 / A9c: BOTH keys of a row. A request row's content stays under
+   *  the sealed content key C while its name key is derived-or-C (derived
+   *  first), because an old client may have renamed the row under the string
+   *  convention. Every other row reads under one key, returned for both. The
+   *  request branch returns the name core decrypted and its origin, and is
+   *  read-only — there is no write target. */
+  getFileKeysForFile: (file: DriveFile, expectedUserId?: string) => Promise<ResolvedRowKeys>
   /** Task 2237b: the key for a file the owner did not upload (a guest- or
    *  member-added row in a shared folder). Resolves the owner wrap or the
    *  folder key's copy of the file key, adopting the file on first sight.
@@ -665,6 +672,26 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     return resolveOwnerKeyForFile(key, file, residentKeyUserIdRef.current, shared)
   }, [isBoundTo])
 
+  /**
+   * 2275 L13 / A9c — both keys of a row. A request row's CONTENT stays under the
+   * sealed content key C; its NAME key is derived-or-C (derived first), because
+   * an old client may have renamed the row under the string convention. Core
+   * `resolveRequestRow` picks the name key and decrypts the name, so no client
+   * re-implements that choice. Every other row reads under one key, returned in
+   * both fields with no decrypted name and no request origin.
+   */
+  const getFileKeysForFile = useCallback(async (file: DriveFile, expectedUserId?: string): Promise<ResolvedRowKeys> => {
+    if (!isBoundTo(expectedUserId)) {
+      throw new Error('Vault is locked — unlock first')
+    }
+    if (isRequestUpload(file)) {
+      if (!requestResolverRef.current) requestResolverRef.current = createRequestKeyResolver()
+      return requestResolverRef.current.resolveRow(file, masterKeyRef.current as Uint8Array)
+    }
+    const key = await getFileKeyForFile(file, expectedUserId)
+    return { contentKey: key, nameKey: key, nameOrigin: 'single', name: null }
+  }, [isBoundTo, getFileKeyForFile])
+
   const getSharedFileOrigin = useCallback(async (file: DriveFile, folderId: string): Promise<string | null> => {
     if (!isBoundTo()) throw new Error('Vault is locked — unlock first')
     const shareId = file.acted_via_share_id
@@ -932,6 +959,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       getResidentUserId,
       getFileKey,
       getFileKeyForFile,
+      getFileKeysForFile,
       getFileKeyForSharedFile,
       getSharedFileOrigin,
       getMasterKey,
@@ -939,7 +967,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       lock,
       fullLogout,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, discardStalePasswordVault, lock, fullLogout],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getFileKeysForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, discardStalePasswordVault, lock, fullLogout],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>

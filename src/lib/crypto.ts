@@ -239,7 +239,10 @@ export async function resolveRequestRowWorker(args: ResolveRequestRowArgs): Prom
   contentKey: Uint8Array
   nameKey: Uint8Array
   nameOrigin: string
-  name: { name?: string; mimeType?: string | null; plaintext?: string; chunkFormat: number } | null
+  /** Core returns the name FLAT (a string), not a nested object. */
+  name: string | null
+  mimeType?: string | null
+  chunkFormat?: number
 }> {
   return withProxy((p) =>
     p.resolveRequestRow(
