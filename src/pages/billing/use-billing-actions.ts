@@ -11,9 +11,7 @@
  * Must not: render, or redefine the state and math the data hook owns.
  */
 
-import { useState, useEffect, useRef } from 'react'
 import {
-  getSubscription,
   updatePaymentMethod,
   switchBillingCycle,
   cancelSubscription,
@@ -24,7 +22,6 @@ import {
   updateStorageAddons,
   previewStorageAddons,
   createStorageAddonCheckout,
-  payOverdue,
   exportBillingTransactions,
   convertTrial,
   createCheckoutSession,
@@ -49,43 +46,24 @@ import {
 import { isTrialEligible } from '../../lib/trial-eligibility'
 import { choosePlanPath } from '../../lib/trial-checkout'
 import {
-  PAY_NOW_POLL_INTERVAL_MS,
-  safeCheckoutUrl,
-} from '../../lib/trial-pay-now'
-import {
-  confirmIntentAction,
-  CONFIRM_PAYMENT_PARAM,
-} from '../../lib/confirm-payment'
-import {
-  PAY_OVERDUE_RETURN_PARAM,
-  shouldHandlePayOverdueReturn,
-  payOverdueReturnDecision,
-  payOverdueReturnView,
-  type PayOverdueView,
-} from '../../lib/pay-overdue-return'
-import {
   formatDate,
   planMeta,
 } from './upgrade-plans'
 import type { BillingData } from './use-billing-data'
 import { usePayNowFlow } from './use-pay-now-flow'
+import { usePayOverdueFlow } from './use-pay-overdue-flow'
 
 export function useBillingActions(data: BillingData) {
   const {
-    searchParams,
-    setSearchParams,
     showToast,
     navigate,
     setView,
     refreshPlanDetails,
     refreshUsage,
     sub,
-    loading,
-    error,
     setUpgradeOpen,
     setUpgradePlan,
     setPortalLoading,
-    setPayOverdueLoading,
     setCancelStep,
     setCancelConfirm,
     setCycleSwitchConfirm,
@@ -117,7 +95,6 @@ export function useBillingActions(data: BillingData) {
     trialDateLabel,
   } = data
 
-  const [payOverdueReturn, setPayOverdueReturn] = useState<PayOverdueView | null>(null)
   const {
     payNowState,
     payNowReturn,
@@ -303,119 +280,19 @@ function openUpgrade(plan: string) {
     }
   }
 
-  // Task 2162: the return from the pay-overdue checkout (`?paid_overdue=true`). The server gives
-  // no payment id, so this polls the subscription (the webhook un-freezes the account), bounded like
-  // the pay-now return. The param is stripped up front, so a reload or Back never re-runs it, and
-  // nothing here starts a checkout.
-  const payOverdueReconcileCancelRef = useRef<(() => void) | null>(null)
-  function reconcilePayOverdue() {
-    payOverdueReconcileCancelRef.current?.()
-    setPayOverdueReturn(payOverdueReturnView('checking'))
-    let cancelled = false
-    payOverdueReconcileCancelRef.current = () => { cancelled = true }
-    const start = Date.now()
-    const tick = async () => {
-      if (cancelled) return
-      let latest: Awaited<ReturnType<typeof getSubscription>> | null = null
-      try {
-        latest = await getSubscription()
-      } catch {
-        // Transient failure: keep polling until the bound.
-      }
-      if (cancelled) return
-      const decision = payOverdueReturnDecision(latest, Date.now() - start)
-      if (decision === 'keep_polling') {
-        setTimeout(() => { void tick() }, PAY_NOW_POLL_INTERVAL_MS)
-        return
-      }
-      setPayOverdueReturn(payOverdueReturnView(decision))
-      if (decision === 'paid') {
-        setConfirmOverdueIntent(false)
-        window.dispatchEvent(new Event('beebeeb:plan-changed'))
-        refreshPlanDetails()
-        void loadData()
-      }
-    }
-    void tick()
-  }
-
-  useEffect(() => {
-    if (!shouldHandlePayOverdueReturn(searchParams.get(PAY_OVERDUE_RETURN_PARAM))) return
-    setSearchParams(
-      (prev) => {
-        const p = new URLSearchParams(prev)
-        p.delete(PAY_OVERDUE_RETURN_PARAM)
-        return p
-      },
-      { replace: true },
-    )
-    reconcilePayOverdue()
-    return () => { payOverdueReconcileCancelRef.current?.() }
-    // Runs once per landing: the param is removed above, so re-runs find nothing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  /**
-   * Task 1062 (WP-D, decision 5) — settle the dunning arrears in full via a
-   * one-off Mollie charge, the "Pay outstanding balance" CTA on the read-only
-   * freeze banner below. The server computes the REAL outstanding amount (not
-   * an estimate) and returns a hosted checkout; the webhook un-freezes the
-   * account on `paid`. We just redirect — the return trip lands back here with
-   * the account already un-frozen (or, if the charge failed, still frozen).
-   */
-  async function handlePayOverdue() {
-    setPayOverdueLoading(true)
-    try {
-      const result = await payOverdue()
-      // Same guard as pay-now: https, or the DEV-only loopback rule.
-      const url = safeCheckoutUrl(result.checkout_url, { allowLocalHttp: import.meta.env.DEV })
-      if (!url) throw new Error('The payment page could not be opened. Please try again.')
-      window.location.href = url
-    } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Could not start payment',
-        description: err instanceof Error ? err.message : 'Please try again.',
-        danger: true,
-      })
-      setPayOverdueLoading(false)
-    }
-  }
-
-  // Task 2106 — the mails' buttons land here with `?confirm_payment=1` (renewal / past due:
-  // pay-overdue) or `?confirm_payment=trial` (held trial: pay-now). The intent follows the URL (so
-  // the shell banner's link works on this very page), waits for the subscription to be loaded,
-  // starts a checkout ONLY when the account is in the state the mail described, and always
-  // consumes the param so a reload or Back never starts a payment by itself.
-  const confirmIntentRaw = searchParams.get(CONFIRM_PAYMENT_PARAM)
-  const confirmIntentHandledRef = useRef(false)
-  const [confirmNote, setConfirmNote] = useState<string | null>(null)
-  const [confirmOverdueIntent, setConfirmOverdueIntent] = useState(false)
-  useEffect(() => {
-    if (confirmIntentRaw === null) {
-      confirmIntentHandledRef.current = false
-      return
-    }
-    if (confirmIntentHandledRef.current) return
-    const action = confirmIntentAction(confirmIntentRaw, sub, { loading, loadFailed: error !== null })
-    // Not consumed while loading or after a failed load: the param stays, so Retry acts on it.
-    if (action.kind === 'wait') return
-    confirmIntentHandledRef.current = true
-    setSearchParams(
-      (prev) => {
-        const p = new URLSearchParams(prev)
-        p.delete(CONFIRM_PAYMENT_PARAM)
-        return p
-      },
-      { replace: true },
-    )
-    if (action.kind === 'pay-now') void handlePayNow()
-    else if (action.kind === 'pay-overdue') {
-      setConfirmOverdueIntent(true)
-      void handlePayOverdue()
-    } else if (action.kind === 'note') setConfirmNote(action.text)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirmIntentRaw, loading, error])
+  const {
+    payOverdueReturn,
+    setPayOverdueReturn,
+    payOverdueReconcileCancelRef,
+    reconcilePayOverdue,
+    handlePayOverdue,
+    confirmIntentRaw,
+    confirmIntentHandledRef,
+    confirmNote,
+    setConfirmNote,
+    confirmOverdueIntent,
+    setConfirmOverdueIntent,
+  } = usePayOverdueFlow(data, handlePayNow)
 
   async function handlePreviewStorageAddon() {
     setAddonPreviewLoading(true)
