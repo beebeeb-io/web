@@ -1,5 +1,5 @@
 import { ALLOWANCE_LINE, currentPlanName } from '../lib/current-plan-display'
-import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { isCheckoutReturn } from '../lib/checkout-return'
 import { SettingsShell, SettingsHeader } from '../components/settings-shell'
@@ -66,8 +66,12 @@ import {
   planMaxExtraTB,
   planBaseTB,
   planMonthlyCostCents,
-  formatCentsAsEur,
 } from '../lib/plan-pricing'
+import { formatCentsAsEur } from '../lib/billing/money'
+import { Card, SectionLabel } from './billing/ui'
+import { PlanCard } from './billing/PlanCard'
+import { PaymentMethodPanel } from './billing/PaymentMethodPanel'
+import { UsagePanel } from './billing/UsagePanel'
 import { PlanComparisonTable } from '../components/plan-comparison'
 import {
   isTrialing,
@@ -250,86 +254,6 @@ function upgradeCardFromPlanMeta(planId: string): UpgradePlanCard | null {
   }
 }
 
-/* ── Animated progress bar ─────────────────────────────── */
-
-function AnimatedProgress({ percent, className = '' }: { percent: number; className?: string }) {
-  const [width, setWidth] = useState(0)
-
-  useEffect(() => {
-    const t = setTimeout(() => setWidth(Math.min(percent, 100)), 80)
-    return () => clearTimeout(t)
-  }, [percent])
-
-  const barColor =
-    percent > 90 ? 'bg-red' :
-    percent > 75 ? 'bg-amber' :
-    'bg-amber-deep'
-
-  return (
-    <div className={`relative h-2 rounded-full bg-paper-3 overflow-hidden ${className}`}>
-      <div
-        className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out ${barColor}`}
-        style={{ width: `${width}%` }}
-      />
-    </div>
-  )
-}
-
-/* ── Presentational primitives (task 0942 restyle) ─────────
-   These are layout/markup helpers ONLY — no state, no handlers, no data
-   flow. They exist so the billing markup matches the approved mockups
-   (#7 summary, #8 change-plan): hairline-bordered cards, uppercase muted
-   section labels, and a storage meter that can render a secondary (muted,
-   non-accent) add-on bar alongside the amber primary bar. */
-
-/** A hairline-bordered card matching the mockups' radii + padding. */
-function Card({ children, className = '', 'data-testid': testId }: { children: ReactNode; className?: string; 'data-testid'?: string }) {
-  return (
-    <div className={`border border-line rounded-xl bg-paper ${className}`} data-testid={testId}>{children}</div>
-  )
-}
-
-/** Uppercase, muted, letter-spaced section label ("CURRENT PLAN", …). */
-function SectionLabel({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return (
-    <div className={`text-[11px] font-semibold uppercase tracking-wider text-ink-4 ${className}`}>
-      {children}
-    </div>
-  )
-}
-
-/** A static storage meter. `variant="secondary"` renders a muted/desaturated
-    fill (the add-on meter in #7) so it reads as a SECONDARY meter, never a
-    second accent. The primary variant keeps the amber usage colour cascade. */
-function MeterBar({
-  percent,
-  variant = 'primary',
-  usagePercent,
-}: {
-  percent: number
-  variant?: 'primary' | 'secondary'
-  /** For the primary bar, drive the colour cascade off actual usage. */
-  usagePercent?: number
-}) {
-  const up = usagePercent ?? percent
-  const fill =
-    variant === 'secondary'
-      ? 'bg-ink-4'
-      : up > 90
-        ? 'bg-red'
-        : up > 75
-          ? 'bg-amber'
-          : 'bg-amber-deep'
-  return (
-    <div className="relative h-2 rounded-full bg-paper-3 overflow-hidden">
-      <div
-        className={`absolute inset-y-0 left-0 rounded-full ${fill}`}
-        style={{ width: `${Math.max(0, Math.min(percent, 100))}%` }}
-      />
-    </div>
-  )
-}
-
 /* ── Checkout watchdog + pre-checkout intent (task 0946) ───
 
    Extracted to ../lib/pending-checkout.ts (task 1064 / D6) so every redirect
@@ -340,7 +264,14 @@ function MeterBar({
 
 /* ── Main component ────────────────────────────────────── */
 
-export function Billing() {
+/**
+ * `/billing` — the account's money page: plan, storage add-on, payment method,
+ * invoices and the upgrade/downgrade flows. The drawing of the current-plan
+ * card, the storage panel and the payment-method panel lives in `./billing/*`
+ * (task W-P2-2); this component owns the state, the server calls and the
+ * ordering of the side effects.
+ */
+export function BillingPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { showToast } = useToast()
   const navigate = useNavigate()
@@ -2554,206 +2485,84 @@ function openUpgrade(plan: string) {
         {view === 'summary' && (
           <div className="space-y-4">
             {/* Current Plan card */}
-            <Card className="overflow-hidden" data-testid="billing-current-plan-card">
-              <div className="p-5 grid gap-6 md:grid-cols-2">
-                {/* Left: plan + price + actions */}
-                <div>
-                  <SectionLabel className="mb-2">Current plan</SectionLabel>
-                  <div className="flex items-center gap-3 mb-1">
-                    <span className="text-[28px] font-bold tracking-tight leading-none" data-testid="billing-current-plan-name">
-                      {currentPlanName({ accountStateLabel, hasNoPlan, planLabel: meta.label, noCardTrial: noCardTrial !== null })}
-                    </span>
-                    {effectivePlan !== 'free' && !hasNoPlan && !noCardTrial && statusBadge()}
-                  </div>
-                  {noCardTrial && <NoCardTrialPlanLines status={noCardTrial} testIdPrefix="billing-current-plan" />}
-                  {effectivePlan !== 'free' && !noCardTrial && (
-                    <div className="font-mono text-[13px] text-ink-2">
-                      EUR {formatCentsAsEur(basePriceCents)} / {billingInterval}
-                      <span className="text-ink-3">
-                        {' · '}billed {sub?.billing_cycle === 'yearly' ? 'annually' : 'monthly'}
-                      </span>
-                      {/* Coherent breakdown from server truth (task 0947): show
-                          the base plan and the storage add-on as their own line
-                          instead of one lumped figure, with the per-TB price from
-                          the server's storage_addon_price_cents (not hard-coded). */}
-                      {currentExtraTB > 0 && (
-                        <div className="text-[11px] text-ink-3 mt-0.5">
-                          {meta.label} EUR {formatCentsAsEur(basePlanCents)} + {currentExtraTB} TB × EUR {formatCentsAsEur(addonPerTbCents)}/{billingInterval}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {effectivePlan === 'free' && !hasNoPlan && (
-                    <div className="text-[13px] text-ink-3">5 GB encrypted storage</div>
-                  )}
-                  {accountState === 'lapsed' && (
-                    <div className="text-[13px] text-ink-3">Read-only — uploads are paused</div>
-                  )}
-                  {accountState === 'needs_plan' && accountStateLabel === 'allowance' && (
-                    <div className="text-[13px] text-ink-3" data-testid="billing-allowance-line">
-                      {ALLOWANCE_LINE}
-                    </div>
-                  )}
-                  {accountState === 'needs_plan' && accountStateLabel !== 'allowance' && (
-                    <div className="text-[13px] text-ink-3">Start a free trial to begin uploading</div>
-                  )}
-                  {/* Task 1605 — a never-paid trial cancelled before its first
-                      charge is read-only for UPLOADS immediately, distinct
-                      from `accountState === 'lapsed'` above (the trial hasn't
-                      lapsed yet, it's cancelled early). */}
-                  {cancelCopy?.uploadsBlockedNow && (
-                    <div className="text-[13px] text-ink-3">Uploads and new shares are off — view and download still work</div>
-                  )}
+            <PlanCard
+              planName={currentPlanName({ accountStateLabel, hasNoPlan, planLabel: meta.label, noCardTrial: noCardTrial !== null })}
+              badge={effectivePlan !== 'free' && !hasNoPlan && !noCardTrial ? statusBadge() : null}
+              noCardTrial={noCardTrial}
+              price={
+                effectivePlan !== 'free' && !noCardTrial
+                  ? {
+                      label: meta.label,
+                      totalCents: basePriceCents,
+                      baseCents: basePlanCents,
+                      extraTb: currentExtraTB,
+                      addonPerTbCents,
+                      interval: billingInterval,
+                      cycle: sub?.billing_cycle ?? null,
+                    }
+                  : null
+              }
+              isFreeWithoutPlan={effectivePlan === 'free' && !hasNoPlan}
+              accountState={accountState}
+              accountStateLabel={accountStateLabel}
+              allowanceLine={ALLOWANCE_LINE}
+              uploadsBlockedNow={cancelCopy?.uploadsBlockedNow === true}
+              canCancel={
+                effectivePlan !== 'free' &&
+                sub?.status !== 'cancelling' &&
+                sub?.status !== 'paused' &&
+                sub?.status !== 'trialing'
+              }
+              usage={{
+                usedBytes,
+                totalStorageBytes,
+                usedPercent,
+                extraTb: currentExtraTB,
+                addonPerTbCents,
+                cycle: sub?.billing_cycle ?? null,
+              }}
+              footer={
+                cancelCopy?.kind === 'never_paid_trial'
+                  ? { kind: 'never_paid_trial', compactLine: cancelledCompactLine(cancelCopy, formatDate) }
+                  : periodLine && !noCardTrial
+                    ? {
+                        kind: 'period',
+                        label: periodLine.label,
+                        dateLabel: trialDateLabel(periodLine.dateIso),
+                        cancelKind: cancelCopy?.kind ?? null,
+                        extra: periodLine.extra
+                          ? { text: periodLine.extra.text, dateLabel: formatDate(periodLine.extra.dateIso) }
+                          : null,
+                        paymentBrand: paymentMethod?.brand ?? null,
+                        includesAddon: currentExtraTB > 0,
+                      }
+                    : { kind: 'none' }
+              }
+              payNow={{
+                trialCapped,
+                explainer:
+                  trialCapped && !noCardTrial && sub?.trial_storage_cap_bytes != null
+                    ? trialCapExplainer(meta.label, sub.trial_storage_cap_bytes, formatStorageSI)
+                    : null,
+                heldUntil: heldUntil !== null,
+                label: payNowButtonLabel(meta.label),
+                phase: payNowState.phase,
+                message: payNowState.message ?? null,
+                onPayNow: () => void handlePayNow(),
+              }}
+              onChangePlan={() => setView('change')}
+              onCancel={() => {
+                // Task 1064 (D7): this used to just switch to the full
+                // plan-comparison view — a mismatch with what "Cancel" says it
+                // does. Now it opens the SAME view AND starts the actual cancel
+                // sequence (pause/confirm), so the user who clicked "Cancel"
+                // lands directly in the cancel flow instead of a neutral
+                // compare screen.
+                setView('change')
+                void startCancelFlow()
+              }}
+            />
 
-                  <div className="mt-5 flex items-center gap-3">
-                    <BBButton variant="amber" size="md" onClick={() => setView('change')} data-testid="billing-choose-plan">
-                      <Icon name="arrow-up" size={13} className="mr-1.5" />
-                      {effectivePlan === 'free' || noCardTrial ? 'Choose a plan' : 'Change plan'}
-                    </BBButton>
-                    {effectivePlan !== 'free' &&
-                      sub?.status !== 'cancelling' &&
-                      sub?.status !== 'paused' &&
-                      sub?.status !== 'trialing' && (
-                        <button
-                          className="text-[13px] text-ink-3 hover:text-red transition-colors disabled:opacity-50"
-                          onClick={() => {
-                            // Task 1064 (D7): this used to just switch to the
-                            // full plan-comparison view — a mismatch with what
-                            // "Cancel" says it does. Now it opens the SAME
-                            // view AND starts the actual cancel sequence
-                            // (pause/confirm), so the
-                            // user who clicked "Cancel" lands directly in the
-                            // cancel flow instead of a neutral compare screen.
-                            setView('change')
-                            void startCancelFlow()
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      )}
-                  </div>
-                </div>
-
-                {/* Right: storage meters (primary amber + secondary add-on) */}
-                <div className="md:pl-2">
-                  <div className="flex items-baseline justify-between mb-2">
-                    <span className="text-[13px] text-ink-2">Storage</span>
-                    <span className="font-mono text-[13px] font-semibold">
-                      {formatStorageSI(usedBytes)}
-                      <span className="text-ink-3 font-normal"> / {formatStorageSI(totalStorageBytes)}</span>
-                    </span>
-                  </div>
-                  <MeterBar percent={usedPercent} usagePercent={usedPercent} />
-
-                  {currentExtraTB > 0 && (
-                    <>
-                      <div className="flex items-baseline justify-between mt-4 mb-2">
-                        <span className="text-[13px] text-ink-2">Add-on storage</span>
-                        <span className="font-mono text-[13px] font-semibold text-ink-2">
-                          +{currentExtraTB} TB
-                        </span>
-                      </div>
-                      <MeterBar percent={100} variant="secondary" />
-                      {/* Server-truth per-TB price (task 1064, D4) — was a hard-coded
-                          "EUR 10.99" literal that could drift from what Mollie actually
-                          bills; reuses the same `addonPerTbCents` breakdown computed
-                          above from the server's `addon_per_tb_cents` (task 0947). */}
-                      <div className="font-mono text-[11px] text-ink-4 mt-1.5">
-                        EUR {formatCentsAsEur(addonPerTbCents)} / extra TB · billed {sub?.billing_cycle === 'yearly' ? 'annually' : 'monthly'}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Footer strip: renews / trial ends / access until.
-                  Flow-money #5: a trial does not renew and a cancelling plan
-                  lapses — billingPeriodLine picks the honest label (same
-                  rules as mobile billing-status.ts and the CLI).
-                  Task 1605 — a never-paid trial cancelled before its first
-                  charge gets its OWN compact line ("Uploads stopped ·
-                  Access until · Files deleted on", never "Renews"), driven
-                  by uploads_blocked_at/access_until/data_deletion_at —
-                  distinct from a paying customer's ordinary cancel (unchanged
-                  below, uploads keep working through the grace period). */}
-              {cancelCopy?.kind === 'never_paid_trial' ? (
-                <div
-                  data-testid="cancelling-card"
-                  data-cancel-kind="never_paid_trial"
-                  className="flex items-center gap-3 px-5 py-3 border-t border-line bg-amber-bg/40 text-xs"
-                >
-                  <Icon name="upload" size={13} className="text-amber-deep shrink-0" />
-                  <span className="flex-1 text-ink-2" data-testid="cancelling-headline">
-                    {cancelledCompactLine(cancelCopy, formatDate)}
-                  </span>
-                </div>
-              ) : (
-                periodLine && !noCardTrial && (
-                  <div
-                    className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs"
-                    data-testid={cancelCopy?.kind === 'paid_cancelling' ? 'cancelling-card' : undefined}
-                    data-cancel-kind={cancelCopy?.kind}
-                  >
-                    <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
-                    <span className="flex-1 text-ink-2" data-testid={cancelCopy?.kind === 'paid_cancelling' ? 'cancelling-headline' : undefined}>
-                      {periodLine.label} <strong className="font-mono text-ink">{trialDateLabel(periodLine.dateIso)}</strong>
-                      {periodLine.label === 'Renews' && paymentMethod?.brand && (
-                        <> via <span className="text-ink">{paymentMethod.brand}</span></>
-                      )}
-                      {/* Task 1037/1604 — a cancelling row already marked for
-                          deletion surfaces that alongside "Access until", not
-                          in place of it: the two dates can differ. */}
-                      {periodLine.extra && (
-                        <>
-                          {' · '}
-                          {periodLine.extra.text}{' '}
-                          <strong className="font-mono text-ink">{formatDate(periodLine.extra.dateIso)}</strong>
-                        </>
-                      )}
-                    </span>
-                    {currentExtraTB > 0 && (
-                      <span className="font-mono text-ink-4">incl. add-on storage</span>
-                    )}
-                  </div>
-                )
-              )}
-
-              {/* Task 1605 — active mandated trial, still under the 25 GB
-                  cap. Guus, 2026-09-29: "we need to make sure the user is
-                  not limited to 25gb for 2 weeks" — pay now ends the trial
-                  early and unlocks the full plan quota. */}
-              {trialCapped && !noCardTrial && sub?.trial_storage_cap_bytes != null && (
-                <div data-testid="trial-cap-card" className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs">
-                  <Icon name="lock" size={13} className="text-ink-3 shrink-0" />
-                  <span className="flex-1 text-ink-2" data-testid="trial-cap-explainer">
-                    {trialCapExplainer(meta.label, sub.trial_storage_cap_bytes, formatStorageSI)}
-                  </span>
-                  {!heldUntil && (
-                    <BBButton
-                      size="sm"
-                      variant="amber"
-                      data-testid="pay-now-button"
-                      onClick={() => void handlePayNow()}
-                      disabled={payNowState.phase === 'submitting' || payNowState.phase === 'pending'}
-                    >
-                      {payNowState.phase === 'submitting' || payNowState.phase === 'pending'
-                        ? 'Processing…'
-                        : payNowButtonLabel(meta.label)}
-                    </BBButton>
-                  )}
-                </div>
-              )}
-              {trialCapped && !heldUntil && payNowState.phase === 'pending' && (
-                <div data-testid="pay-now-pending" className="px-5 py-2 border-t border-line bg-paper-2 text-xs text-amber-deep">
-                  {payNowState.message}
-                </div>
-              )}
-              {trialCapped && !heldUntil && payNowState.phase === 'error' && (
-                <div data-testid="pay-now-error" className="px-5 py-2 border-t border-line bg-paper-2 text-xs text-red">
-                  {payNowState.message}
-                </div>
-              )}
-            </Card>
 
             {/* Task 1814: redeem a coupon link or code. Only for an account that holds no plan
                 (the server refuses one that does, so the card is not offered there). */}
@@ -2763,83 +2572,14 @@ function openUpgrade(plan: string) {
                 PaymentMethod fields (type/brand/last4/iban_last4/is_default);
                 same data + same Update/Add handler as the detailed view. */}
             {effectivePlan !== 'free' && sub?.status !== 'trialing' && pmLoaded && (
-              <Card className="overflow-hidden">
-                <div className="px-5 py-4 flex items-center justify-between border-b border-line">
-                  <SectionLabel>Payment method</SectionLabel>
-                  <button
-                    className="inline-flex items-center gap-1.5 text-[12px] font-medium text-amber-deep hover:text-amber transition-colors disabled:opacity-50"
-                    onClick={() => void handleUpdatePaymentMethod()}
-                    disabled={portalLoading}
-                  >
-                    <Icon name="plus" size={12} />
-                    {portalLoading ? 'Redirecting...' : paymentMethod ? 'Update method' : 'Add method'}
-                  </button>
-                </div>
-                <div className="px-5 py-4 flex items-center justify-between gap-4">
-                  {paymentMethod ? (
-                    // SEPA mandate (#7): a "SEPA" badge + the masked IBAN (mono) and a
-                    // muted "{holder} · mandate {ref}" line. We treat it as SEPA when the
-                    // method type is directdebit OR the new mandate fields are present.
-                    paymentMethod.type === 'directdebit' || paymentMethod.iban_masked || paymentMethod.mandate_reference ? (
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="shrink-0 inline-flex items-center justify-center px-2 py-1 rounded-md border border-line bg-paper-2 font-mono text-[10px] font-semibold uppercase tracking-wide text-ink-2">
-                          SEPA
-                        </span>
-                        <div className="min-w-0">
-                          <div className="font-mono text-[13px] text-ink truncate">
-                            {paymentMethod.iban_masked
-                              ?? (paymentMethod.iban_last4 ? `•••• ${paymentMethod.iban_last4}` : 'SEPA Direct Debit')}
-                          </div>
-                          {(paymentMethod.account_holder_name || paymentMethod.mandate_reference) && (
-                            <div className="text-[11.5px] text-ink-3 mt-0.5 truncate">
-                              {paymentMethod.account_holder_name && (
-                                <span>{paymentMethod.account_holder_name}</span>
-                              )}
-                              {paymentMethod.account_holder_name && paymentMethod.mandate_reference && ' · '}
-                              {paymentMethod.mandate_reference && (
-                                <>mandate <span className="font-mono">{paymentMethod.mandate_reference}</span></>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="shrink-0 inline-flex items-center justify-center px-2 py-1 rounded-md border border-line bg-paper-2 font-mono text-[10px] font-semibold uppercase tracking-wide text-ink-2">
-                        {paymentMethod.brand ?? 'Card'}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-[13px] text-ink flex items-center gap-2 flex-wrap">
-                          <span className="font-medium">{paymentMethod.brand ?? 'Card'}</span>
-                          {(paymentMethod.iban_last4 || paymentMethod.last4) && (
-                            <span className="font-mono text-ink-2">
-                              •••• {paymentMethod.iban_last4 ?? paymentMethod.last4}
-                            </span>
-                          )}
-                        </div>
-                        {paymentMethod.exp_month && paymentMethod.exp_year && (
-                          <div className="text-[11.5px] text-ink-3 mt-0.5">
-                            Expires{' '}
-                            <span className="font-mono">
-                              {String(paymentMethod.exp_month).padStart(2, '0')}/{paymentMethod.exp_year}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    )
-                  ) : (
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Icon name="shield" size={16} className="text-ink-3 shrink-0" />
-                      <div className="text-[13px] text-ink-2">No payment method on file</div>
-                    </div>
-                  )}
-                  {paymentMethod?.is_default && (
-                    <BBChip variant="green">Default</BBChip>
-                  )}
-                </div>
-              </Card>
+              <PaymentMethodPanel
+                variant="summary"
+                method={paymentMethod}
+                busy={portalLoading}
+                onUpdate={() => void handleUpdatePaymentMethod()}
+              />
             )}
+
 
             {/* Payment History (#7) — the 0936 transactions view, restyled, with
                 the "Export all" CSV affordance (task 0942) in the header. */}
@@ -3077,30 +2817,17 @@ function openUpgrade(plan: string) {
             </div>
 
             {/* Storage usage */}
-            <div className="mb-4">
-              <div className="flex items-baseline justify-between mb-2">
-                <div className="text-[11px] text-ink-4 font-medium">Storage</div>
-                <div className="font-mono text-sm font-semibold">
-                  {formatStorageSI(usedBytes)}
-                  <span className="text-ink-3 font-normal"> / {formatStorageSI(totalStorageBytes)}</span>
-                </div>
-              </div>
-              {currentExtraTB > 0 && (
-                <div className="text-[11px] text-ink-3 mb-1.5">
-                  {formatStorageSI(baseTB * 1_000_000_000_000)} base + {formatStorageSI(currentExtraTB * 1_000_000_000_000)} extra
-                </div>
-              )}
-              <AnimatedProgress percent={usedPercent} />
-              {usedPercent > 90 && (
-                <div className="text-[11px] text-red mt-1.5">
-                  {noCardTrial
-                    ? 'Your trial is almost full. Choose a plan to store more.'
-                    : canAddStorage
-                    ? 'Storage almost full. Add more storage below.'
-                    : 'Storage almost full. Consider upgrading your plan.'}
-                </div>
-              )}
-            </div>
+            <UsagePanel
+              variant="progress"
+              usedBytes={usedBytes}
+              totalStorageBytes={totalStorageBytes}
+              usedPercent={usedPercent}
+              extraTb={currentExtraTB}
+              baseTb={baseTB}
+              canAddStorage={canAddStorage}
+              noCardTrial={noCardTrial !== null}
+            />
+
 
             {/* Next billing / trial ends (flow-money #5). Cancelling is
                 excluded here: the cancelling panel below owns that date. */}
@@ -3737,79 +3464,14 @@ Cancel plan
             card, instead of a misleading "Card" fallback — same field checks
             (type === 'directdebit' OR the mandate fields present) as above. */}
         {effectivePlan !== 'free' && sub?.status !== 'trialing' && pmLoaded && (
-          <div className="border border-line rounded-xl overflow-hidden bg-paper">
-            <div className="px-5 py-4 border-b border-line">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4">
-                Payment method
-              </div>
-            </div>
-            <div className="px-5 py-4 flex items-center justify-between gap-4">
-              {paymentMethod ? (
-                paymentMethod.type === 'directdebit' || paymentMethod.iban_masked || paymentMethod.mandate_reference ? (
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="shrink-0 inline-flex items-center justify-center px-2 py-1 rounded-md border border-line bg-paper-2 font-mono text-[10px] font-semibold uppercase tracking-wide text-ink-2">
-                      SEPA
-                    </span>
-                    <div className="min-w-0">
-                      <div className="font-mono text-[13px] text-ink truncate">
-                        {paymentMethod.iban_masked
-                          ?? (paymentMethod.iban_last4 ? `•••• ${paymentMethod.iban_last4}` : 'SEPA Direct Debit')}
-                      </div>
-                      {(paymentMethod.account_holder_name || paymentMethod.mandate_reference) && (
-                        <div className="text-[11.5px] text-ink-3 mt-0.5 truncate">
-                          {paymentMethod.account_holder_name && (
-                            <span>{paymentMethod.account_holder_name}</span>
-                          )}
-                          {paymentMethod.account_holder_name && paymentMethod.mandate_reference && ' · '}
-                          {paymentMethod.mandate_reference && (
-                            <>mandate <span className="font-mono">{paymentMethod.mandate_reference}</span></>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Icon name="shield" size={16} className="text-ink-3 shrink-0" />
-                    <div className="min-w-0">
-                      <div className="text-[13px] text-ink flex items-center gap-2 flex-wrap">
-                        <span className="font-medium">{paymentMethod.brand ?? 'Card'}</span>
-                        {paymentMethod.last4 && (
-                          <span className="font-mono text-ink-2">•••• {paymentMethod.last4}</span>
-                        )}
-                      </div>
-                      {paymentMethod.exp_month && paymentMethod.exp_year && (
-                        <div className="text-[11.5px] text-ink-3 mt-0.5">
-                          Expires{' '}
-                          <span className="font-mono">
-                            {String(paymentMethod.exp_month).padStart(2, '0')}/{paymentMethod.exp_year}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              ) : (
-                <div className="flex items-center gap-3 min-w-0">
-                  <Icon name="shield" size={16} className="text-ink-3 shrink-0" />
-                  <div className="text-[13px] text-ink-2">No payment method on file</div>
-                </div>
-              )}
-              <BBButton
-                size="sm"
-                variant="ghost"
-                onClick={() => void handleUpdatePaymentMethod()}
-                disabled={portalLoading}
-              >
-                {portalLoading
-                  ? 'Redirecting...'
-                  : paymentMethod
-                    ? 'Update payment method'
-                    : 'Add payment method'}
-              </BBButton>
-            </div>
-          </div>
+          <PaymentMethodPanel
+            variant="detailed"
+            method={paymentMethod}
+            busy={portalLoading}
+            onUpdate={() => void handleUpdatePaymentMethod()}
+          />
         )}
+
 
         {/* ── Storage breakdown ──────────────────────── */}
         {usedBytes > 0 && (
@@ -4285,3 +3947,6 @@ Cancel plan
     </SettingsShell>
   )
 }
+
+/** The route entry keeps the name the router mounts it under. */
+export const Billing = BillingPage

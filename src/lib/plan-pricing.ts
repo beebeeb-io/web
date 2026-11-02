@@ -64,11 +64,6 @@ export function planEffectiveQuota(
   return Number(plan_effective_quota(planSlug, BigInt(extraTB), BigInt(bonusBytes)))
 }
 
-export function formatCentsAsEur(cents: number): string {
-  if (!Number.isFinite(cents)) return '0.00'
-  const eur = cents / 100
-  return eur % 1 === 0 ? eur.toFixed(0) : eur.toFixed(2)
-}
 
 export function formatStorageSI(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '—'
