@@ -2,28 +2,19 @@
 import { provenanceHeaders } from '@beebeeb/shared'
 import { getToken, getApiUrl, uploadThumbnail, uploadThumbnailLarge } from './api'
 import { getOfflineCacheScope, isCurrentOfflineCacheScope } from './offline-cache'
+import {
+  ensureThumbnailWasm,
+  fitWithin,
+  thumbnailBudgetFor,
+  thumbnailFormatFor,
+  thumbnailMime,
+  thumbnailPolicyFor,
+  type ThumbnailVariant,
+} from './thumbnail-policy'
 
-const THUMB_SIZE = 768
-const MAX_THUMB_BYTES = 50 * 1024
-const THUMB_VARIANTS = [
-  { size: THUMB_SIZE, quality: 0.82 },
-  { size: THUMB_SIZE, quality: 0.74 },
-  { size: THUMB_SIZE, quality: 0.66 },
-  { size: THUMB_SIZE, quality: 0.58 },
-  { size: THUMB_SIZE, quality: 0.5 },
-] as const
-
-const LARGE_THUMB_SIZE = 1600
-const MAX_LARGE_THUMB_BYTES = 480 * 1024
-const LARGE_THUMB_VARIANTS = [
-  { size: LARGE_THUMB_SIZE, quality: 0.90 },
-  { size: LARGE_THUMB_SIZE, quality: 0.82 },
-  { size: LARGE_THUMB_SIZE, quality: 0.74 },
-  { size: LARGE_THUMB_SIZE, quality: 0.66 },
-  { size: LARGE_THUMB_SIZE, quality: 0.58 },
-  { size: LARGE_THUMB_SIZE, quality: 0.50 },
-] as const
-
+// Stored ciphertext carries no format of its own (the encoder lives outside the
+// wire), and the browser is always the `web` platform, so decrypted thumbnails
+// keep the WebP type the encoder produces here.
 const THUMB_FORMAT = 'image/webp'
 const CACHE_NAME = 'beebeeb-thumbnails-encrypted-v3'
 const LEGACY_CACHE_NAME = 'beebeeb-thumbnails-v2'
@@ -100,34 +91,45 @@ export function isImageType(mimeType: string | null | undefined): boolean {
   return !!mimeType && IMAGE_TYPES.has(mimeType)
 }
 
-export async function generateThumbnail(file: File): Promise<Blob | null> {
+async function encodeThumbnailVariant(
+  file: File,
+  variant: ThumbnailVariant,
+): Promise<Blob | null> {
   if (!isImageType(file.type)) return null
 
   try {
+    await ensureThumbnailWasm()
+    const policy = thumbnailPolicyFor(variant)
+    const mime = thumbnailMime(thumbnailFormatFor(variant, 'web'))
+
     const bitmap = await createImageBitmap(file)
     try {
-      let fallback: Blob | null = null
-      for (const variant of THUMB_VARIANTS) {
-        const scale = Math.min(variant.size / bitmap.width, variant.size / bitmap.height, 1)
-        const w = Math.max(1, Math.round(bitmap.width * scale))
-        const h = Math.max(1, Math.round(bitmap.height * scale))
+      let best: Blob | null = null
+      for (const step of policy.steps) {
+        const size = fitWithin(bitmap.width, bitmap.height, step.maxDimension)
+        if (!size) return null
 
-        const canvas = new OffscreenCanvas(w, h)
+        const canvas = new OffscreenCanvas(size.width, size.height)
         const ctx = canvas.getContext('2d')
         if (!ctx) continue
 
-        ctx.drawImage(bitmap, 0, 0, w, h)
-        const blob = await canvas.convertToBlob({ type: THUMB_FORMAT, quality: variant.quality })
-        fallback = blob
-        if (blob.size <= MAX_THUMB_BYTES) return blob
+        ctx.drawImage(bitmap, 0, 0, size.width, size.height)
+        const blob = await canvas.convertToBlob({ type: mime, quality: step.quality / 100 })
+        best = blob
+        const verdict = thumbnailBudgetFor(variant, blob.size)
+        if (verdict === 'target') return blob
       }
-      return fallback
+      return best
     } finally {
       bitmap.close()
     }
   } catch {
     return null
   }
+}
+
+export async function generateThumbnail(file: File): Promise<Blob | null> {
+  return encodeThumbnailVariant(file, 'medium')
 }
 
 /**
@@ -202,33 +204,7 @@ export async function encryptAndUploadThumbnail(
 }
 
 export async function generateLargeThumbnail(file: File): Promise<Blob | null> {
-  if (!isImageType(file.type)) return null
-
-  try {
-    const bitmap = await createImageBitmap(file)
-    try {
-      let fallback: Blob | null = null
-      for (const variant of LARGE_THUMB_VARIANTS) {
-        const scale = Math.min(variant.size / bitmap.width, variant.size / bitmap.height, 1)
-        const w = Math.max(1, Math.round(bitmap.width * scale))
-        const h = Math.max(1, Math.round(bitmap.height * scale))
-
-        const canvas = new OffscreenCanvas(w, h)
-        const ctx = canvas.getContext('2d')
-        if (!ctx) continue
-
-        ctx.drawImage(bitmap, 0, 0, w, h)
-        const blob = await canvas.convertToBlob({ type: THUMB_FORMAT, quality: variant.quality })
-        fallback = blob
-        if (blob.size <= MAX_LARGE_THUMB_BYTES) return blob
-      }
-      return fallback
-    } finally {
-      bitmap.close()
-    }
-  } catch {
-    return null
-  }
+  return encodeThumbnailVariant(file, 'large')
 }
 
 export async function encryptAndUploadLargeThumbnail(
