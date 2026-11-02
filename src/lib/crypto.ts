@@ -2,6 +2,7 @@ import * as Comlink from 'comlink'
 import type { ContentPin, DecryptSummary, PinnedMetadata } from './content-crypto'
 import { withProxy } from './crypto/service'
 import { fromBase64, toBase64, x25519SharedSecret, zeroize } from './crypto/helpers'
+import { withCryptoError } from './crypto/errors'
 
 export * from './crypto/service'
 export * from './crypto/search-index'
@@ -9,6 +10,7 @@ export * from './crypto/file-requests'
 export * from './crypto/transfers'
 export * from './crypto/helpers'
 export * from './crypto/ceremony'
+export * from './crypto/errors'
 
 // ─── Key derivation ─────────────────────────────────
 
@@ -64,7 +66,7 @@ export async function decryptChunk(
   nonce: Uint8Array,
   ciphertext: Uint8Array,
 ): Promise<Uint8Array> {
-  return withProxy((p) => p.decryptChunk(fileKey, nonce, ciphertext))
+  return withCryptoError(() => withProxy((p) => p.decryptChunk(fileKey, nonce, ciphertext)))
 }
 
 /**
@@ -113,7 +115,7 @@ export {
  * write and replace of that file.
  */
 export async function readFileMetadata(fileKey: Uint8Array, nameEncrypted: string): Promise<PinnedMetadata> {
-  return withProxy((p) => p.readFileMetadata(fileKey, nameEncrypted))
+  return withCryptoError(() => withProxy((p) => p.readFileMetadata(fileKey, nameEncrypted)))
 }
 
 /**
@@ -122,7 +124,7 @@ export async function readFileMetadata(fileKey: Uint8Array, nameEncrypted: strin
  * never the source of a FILE's content pin.
  */
 export async function readNameMetadata(fileKey: Uint8Array, nameEncrypted: string): Promise<PinnedMetadata> {
-  return withProxy((p) => p.readNameMetadata(fileKey, nameEncrypted))
+  return withCryptoError(() => withProxy((p) => p.readNameMetadata(fileKey, nameEncrypted)))
 }
 
 /** Seal a note of an EXISTING file or folder under the rule of its recorded pin (see src/lib/file-note.ts). */
@@ -132,7 +134,7 @@ export async function encryptNoteFor(fileKey: Uint8Array, text: string, pin: Con
 
 /** Open a note: the note subkey first, then the legacy raw key. Throws on plaintext or a wrong key. */
 export async function decryptNote(fileKey: Uint8Array, noteEncrypted: string): Promise<string> {
-  return withProxy((p) => p.decryptNote(fileKey, noteEncrypted))
+  return withCryptoError(() => withProxy((p) => p.decryptNote(fileKey, noteEncrypted)))
 }
 
 // ─── SF-0002 owner read-repair ──────────────────────
