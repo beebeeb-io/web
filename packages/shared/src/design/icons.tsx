@@ -50,6 +50,8 @@ export type IconName =
   | 'flag'
   | 'edit'
   | 'columns'
+  | 'globe'
+  | 'chat'
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -147,6 +149,17 @@ const paths: Record<IconName, string> = {
   edit: 'M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z M15 5l4 4',
   // Columns: two vertical panes — for the editor's markdown split view (task 1563)
   columns: 'M4 4h16v16H4z M12 4v16',
+  // Globe and Chat: the VPN and Chat product glyphs (task 2322). The globe, not the shield, stands for
+  // VPN: the shield is reserved for encryption state.
+  globe:
+    'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9M12 3c-2.5 2.6-3.8 5.6-3.8 9s1.3 6.4 3.8 9',
+  chat:
+    'M21 11.5a8.4 8.4 0 0 1-12.3 7.4L3 21l2.1-5.6A8.4 8.4 0 1 1 21 11.5z',
+}
+
+/** The raw 24-grid path of a glyph, for components that draw it inside another SVG (the product icons). */
+export function iconPath(name: IconName): string {
+  return paths[name]
 }
 
 export function Icon({ name, size = 24, ...rest }: IconProps) {
@@ -180,12 +193,9 @@ export function Icon({ name, size = 24, ...rest }: IconProps) {
       strokeLinejoin="round"
       {...rest}
     >
-      {d.split('z').length > 1
-        ? d
-            .split(/(?<=z)/g)
-            .filter(Boolean)
-            .map((seg, i) => <path key={i} d={seg.trim()} />)
-        : <path d={d} />}
+      {/* One <path> for every subpath: splitting at `z` cut a relative `m` (the key's) loose from the
+          point it is relative to, so it started at the origin and drew a stray line. */}
+      <path d={d} />
     </svg>
   )
 }
