@@ -679,7 +679,20 @@ export function useBillingData() {
       ? rawTotalStorageBytes
       : meta.storageGB * 1_000_000_000
   const usedBytes = contextUsage?.used_bytes ?? 0
-  const usedPercent = totalStorageBytes > 0 ? (usedBytes / totalStorageBytes) * 100 : 0
+  // Spec §16.3 decision 4: `BillingUsage.percentage` is the server's fraction
+  // 0.0–1.0, so the bar renders `percentage * 100`. Use it only while the
+  // displayed total is the same quota the server measured against; a trial cap
+  // or an unrefreshed add-on override makes the displayed total differ, and a
+  // derived ratio is then the only honest number.
+  const serverPercent = contextUsage?.percentage
+  const usedPercent =
+    serverPercent != null &&
+    Number.isFinite(serverPercent) &&
+    contextUsage?.plan_limit_bytes === totalStorageBytes
+      ? serverPercent * 100
+      : totalStorageBytes > 0
+        ? (usedBytes / totalStorageBytes) * 100
+        : 0
 
   // SEPA two-path (task 0941). A directdebit mandate can only be charged
   // off-session (settles in a few days), so the storage-update dialog offers an

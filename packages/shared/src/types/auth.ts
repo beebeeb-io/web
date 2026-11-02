@@ -5,6 +5,7 @@
  * Beebeeb clients. Keep this file dependency-free so type-only imports never
  * pull in React or app-local runtime code.
  */
+import type { components } from './openapi'
 
 export type ErrorNotifier = (message: string) => void
 
@@ -58,21 +59,10 @@ export interface TotpSetupResponse {
 }
 
 /** One stored chunk of a file's download version (server `version_download.rs`). */
-export interface DownloadVersionChunk {
-  index: number
-  size_bytes: number
-}
+export type DownloadVersionChunk = components['schemas']['DownloadChunk']
 
 /**
  * The exact object version a file's content currently lives in (LD-0001).
  * Optional on the row because older server responses do not carry it.
  */
-export interface DownloadVersion {
-  object_version_id: string
-  version_number: number
-  chunk_count: number
-  chunk_size_bytes: number
-  plaintext_size_bytes: number
-  ciphertext_size_bytes: number
-  chunks: DownloadVersionChunk[]
-}
+export type DownloadVersion = components['schemas']['DownloadVersion']

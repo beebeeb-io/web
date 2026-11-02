@@ -1,4 +1,5 @@
 // Shared admin types: tokens, webhooks, audit events, and role changes.
+import type { components } from './openapi'
 export interface PersonalAccessToken {
   id: string
   name: string
@@ -9,15 +10,8 @@ export interface PersonalAccessToken {
   expires_at: string | null
 }
 
-export interface CreateTokenResponse {
-  id: string
-  /** Raw token — shown exactly once. Server never returns it again. */
-  token: string
-  name: string
-  /** Always [] from the server since task 1789. */
-  scopes?: string[]
-  expires_at: string | null
-}
+/** Raw `token` is shown exactly once; the server never returns it again. */
+export type CreateTokenResponse = components['schemas']['CreateTokenResponse']
 
 export interface CreateTokenParams {
   name: string

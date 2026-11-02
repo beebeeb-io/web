@@ -1,4 +1,6 @@
 // Shared billing types: plans, subscriptions, invoices, and storage usage.
+import type { components } from './openapi'
+
 export interface Plan {
   id: string
   name: string
@@ -249,18 +251,21 @@ export interface Invoice {
   pdf_url?: string
 }
 
-export interface StorageUsage {
-  used_bytes: number
-  plan_limit_bytes: number
-  plan_name: string
-}
+/**
+ * The account's storage usage (`GET /files/usage`), generated from the
+ * server's OpenAPI document (`contracts/openapi.json`, `SERVER_REV`).
+ */
+export type StorageUsage = components['schemas']['StorageUsageResponse']
 
-export interface BillingUsage {
-  used_bytes: number
-  quota_bytes: number
-  /** Server-computed percentage 0–100. */
-  percentage: number
-}
+/**
+ * Storage usage summary (`GET /billing/usage`), generated from the server's
+ * OpenAPI document.
+ *
+ * `percentage` is a fraction 0.0–1.0 (spec §16.3 decision 4), never 0–100:
+ * a usage bar renders `percentage * 100`. The generated schema carries no
+ * other percentage contract, so this note is the only place it is stated.
+ */
+export type BillingUsage = components['schemas']['UsageResponse']
 
 export interface PaymentMethod {
   type: string

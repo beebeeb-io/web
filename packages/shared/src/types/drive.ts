@@ -1,4 +1,5 @@
 // Shared drive types: files, uploads, sync nodes, ops, and snapshots.
+import type { components } from './openapi'
 import type { DownloadVersion } from './auth'
 
 export interface DriveFile {
@@ -59,12 +60,7 @@ export interface DriveFile {
   updated_at: string
 }
 
-export interface UploadStatusResponse {
-  file_id: string
-  chunk_count: number
-  uploaded_chunks: number[]
-  is_uploading: boolean
-}
+export type UploadStatusResponse = components['schemas']['UploadStatusResponse']
 
 /** Response from `POST /api/v1/files/:id/upload/abandon` (task 1571). */
 export interface UploadAbandonResponse {
