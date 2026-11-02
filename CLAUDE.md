@@ -77,7 +77,7 @@ The rules whose breakage costs data, a key, a credential or a user. One line eac
 
 Workspace `CLAUDE.md` → "How we work" is the rule set. Here: the truth lines above; design before code (`../../design/hifi/*.jsx` wins over
 the code, deviations go in `DEVIATIONS.md`/the task file before the code changes); UI verified with Playwright screenshots.
-Recipes (new page, new API function) and route list: `docs/agent-notes.md`.
+Task recipes: docs/agents/recipes.md — the path for a recurring task; each is ≤ 30 lines and the checker proves its files and items exist. Route list: `docs/agent-notes.md`.
 
 ## Graphify and shared docs
 
