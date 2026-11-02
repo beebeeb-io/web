@@ -20,6 +20,7 @@ import { preserveGlobals, setGlobal } from './helpers/scoped-global'
 import { legacyOwnerCopy, ownedFolderCrypto } from './helpers/owned-folder-wasm'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import { createContentOps } from '../src/lib/content-crypto'
+import { encodeEnvelope } from '../src/lib/metadata-envelope'
 
 const wasm = loadWasm()
 const ops = createContentOps(wasm)
@@ -252,7 +253,7 @@ describe('rv198d N3 / R1: the owner never opens a row through a legacy owner cop
     // Everything below is computable by the server: the "folder key" is the folder's name JSON.
     const forgedRow = await share.legacyInviteChildWrap(encoder.encode(json), SERVER_FILE_KEY)
     const fn = wasm.encrypt_metadata(SERVER_FILE_KEY, JSON.stringify({ name: 'invoice.pdf', mime_type: 'application/pdf' })) as { nonce: Uint8Array; ciphertext: Uint8Array }
-    const file = { id: FILE_ID, parent_id: ROOT, uploaded_by: MEMBER, name_encrypted: real.serializeEncryptedBlob(fn.nonce, fn.ciphertext) as string }
+    const file = { id: FILE_ID, parent_id: ROOT, uploaded_by: MEMBER, name_encrypted: encodeEnvelope(wasm, fn.nonce, fn.ciphertext) }
     return { file, forgedRow }
   }
 
@@ -279,7 +280,7 @@ describe('rv198d N3 / R1: the owner never opens a row through a legacy owner cop
   test('control: a custody folder still opens and adopts (flag on)', async () => {
     custody = 'record'
     const fn = wasm.encrypt_metadata(CHILD_KEY, JSON.stringify({ name: 'a.txt', mime_type: null })) as { nonce: Uint8Array; ciphertext: Uint8Array }
-    const file = { id: FILE_ID, parent_id: ROOT, uploaded_by: MEMBER, name_encrypted: real.serializeEncryptedBlob(fn.nonce, fn.ciphertext) as string }
+    const file = { id: FILE_ID, parent_id: ROOT, uploaded_by: MEMBER, name_encrypted: encodeEnvelope(wasm, fn.nonce, fn.ciphertext) }
     const row = await share.sealChildKey(CUSTODY_KEY, { rootId: ROOT, itemId: FILE_ID, isFolder: false }, CHILD_KEY)
     const res = await adoption.openOwnerFile({ masterKey: MASTER, folderId: ROOT, file,
       keyIndexPromise: Promise.resolve(new Map([[FILE_ID, row]])), labelFor: async () => null })
@@ -291,7 +292,7 @@ describe('rv198d N3 / R1: the owner never opens a row through a legacy owner cop
     custody = 'record'
     flagOn = false
     const fn = wasm.encrypt_metadata(CHILD_KEY, JSON.stringify({ name: 'a.txt', mime_type: null })) as { nonce: Uint8Array; ciphertext: Uint8Array }
-    const file = { id: FILE_ID, parent_id: ROOT, uploaded_by: MEMBER, name_encrypted: real.serializeEncryptedBlob(fn.nonce, fn.ciphertext) as string }
+    const file = { id: FILE_ID, parent_id: ROOT, uploaded_by: MEMBER, name_encrypted: encodeEnvelope(wasm, fn.nonce, fn.ciphertext) }
     const row = await share.sealChildKey(CUSTODY_KEY, { rootId: ROOT, itemId: FILE_ID, isFolder: false }, CHILD_KEY)
     await adoption.openOwnerFile({ masterKey: MASTER, folderId: ROOT, file,
       keyIndexPromise: Promise.resolve(new Map([[FILE_ID, row]])), labelFor: async () => null })
@@ -322,7 +323,7 @@ describe("R1: getFileKeyForFile's foreign-row branch is flag-gated (foreignRowKe
     custody = 'record'
     const row = await share.sealChildKey(CUSTODY_KEY, { rootId: ROOT, itemId: FILE_ID, isFolder: false }, CHILD_KEY)
     const fn = wasm.encrypt_metadata(CHILD_KEY, JSON.stringify({ name: 'a.txt', mime_type: null })) as { nonce: Uint8Array; ciphertext: Uint8Array }
-    const file = { ...memberRow, parent_id: ROOT, name_encrypted: real.serializeEncryptedBlob(fn.nonce, fn.ciphertext) as string }
+    const file = { ...memberRow, parent_id: ROOT, name_encrypted: encodeEnvelope(wasm, fn.nonce, fn.ciphertext) }
     const key = await adoption.foreignRowKey({ masterKey: MASTER, file, viewerId: 'acct-owner',
       keyIndexFor: async () => new Map([[FILE_ID, row]]) })
     expect(Array.from(key ?? [])).toEqual(Array.from(CHILD_KEY))

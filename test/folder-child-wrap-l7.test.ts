@@ -14,12 +14,14 @@
 import { describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
+import { loadWasm } from './helpers/wasm-crypto-mirror'
+import { encodeEnvelope } from '../src/lib/metadata-envelope'
 
 await mockModuleScoped('../src/lib/crypto', import.meta.dir, ownedFolderCrypto())
 
 const { sealChildKey, openChildKey, openFolderChild, legacyInviteChildWrap } = await import('../src/lib/folder-share-crypto')
 const { describeGuestItem } = await import('../src/components/folder-link/use-guest-listing')
-const { encryptFileMetadata, serializeEncryptedBlob } = await import('../src/lib/crypto')
+const { encryptFileMetadata } = await import('../src/lib/crypto')
 
 const ROOT = '11111111-1111-4111-8111-111111111111'
 const OTHER_ROOT = '44444444-4444-4444-8444-444444444444'
@@ -32,7 +34,7 @@ function key(): Uint8Array {
 
 async function nameUnder(fileKey: Uint8Array, name: string): Promise<string> {
   const meta = await encryptFileMetadata(fileKey, name, 'text/plain')
-  return serializeEncryptedBlob(meta.nonce, meta.ciphertext)
+  return encodeEnvelope(loadWasm(), meta.nonce, meta.ciphertext)
 }
 
 function row(id: string, wrapped: string, nameEncrypted: string) {
