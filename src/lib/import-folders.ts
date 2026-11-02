@@ -78,7 +78,7 @@ export function createImportFolderTree(
         let nameEncrypted = minted?.nameEncrypted
         if (nameEncrypted === undefined) {
           const sealed = await encryptFilename(nameKey, name)
-          nameEncrypted = serializeEncryptedBlob(sealed.nonce, sealed.ciphertext)
+          nameEncrypted = await serializeEncryptedBlob(sealed.nonce, sealed.ciphertext)
           mintedFor.set(key, { folderId, nameEncrypted })
         }
         // Inside a shared folder its name-key wrap is published too.

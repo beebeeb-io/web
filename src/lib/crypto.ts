@@ -618,47 +618,18 @@ export async function encryptFileKeyForSharing(
 
 // ─── Encrypted blob serialization ──────────────────
 //
-// Canonical wire format (used by CLI, mobile, and now web):
-//   {"cipher_suite":"V1Aes256Gcm","nonce":[byte_array],"ciphertext":[byte_array]}
-//
-// Legacy web format (still accepted on read, no longer produced):
-//   {"nonce":"base64string","ciphertext":"base64string"}
+// The envelope grammar lives in core (`metadata_wire`, W-P3-2): the worker
+// writes core's frozen canonical form and reads every form clients have
+// stored. See `metadata-envelope.ts`; this file only hops to the worker.
 
-/**
- * Parse an encrypted blob JSON string into raw nonce + ciphertext bytes.
- *
- * Tolerant reader: accepts canonical format (cipher_suite + byte arrays),
- * legacy web format (base64 strings), or a mix.
- */
-export function parseEncryptedBlob(json: string): { nonce: Uint8Array; ciphertext: Uint8Array } {
-  const parsed = JSON.parse(json) as {
-    cipher_suite?: string
-    nonce: string | number[]
-    ciphertext: string | number[]
-  }
-
-  const nonce = Array.isArray(parsed.nonce)
-    ? new Uint8Array(parsed.nonce)
-    : fromBase64(parsed.nonce)
-
-  const ciphertext = Array.isArray(parsed.ciphertext)
-    ? new Uint8Array(parsed.ciphertext)
-    : fromBase64(parsed.ciphertext)
-
-  return { nonce, ciphertext }
+/** Parse an encrypted blob JSON string into raw nonce + ciphertext bytes (core's tolerant reader). */
+export async function parseEncryptedBlob(json: string): Promise<{ nonce: Uint8Array; ciphertext: Uint8Array }> {
+  return withCryptoError(() => withProxy((p) => p.decodeMetadataEnvelope(json)))
 }
 
-/**
- * Serialize nonce + ciphertext into the canonical encrypted blob JSON format.
- *
- * All new writes use canonical format so CLI, mobile, and web are interoperable.
- */
-export function serializeEncryptedBlob(nonce: Uint8Array, ciphertext: Uint8Array): string {
-  return JSON.stringify({
-    cipher_suite: 'V1Aes256Gcm',
-    nonce: Array.from(nonce),
-    ciphertext: Array.from(ciphertext),
-  })
+/** Serialize nonce + ciphertext into core's canonical encrypted blob JSON format. */
+export async function serializeEncryptedBlob(nonce: Uint8Array, ciphertext: Uint8Array): Promise<string> {
+  return withProxy((p) => p.encodeMetadataEnvelope(nonce, ciphertext))
 }
 
 // ─── Chunk planning ────────────────────────────────

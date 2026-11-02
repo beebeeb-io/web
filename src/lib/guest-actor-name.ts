@@ -32,7 +32,7 @@ function storageSet(key: string, value: string): void {
  */
 export async function encryptActorName(folderKey: Uint8Array, name: string): Promise<string> {
   const encrypted = await encryptFilename(folderKey, name)
-  return serializeEncryptedBlob(encrypted.nonce, encrypted.ciphertext)
+  return await serializeEncryptedBlob(encrypted.nonce, encrypted.ciphertext)
 }
 
 export async function decryptActorName(

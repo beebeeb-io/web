@@ -13,6 +13,7 @@ import {
   type DecryptSummary,
   type PinnedMetadata,
 } from '../lib/content-crypto'
+import { decodeEnvelope, encodeEnvelope, type EnvelopeBytes } from '../lib/metadata-envelope'
 
 // Import the .wasm binary URL via Vite's ?url suffix so it resolves
 // correctly inside a bundled worker (import.meta.url in the wasm-pack
@@ -272,6 +273,16 @@ const cryptoWorker = {
   ): Promise<Uint8Array> {
     const wasm = await ensureWasm()
     return wasm.decrypt_chunk(fileKey, nonce, ciphertext)
+  },
+
+  /** Core's canonical metadata-envelope writer (W-P3-2). */
+  async encodeMetadataEnvelope(nonce: Uint8Array, ciphertext: Uint8Array): Promise<string> {
+    return encodeEnvelope(await ensureWasm(), nonce, ciphertext)
+  },
+
+  /** Core's tolerant metadata-envelope reader (W-P3-2). */
+  async decodeMetadataEnvelope(payload: string): Promise<EnvelopeBytes> {
+    return decodeEnvelope(await ensureWasm(), payload)
   },
 
   /** Encrypt a filename / metadata string with AES-256-GCM. */

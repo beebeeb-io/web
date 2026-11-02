@@ -44,7 +44,7 @@ export async function createNamedOwnerFolder(args: {
     // Inside a shared folder its name-key wrap is published too (guests and
     // members read the name through it).
     return await createOwnerFolder({
-      nameEncrypted: serializeEncryptedBlob(sealed.nonce, sealed.ciphertext),
+      nameEncrypted: await serializeEncryptedBlob(sealed.nonce, sealed.ciphertext),
       parentId: args.parentId,
       folderId,
       nameKey,

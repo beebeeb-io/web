@@ -283,7 +283,7 @@ async function uploadFileWith(
     // encrypts {"name":"filename","mime_type":"image/jpeg"}. Both formats are
     // handled by decryptFileMetadata() on the read side.
     const encName = await encryptFilename(key, metadataPlain)
-    return serializeEncryptedBlob(encName.nonce, encName.ciphertext)
+    return await serializeEncryptedBlob(encName.nonce, encName.ciphertext)
   }
 
   async function startUpload(requestedFileId: string = serverFileId): Promise<void> {

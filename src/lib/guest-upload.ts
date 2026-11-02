@@ -194,7 +194,7 @@ export async function uploadGuestFolder(
   const nameKey = crypto.getRandomValues(new Uint8Array(32))
   try {
     const meta = await encryptFileMetadata(nameKey, name, null)
-    const nameEncrypted = serializeEncryptedBlob(meta.nonce, meta.ciphertext)
+    const nameEncrypted = await serializeEncryptedBlob(meta.nonce, meta.ciphertext)
     const { id, response } = await sendGuestWrite(token, async (id) => {
       const body: Record<string, unknown> = {
         id,
@@ -303,7 +303,7 @@ export async function uploadGuestFiles(args: {
       let fileId: string
       try {
         const meta = await encryptFileMetadata(fileKey, name, task.file.type || null)
-        const nameEncrypted = serializeEncryptedBlob(meta.nonce, meta.ciphertext)
+        const nameEncrypted = await serializeEncryptedBlob(meta.nonce, meta.ciphertext)
 
         const frames: Blob[] = []
         for (let index = 0; index < plan.chunkCount; index += 1) {

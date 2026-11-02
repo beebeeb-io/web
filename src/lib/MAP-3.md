@@ -16,6 +16,7 @@ Modules 94–133, sorted by path.
 | `locked-phrase-unlock.ts` | Task 1810 round 2 (security review P2-3) — what the "Unlock with recovery phrase" button on the signed-in locked surface (VaultLockedNoKey, | — |
 | `markdown-link.ts` | Shared markdown-link safety helper (task 1563 PR #103 review thread). | — |
 | `member-write.ts` | Task 2237b — member writes inside a shared folder. | — |
+| `metadata-envelope.ts` | The JSON metadata envelope (a name, note or metadata blob's stored form), both directions, from core's `metadata_wire` module. | — |
 | `mime-from-name.ts` | ─── MIME from file name ─────────────────────────── The fallback when a row carries no MIME type (ZK uploads). | — |
 | `name-collision.ts` | name-collision.ts Shared duplicate-decrypted-name detection for the drive file list. | — |
 | `net-retry.ts` | Retries a network call with backoff only for transport errors. | — |
@@ -45,4 +46,3 @@ Modules 94–133, sorted by path.
 | `preview-load-policy.ts` | LD-0001 §4 row 5 — the whole-file media cap. | — |
 | `preview.ts` | Decides whether a MIME type can be previewed in the app. | — |
 | `progress-throttle.ts` | LD-0001 PR-C review item 12 — the preview re-renders at most once per 150 ms while a whole-file transfer runs, plus on every phase change an | — |
-| `qr-crypto.ts` | ─── QR provisioning crypto ───────────────────────── Web Crypto API helpers for encrypting/decrypting master key via a 6-digit code. | — |

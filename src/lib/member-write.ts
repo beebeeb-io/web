@@ -132,7 +132,7 @@ export async function memberRename(
   }
   const fileKey = await itemFileKey(ctx, item)
   const enc = await encryptFilename(fileKey, newName)
-  return updateFile(item.id, { name_encrypted: serializeEncryptedBlob(enc.nonce, enc.ciphertext) })
+  return updateFile(item.id, { name_encrypted: await serializeEncryptedBlob(enc.nonce, enc.ciphertext) })
 }
 
 export async function memberTrash(

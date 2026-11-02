@@ -74,5 +74,5 @@ export async function renameOwnerRow(
   await assertCurrentVersionWritable(file, args.masterKey, { viewerId: args.residentUserId })
   const fileKey = await renameKeyFor({ ...args, file })
   const enc = await encryptFilename(fileKey, args.newName)
-  await updateFile(args.fileId, { name_encrypted: serializeEncryptedBlob(enc.nonce, enc.ciphertext) })
+  await updateFile(args.fileId, { name_encrypted: await serializeEncryptedBlob(enc.nonce, enc.ciphertext) })
 }

@@ -802,7 +802,7 @@ export function useDriveUploads(params: DriveUploadsParams) {
         const folderId = crypto.randomUUID()
         const folderKey = await getFileKey(folderId)
         const enc = await encryptFileMetadata(folderKey, folderName)
-        const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
+        const nameEncrypted = await serializeEncryptedBlob(enc.nonce, enc.ciphertext)
 
         // Inside a shared folder its name-key wrap is published too, so guests
         // and members can read the new folder's name.

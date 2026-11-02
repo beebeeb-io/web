@@ -263,7 +263,7 @@ export function useDriveCommands(params: DriveCommandsParams) {
       const folderId = crypto.randomUUID()
       const folderKey = await getFileKey(folderId)
       const enc = await encryptFileMetadata(folderKey, folderName)
-      const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
+      const nameEncrypted = await serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       const result = await createOwnerFolder({ nameEncrypted, folderId })
 
       // Move all matching files into it
