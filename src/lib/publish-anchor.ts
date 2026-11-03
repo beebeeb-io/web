@@ -55,12 +55,13 @@ export function isAnchoredFolder(folderId: string): boolean {
 
 /**
  * May a publish happen for an item created under `folderId`, whose proven root
- * is `rootId`? Only when the tab's own click trail contains the destination or
- * its root, the trail is settled, and the root is non-null (checked elsewhere).
+ * is `rootId`? Only when the tab's own click trail contains R itself and the
+ * trail is settled. The destination alone is not an anchor: the server's parent
+ * walk can place any folder under R, so seeing D says nothing about R.
  */
-export function canPublishAnchored(folderId: string, rootId: string): boolean {
+export function canPublishAnchored(_folderId: string, rootId: string): boolean {
   if (!navigationSettled()) return false
-  return isAnchoredFolder(folderId) || isAnchoredFolder(rootId)
+  return isAnchoredFolder(rootId)
 }
 
 export function resetAnchorsForTests(): void {

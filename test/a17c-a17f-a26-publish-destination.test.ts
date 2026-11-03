@@ -21,6 +21,7 @@ import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { preserveGlobals, setGlobal } from './helpers/scoped-global'
 import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
+import { encodeEnvelope } from '../src/lib/metadata-envelope'
 
 preserveGlobals('fetch', 'localStorage')
 setGlobal('fetch', (async (input: RequestInfo | URL) => {
@@ -53,6 +54,28 @@ const ROOT = '11111111-1111-4111-8111-111111111111'
 const DEST = '22222222-2222-4222-8222-222222222222'
 const OUTSIDE = '33333333-3333-4333-8333-333333333333'
 const PLAIN_DEST = '55555555-5555-4555-8555-555555555555'
+const DECOY = '66666666-6666-4666-8666-666666666666'
+const TAXES = '99999999-9999-4999-8999-999999999999'
+
+function derive(id: string): Uint8Array {
+  return wasm.derive_file_key(MASTER, enc.encode(id)) as Uint8Array
+}
+
+/** The name a folder really carries: metadata sealed under its derived key. */
+function sealedName(id: string): string {
+  const meta = wasm.encrypt_metadata(derive(id), JSON.stringify({ name: `${id}.folder`, mime_type: null })) as {
+    nonce: Uint8Array
+    ciphertext: Uint8Array
+  }
+  return encodeEnvelope(wasm, meta.nonce, meta.ciphertext)
+}
+
+/** R's inventory wrap for (R, folder, folder key): the L14 proof. */
+function childWrap(id: string): string {
+  return Buffer.from(
+    wasm.wrapFolderChild(FOLDER_KEY, ROOT, id, 2, derive(id)) as Uint8Array,
+  ).toString('base64')
+}
 
 type Row = { id: string; parent_id: string | null; name_encrypted: string; is_folder: boolean }
 let rows: Record<string, Row> = {}
@@ -114,27 +137,78 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => ({
   },
 }))
 
+// The owned-item port crosses into the worker; run the same core calls here.
+await mockModuleScoped('../src/lib/owned-item', import.meta.dir, (r) => ({
+  ...r,
+  ownedItem: {
+    ...r.ownedItem,
+    async resolve(args: {
+      masterKey: Uint8Array
+      itemId: string
+      kind: number
+      ownerWrap?: Uint8Array | null
+      nameEncrypted: string
+      sharedFolderId?: string | null
+      folderKey?: Uint8Array | null
+      folderWrap?: Uint8Array | null
+      firstChunkFrame?: Uint8Array | null
+    }) {
+      const out = wasm.resolveOwnedKey(
+        args.masterKey,
+        args.itemId,
+        args.kind,
+        args.ownerWrap ?? null,
+        args.nameEncrypted,
+        args.sharedFolderId ?? null,
+        args.folderKey ?? null,
+        args.folderWrap ?? null,
+        args.firstChunkFrame ?? null,
+      ) as Record<string, unknown>
+      return {
+        key: out.key as Uint8Array,
+        contentKey: (out.contentKey as Uint8Array | null) ?? null,
+        origin: out.origin as never,
+        name: (out.name as never) ?? null,
+        writeTarget: (out.writeTarget as never) ?? null,
+      }
+    },
+    async childWrapMatches(
+      folderKey: Uint8Array,
+      root: string,
+      itemId: string,
+      kind: number,
+      wrapped: Uint8Array,
+      expected: Uint8Array,
+    ) {
+      return wasm.childWrapMatches(folderKey, root, itemId, kind, wrapped, expected)
+    },
+  },
+}))
+
 const { publishOrDeferOwnerUpload } = await import('../src/lib/owner-upload-key')
 const { noteFolderClick, noteUrlFolder, resetAnchorsForTests, readDeferredPublishes, PUBLISH_QUEUE_KEY } =
   await import('../src/lib/publish-anchor')
 const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 const adoption = await import('../src/lib/owner-adoption')
 
-/** A sealed (encrypted) folder name. Its bytes never need to open here. */
-const SEALED = JSON.stringify({ nonce: 'AAAAAAAAAAAAAAAA', ciphertext: 'AAAA' })
-
 function baseRows(): Record<string, Row> {
   return {
-    [ROOT]: { id: ROOT, parent_id: null, name_encrypted: SEALED, is_folder: true },
-    [DEST]: { id: DEST, parent_id: ROOT, name_encrypted: SEALED, is_folder: true },
-    [OUTSIDE]: { id: OUTSIDE, parent_id: null, name_encrypted: SEALED, is_folder: true },
+    [ROOT]: { id: ROOT, parent_id: null, name_encrypted: sealedName(ROOT), is_folder: true },
+    [DEST]: { id: DEST, parent_id: ROOT, name_encrypted: sealedName(DEST), is_folder: true },
+    [OUTSIDE]: { id: OUTSIDE, parent_id: null, name_encrypted: sealedName(OUTSIDE), is_folder: true },
     [PLAIN_DEST]: { id: PLAIN_DEST, parent_id: ROOT, name_encrypted: 'My plain folder', is_folder: true },
+    [DECOY]: { id: DECOY, parent_id: ROOT, name_encrypted: sealedName(DECOY), is_folder: true },
   }
 }
 
 function reset(): void {
   rows = baseRows()
-  rootInventory = []
+  // R's inventory carries the L14 proof for DEST and the decoy, so those
+  // destination checks are not what the anchoring tests exercise.
+  rootInventory = [
+    { file_id: DEST, encrypted_file_key: childWrap(DEST) },
+    { file_id: DECOY, encrypted_file_key: childWrap(DECOY) },
+  ]
   inventoryReads = 0
   published.length = 0
   store.clear()
@@ -213,6 +287,7 @@ describe('A17f: no removed trigger anchors a publish', () => {
 
 describe('A26: a plaintext-named O folder is not a proven publish destination', () => {
   test('an upload into it is deferred, not published', async () => {
+    noteFolderClick(ROOT)
     noteFolderClick(PLAIN_DEST)
     noteUrlFolder(PLAIN_DEST)
     expect(await create(PLAIN_DEST)).toBe('deferred')
@@ -220,11 +295,31 @@ describe('A26: a plaintext-named O folder is not a proven publish destination', 
     expect(readDeferredPublishes(store)).toHaveLength(1)
   })
 
-  test('control: the same folder renamed under its derived key publishes', async () => {
-    rows[PLAIN_DEST] = { ...rows[PLAIN_DEST], name_encrypted: SEALED }
+  test('control: the same folder renamed under its derived key (with its L14 wrap) publishes', async () => {
+    // Renamed under its derived key AND its wrap in R's inventory passes L14,
+    // and the tab clicked into R itself: the only case that may publish.
+    rows[PLAIN_DEST] = { ...rows[PLAIN_DEST], name_encrypted: sealedName(PLAIN_DEST) }
+    rootInventory = [
+      { file_id: PLAIN_DEST, encrypted_file_key: childWrap(PLAIN_DEST) },
+    ]
+    noteFolderClick(ROOT)
     noteFolderClick(PLAIN_DEST)
     noteUrlFolder(PLAIN_DEST)
     expect(await create(PLAIN_DEST)).toBe('published')
     expect(published).toHaveLength(1)
+  })
+})
+
+describe('A17 decoy: a member folder shown at My files > Taxes > 2024', () => {
+  test('2024 sits inside R on the server, but R was never clicked: nothing is published', async () => {
+    // The trail is My files > Taxes > 2024; 2024 is the member's decoy, and
+    // the server's parent walk places it under R. Its L14 proof passes — the
+    // anchor is what is missing.
+    noteFolderClick(TAXES)
+    noteFolderClick(DECOY)
+    noteUrlFolder(DECOY)
+    expect(await create(DECOY)).toBe('deferred')
+    expect(published).toEqual([])
+    expect(readDeferredPublishes(store)).toHaveLength(1)
   })
 })

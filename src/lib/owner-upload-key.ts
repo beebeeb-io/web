@@ -8,10 +8,10 @@
  * invite to hang it on (`POST /shared-folders/:id/keys`, owner only,
  * insert-only).
  */
-import { ApiError, createFolder, getFile, publishSharedFolderKeys, updateFile, type DriveFile } from './api'
+import { ApiError, createFolder, getFile, listSharedFolderKeys, publishSharedFolderKeys, updateFile, type DriveFile } from './api'
 import { collectAllChildItems, sealChildKey } from './folder-share-crypto'
 import { adoptForeignTreeBeforeMove, assertNoSeenCustodyAbove, folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
-import { zeroize } from './crypto'
+import { fromBase64, zeroize } from './crypto'
 import { ownedItem, type KeyOrigin } from './owned-item'
 import { sharedFoldersEnabled } from './use-feature-flag'
 import { withNetworkRetry } from './net-retry'
@@ -247,12 +247,24 @@ export async function publishOrDeferOwnerUpload(args: {
   const root = await sharedRootFor(parentId, parentId)
   if (!root) return 'not_published'
   if ((await folderWrapFormat(root, parentId)) !== 'l7') return 'not_published'
-  if (!(await destinationProven(parentId, root))) return deferOwnerCreate(fileId, parentId, root)
-  if (canPublishAnchored(parentId, root)) {
-    await publishOwnerUploadKey(masterKey, parentId, fileId, fileKey, isFolder)
-    return 'published'
+  // L15 (b)2: the root is the one this client can PROVE it holds — the custody
+  // key unwrapped with the master key — never merely the id the server's parent
+  // walk named. Without that proof there is nothing to prove the destination
+  // against and nothing to seal under.
+  const folderKey = await folderKeyForRoot(masterKey, root)
+  if (!folderKey) return 'not_published'
+  try {
+    if (!(await destinationProven(masterKey, parentId, root, folderKey))) {
+      return deferOwnerCreate(fileId, parentId, root)
+    }
+    if (canPublishAnchored(parentId, root)) {
+      await publishOwnerUploadKey(masterKey, parentId, fileId, fileKey, isFolder)
+      return 'published'
+    }
+    return deferOwnerCreate(fileId, parentId, root)
+  } finally {
+    zeroize(folderKey)
   }
-  return deferOwnerCreate(fileId, parentId, root)
 }
 
 /** Pin a deferral for (item, parent, root); 7 days, dropped with the item. */
@@ -263,19 +275,49 @@ function deferOwnerCreate(fileId: string, parentId: string, root: string): 'defe
 }
 
 /**
- * L15(b)2 / A26: the destination must be proven. `R` itself is (its custody
- * record is the proof); any other folder is proven only by an L7 wrap whose
- * name authenticates under its own key — never by a plaintext name, which
- * stays unproven until the folder is renamed under its derived key. An
- * unreadable destination is not proven either.
+ * L15(b)2 / A26 / A17: the destination must be proven by L14 against R's own
+ * inventory. `R` itself is proven by its custody key (the caller holds it).
+ * Any other folder needs all four checks: R's inventory holds an L7 wrap for
+ * (R, D, folder), that wrap opens under R's custody key, the opened key equals
+ * the key core's resolve_owned_key returns for D, and D's name authenticates.
+ * A plaintext name never passes, and neither does a wrap kept from before the
+ * folder left R: its key is not the row's key any more.
  */
-async function destinationProven(parentId: string, root: string): Promise<boolean> {
+async function destinationProven(
+  masterKey: Uint8Array,
+  parentId: string,
+  root: string,
+  folderKey: Uint8Array,
+): Promise<boolean> {
   if (parentId === root) return true
   try {
     const row = await getFile(parentId)
     // Core's own rule (resolve_owned_key): a sealed name is a `{` envelope; a
     // plaintext name has no owner key convention to prove it with.
-    return row.is_folder && row.name_encrypted.startsWith('{')
+    if (!row.is_folder || !row.name_encrypted.startsWith('{')) return false
+    let wrapped: string | undefined
+    let cursor: string | null = null
+    do {
+      const page = await listSharedFolderKeys(root, { cursor })
+      for (const entry of page.keys) if (entry.file_id === parentId) wrapped = entry.encrypted_file_key
+      cursor = page.next_cursor
+    } while (cursor && !wrapped)
+    if (!wrapped) return false
+    const resolved = await ownedItem.resolve({
+      masterKey,
+      itemId: parentId,
+      kind: 2,
+      nameEncrypted: row.name_encrypted,
+      sharedFolderId: root,
+      folderKey,
+    })
+    try {
+      if (!PROVEN_ORIGINS.has(resolved.origin)) return false
+      return await ownedItem.childWrapMatches(folderKey, root, parentId, 2, fromBase64(wrapped), resolved.key)
+    } finally {
+      zeroize(resolved.key)
+      if (resolved.contentKey) zeroize(resolved.contentKey)
+    }
   } catch {
     return false
   }
