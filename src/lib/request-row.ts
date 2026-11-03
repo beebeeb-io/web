@@ -111,13 +111,23 @@ export function resolveRequestRowWith(
     seal?: RequestSeal
     renameTarget?: { origin?: string; pin?: number } | null
   }
+  // 2326 review P3-4: fail closed. Core always reports both, and a guessed
+  // chunkFormat 0 would read a v2 row with the v1 frame layout, while a guessed
+  // 'unbound' would mislabel the seal. Only the rename target defaults: core
+  // answers null explicitly for a read-only (upper-repair) row.
+  if (typeof raw.chunkFormat !== 'number') {
+    throw new Error('request row resolve: core returned no chunkFormat')
+  }
+  if (raw.seal !== 'bound' && raw.seal !== 'unbound') {
+    throw new Error('request row resolve: core returned no seal')
+  }
   return {
     content: raw.content,
     nameOrigin: raw.nameOrigin ?? 'request_content',
     name: raw.name ?? null,
     mimeType: raw.mimeType ?? null,
-    chunkFormat: raw.chunkFormat ?? 0,
-    seal: raw.seal === 'bound' ? 'bound' : 'unbound',
+    chunkFormat: raw.chunkFormat,
+    seal: raw.seal,
     renameTarget:
       raw.renameTarget && typeof raw.renameTarget.pin === 'number'
         ? { origin: raw.renameTarget.origin ?? 'derived', pin: raw.renameTarget.pin }
