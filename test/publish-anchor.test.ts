@@ -40,7 +40,23 @@ describe('anchored publishes (L15/§14)', () => {
     noteFolderClick(FOLDER)
     noteUrlFolder(FOLDER)
     expect(canPublishAnchored(FOLDER, ROOT)).toBe(true)
-    expect(canPublishAnchored(ROOT, ROOT)).toBe(true)
+    // R is on the path, but the path ends at the destination; a create into R
+    // itself is not anchored by an earlier visit that has since been left.
+    expect(canPublishAnchored(ROOT, ROOT)).toBe(false)
+  })
+
+  test('A17i: a navigation that is not a child click resets the path', () => {
+    // The user clicked into R, then left it for somewhere else, then clicked
+    // into a decoy folder. R is in the tab's history but no longer on the
+    // current path, so it cannot anchor the decoy create.
+    noteFolderClick(ROOT)
+    noteUrlFolder(ROOT)
+    noteUrlFolder(ELSEWHERE)
+    noteFolderClick(ELSEWHERE)
+    noteUrlFolder(ELSEWHERE)
+    noteFolderClick(FOLDER)
+    noteUrlFolder(FOLDER)
+    expect(canPublishAnchored(FOLDER, ROOT)).toBe(false)
   })
 
   test('A13/A17e: a deep link or ?folder= the user never clicked does not anchor', () => {
@@ -49,6 +65,13 @@ describe('anchored publishes (L15/§14)', () => {
     expect(canPublishAnchored(FOLDER, ROOT)).toBe(false)
     // A trail rebuilt from the server's parent walk looks the same as this: no
     // click was recorded, so nothing anchors.
+  })
+
+  test('A17i: My files in the URL is not a settled navigation into the last folder', () => {
+    noteFolderClick(ROOT)
+    noteUrlFolder(ROOT)
+    noteUrlFolder(null)
+    expect(canPublishAnchored(ROOT, ROOT)).toBe(false)
   })
 
   test('A17e: nothing anchors while a navigation is in flight', () => {

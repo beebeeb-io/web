@@ -2,19 +2,22 @@
  * Task 2275 L15, option A: the web client publishes an owner's upload key only
  * when the destination is anchored to something the user did IN THIS TAB.
  *
- * An anchor is the tab's click trail: the folders the user clicked through in
- * folder view or in an in-app move/upload picker. A trail rebuilt from the
- * server's parent_id walk, a reload, a deep link or `?folder=`, a pinned folder,
- * Recent, Quick Access, search or the command palette never anchors, and
- * nothing anchors while a navigation is in flight (the URL folder differs from
- * the trail's last segment). A create that is not anchored is owner-only: it
+ * An anchor is the tab's CURRENT click path: the chain of folders the user
+ * clicked into, each one reached as the child of the previous, ending at the
+ * destination. It is not a history of every folder the tab ever opened. A path
+ * rebuilt from the server's parent_id walk, a reload, a deep link or
+ * `?folder=`, a pinned folder, Recent, Quick Access, search or the command
+ * palette never anchors, and nothing anchors while a navigation is in flight
+ * (the URL folder differs from the path's last segment). A navigation that is
+ * not a child click resets the path, so an earlier visit to R cannot anchor a
+ * create made somewhere else. A create that is not anchored is owner-only: it
  * is never published and never queued. Only an anchored create whose
  * destination is not yet proven is deferred.
  */
 export const PUBLISH_QUEUE_KEY = 'beebeeb.owner-publish-queue.v1'
 export const PUBLISH_QUEUE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 export const PUBLISH_QUEUE_MAX = 100_000
-const TRAIL_MAX = 64
+const PATH_MAX = 64
 
 export interface DeferredPublish {
   /** The item whose key is still unpublish. */
@@ -29,45 +32,75 @@ export interface DeferredPublish {
   own: true
 }
 
-/** Folders the user clicked through in this tab, oldest first. */
-let trail: string[] = []
+/**
+ * The current click path, oldest first. Only child clicks extend it; clicking
+ * an ancestor already on it (breadcrumb/back) truncates to that ancestor; any
+ * other click starts a new path.
+ */
+let path: string[] = []
 /** The folder the URL shows, when the app has told us. */
 let urlFolder: string | null = null
+/** Has the app told us the URL's folder? `null` then means My files, not unknown. */
+let urlKnown = false
 
 export function noteFolderClick(folderId: string): void {
-  if (trail[trail.length - 1] !== folderId) trail.push(folderId)
-  if (trail.length > TRAIL_MAX) trail.splice(0, trail.length - TRAIL_MAX)
+  if (folderId === path[path.length - 1]) return
+  const at = path.indexOf(folderId)
+  if (at >= 0) {
+    // Breadcrumb/back to a folder on the path: everything below it was left.
+    path = path.slice(0, at + 1)
+    return
+  }
+  if (navigationSettled()) {
+    // A child click from the folder the URL currently shows.
+    path.push(folderId)
+    if (path.length > PATH_MAX) path.splice(0, path.length - PATH_MAX)
+    return
+  }
+  // Something other than a child click happened (in-flight navigation, a jump
+  // from elsewhere): the old path no longer leads here.
+  path = [folderId]
 }
 
-/** The app's location changed; a URL folder the trail has not reached means in flight. */
+/** The app's location changed; a URL folder the path has not reached means in flight. */
 export function noteUrlFolder(folderId: string | null): void {
   urlFolder = folderId
+  urlKnown = true
 }
 
-/** No navigation is in flight: the URL's folder is the trail's last segment. */
+/**
+ * No navigation is in flight: the URL's folder is the path's last segment. A
+ * URL of My files (no folder) settles nothing — the path's last segment is not
+ * where the user is.
+ */
 export function navigationSettled(): boolean {
-  return trail.length > 0 && (urlFolder === null || trail[trail.length - 1] === urlFolder)
+  if (path.length === 0) return false
+  if (!urlKnown) return true
+  return path[path.length - 1] === urlFolder
 }
 
-/** Did the user reach this folder by clicking in THIS tab? */
+/** Is this folder on the tab's current click path? */
 export function isAnchoredFolder(folderId: string): boolean {
-  return trail.includes(folderId)
+  return path.includes(folderId)
 }
 
 /**
  * May a publish happen for an item created under `folderId`, whose proven root
- * is `rootId`? Only when the tab's own click trail contains R itself and the
- * trail is settled. The destination alone is not an anchor: the server's parent
- * walk can place any folder under R, so seeing D says nothing about R.
+ * is `rootId`? Only when the tab's current click path ends at the destination
+ * and contains R itself. R anywhere earlier in the tab's history is not an
+ * anchor: the user has since navigated away, and the server's parent walk can
+ * place any folder under R, so seeing D says nothing about R.
  */
-export function canPublishAnchored(_folderId: string, rootId: string): boolean {
+export function canPublishAnchored(folderId: string, rootId: string): boolean {
   if (!navigationSettled()) return false
+  if (path[path.length - 1] !== folderId) return false
   return isAnchoredFolder(rootId)
 }
 
 export function resetAnchorsForTests(): void {
-  trail = []
+  path = []
   urlFolder = null
+  urlKnown = false
 }
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>

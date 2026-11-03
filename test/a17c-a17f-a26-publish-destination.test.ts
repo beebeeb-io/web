@@ -329,11 +329,16 @@ describe('N2: the seal uses the proven root, not a second parent walk', () => {
 })
 
 describe('A17 decoy: a member folder shown at My files > Taxes > 2024', () => {
-  test('2024 sits inside R on the server, but R was never clicked: nothing is published', async () => {
-    // The trail is My files > Taxes > 2024; 2024 is the member's decoy, and
-    // the server's parent walk places it under R. Its L14 proof passes — the
-    // anchor is what is missing.
+  test('R was clicked earlier, but the user left it before opening the decoy: nothing is published', async () => {
+    // The user clicks into R, then leaves it for My files > Taxes > 2024.
+    // 2024 is the member's decoy and the server's parent walk places it under
+    // R; its L14 proof passes. R is in the tab's history but not on the
+    // current click path that ends at the decoy — the anchor is missing.
+    noteFolderClick(ROOT)
+    noteUrlFolder(ROOT)
+    noteUrlFolder(OUTSIDE)
     noteFolderClick(TAXES)
+    noteUrlFolder(TAXES)
     noteFolderClick(DECOY)
     noteUrlFolder(DECOY)
     expect(await create(DECOY)).toBe('not_published')
