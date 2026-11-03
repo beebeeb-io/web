@@ -55,7 +55,9 @@ import { SHARED_FOLDERS_FLAG } from '../lib/flags'
 import { sharedFoldersEnabledForWrite, useFeatureFlag } from '../lib/use-feature-flag'
 import { FOLDER_NEEDS_UPGRADE } from '../lib/folder-upgrade'
 import { FolderSharePanel } from './folder-share/folder-share-panel'
-import { shareFileKey } from '../lib/share-file-key'
+import { FolderSnapshotNotes } from './share/folder-snapshot-notes'
+import { shareFileKey, FileCannotBeSharedError } from '../lib/share-file-key'
+import { folderSkipReason } from '../lib/share-missing-items'
 import { EXPIRY_OPTIONS, MAX_OPENS_OPTIONS } from '../lib/share-options'
 
 interface ShareDialogProps {
@@ -591,12 +593,15 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
       try {
         const scan = await collectFolderBundle(fileId, {
           listChildren: (folderId) => listAllFiles(folderId, { trashed: false }),
+          // L15/2326: a request row has no wrappable key; it is listed as
+          // "can't be shared" and the rest of the folder still shares.
+          skipReason: folderSkipReason,
           decryptName: async (node) => {
             // Legacy plaintext names (iOS before 930c61a) are used verbatim.
             if (!node.name_encrypted.startsWith('{')) return node.name_encrypted
-            // getFileKeyForFile, not getFileKey: a row received through a file
-            // request is sealed under a random content key, so the id-derived
-            // key would fail (or decrypt nothing) for exactly those items.
+            // getFileKeyForFile, not getFileKey: a row added to a shared folder
+            // or repaired from the iOS convention does not open under the plain
+            // id-derived key.
             const fileKey = contentKeyBytes(await getFileKeyForFile(node))
             try {
               const [row] = await decryptManyNames([
@@ -780,7 +785,7 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
         onShareCreated({ fileId, shareUrl: url })
       }
     } catch (e) {
-      setError(userFriendlyError(e))
+      setError(e instanceof FileCannotBeSharedError ? e.message : userFriendlyError(e))
     } finally {
       setLoading(false)
     }
@@ -1117,25 +1122,8 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
                     {/* Task 2238 — a folder link is a snapshot of the files
                         below it: flat, immutable, capped (bundle spec 0417). */}
                     {folderMode && (
-                      <div
-                        className="border border-line-2 rounded-lg bg-paper-2 px-3.5 py-3 mb-3"
-                        role="status"
-                        data-testid="folder-snapshot-note"
-                      >
-                        <p className="text-[12px] text-ink-2 leading-relaxed">
-                          {folderScanError
-                            ? `Could not read this folder: ${folderScanError}`
-                            : folderScan === null
-                            ? 'Counting the files in this folder…'
-                            : folderScan.files.length === 0
-                            ? 'Nothing to share yet'
-                            : folderScan.overCap
-                            ? `This folder has more than ${FOLDER_BUNDLE_MAX_ITEMS} files. A link covers up to ${FOLDER_BUNDLE_MAX_ITEMS}; select the files you want and share them together.`
-                            : `Shares the ${folderScan.files.length} files in this folder and its subfolders as they are now. Files added later won't appear.`}
-                        </p>
-                      </div>
+                      <FolderSnapshotNotes scan={folderScan} error={folderScanError} />
                     )}
-
                     <BBButton
                       variant="amber"
                       size="lg"

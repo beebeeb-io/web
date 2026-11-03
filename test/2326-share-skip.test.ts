@@ -1,0 +1,172 @@
+/**
+ * 2326 review P2-2 (L15): a row received through a FILE REQUEST cannot be
+ * shared, but it must never break a share that includes it.
+ *
+ * Before the fix, the folder walk decrypted every name through
+ * `contentKeyBytes(getFileKeyForFile(node))`: a request row has no key, so one
+ * such row aborted the whole folder scan (and a single-file share threw a raw
+ * error). Now the row is SKIPPED, the rest of the folder still shares, and the
+ * row is listed with the same "can't be shared" sentence the L15 panel uses.
+ */
+import { describe, expect, test } from 'bun:test'
+import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
+import type { DriveFile } from '@beebeeb/shared'
+import { collectFolderBundle } from '../src/lib/folder-bundle'
+import { FileCannotBeSharedError, shareFileKey } from '../src/lib/share-file-key'
+import { cannotShareReason, folderSkipReason } from '../src/lib/share-missing-items'
+
+const REQUEST_COPY = "can't be shared (received through a file request)"
+
+function requestRow(id: string): DriveFile {
+  return {
+    id,
+    name_encrypted: '{"cipher_suite":"AES-256-GCM","nonce":"n","ciphertext":"c"}',
+    mime_type: 'text/plain',
+    size_bytes: 24,
+    is_folder: false,
+    is_trashed: false,
+    parent_id: 'root',
+    chunk_count: 1,
+    created_at: '2026-10-27T00:00:00Z',
+    updated_at: '2026-10-27T00:00:00Z',
+    file_request_id: 'req-1',
+    sender_ephemeral_pubkey: 'pubkey-base64',
+    wrapped_content_key: 'wrapped-key-base64',
+  } as DriveFile
+}
+
+function plainRow(id: string, extra: Partial<DriveFile> = {}): DriveFile {
+  return {
+    ...requestRow(id),
+    file_request_id: null,
+    sender_ephemeral_pubkey: null,
+    wrapped_content_key: null,
+    ...extra,
+  } as DriveFile
+}
+
+describe('2326 P2-2: a request row is skipped, never fatal', () => {
+  test('the L15 copy is reused verbatim, for a request row only', () => {
+    expect(cannotShareReason('request_row')).toBe(REQUEST_COPY)
+    expect(folderSkipReason(requestRow('r1'))).toBe(REQUEST_COPY)
+    expect(folderSkipReason(plainRow('p1'))).toBeNull()
+  })
+
+  test('a folder shares its other items and lists the request row as not shared', async () => {
+    const decrypted: string[] = []
+    const tree: Record<string, DriveFile[]> = {
+      root: [
+        requestRow('request-root'),
+        plainRow('plain-a'),
+        plainRow('folder-1', { is_folder: true, size_bytes: 0 }),
+      ],
+      'folder-1': [requestRow('request-nested'), plainRow('plain-b')],
+    }
+    const scan = await collectFolderBundle('root', {
+      listChildren: async (folderId) => tree[folderId] ?? [],
+      skipReason: folderSkipReason,
+      decryptName: async (node) => {
+        // A request row must never even be asked for a key-derived name.
+        if (node.file_request_id) throw new Error('a request row must not be decrypted')
+        decrypted.push(node.id)
+        return node.id
+      },
+    })
+
+    expect(scan.files.map((f) => f.fileId).sort()).toEqual(['plain-a', 'plain-b'])
+    expect(scan.overCap).toBe(false)
+    // Nothing is wrapped for a request row: it is not in the shared set at all.
+    expect(scan.files.some((f) => f.file.file_request_id)).toBe(false)
+    expect(scan.skipped.sort((a, b) => a.fileId.localeCompare(b.fileId))).toEqual([
+      { fileId: 'request-nested', name: null, reason: REQUEST_COPY },
+      { fileId: 'request-root', name: null, reason: REQUEST_COPY },
+    ])
+    expect(decrypted.sort()).toEqual(['folder-1', 'plain-a', 'plain-b'])
+  })
+
+  test('a plaintext-named request row is listed by the name the server sent', async () => {
+    const row = { ...requestRow('request-plain'), name_encrypted: 'received.png' } as DriveFile
+    const scan = await collectFolderBundle('root', {
+      listChildren: async () => [row],
+      skipReason: folderSkipReason,
+      decryptName: async () => {
+        throw new Error('must not be decrypted')
+      },
+    })
+    expect(scan.files).toEqual([])
+    expect(scan.skipped).toEqual([
+      { fileId: 'request-plain', name: 'received.png', reason: REQUEST_COPY },
+    ])
+  })
+
+  test('a name that cannot be decrypted no longer aborts the scan', async () => {
+    const scan = await collectFolderBundle('root', {
+      listChildren: async () => [plainRow('broken'), plainRow('fine')],
+      skipReason: folderSkipReason,
+      decryptName: async (node) => {
+        if (node.id === 'broken') throw new Error('no key')
+        return 'fine.txt'
+      },
+    })
+    expect(scan.files.map((f) => `${f.fileId}|${f.name}`)).toEqual(['broken|null', 'fine|fine.txt'])
+    expect(scan.skipped).toEqual([])
+  })
+
+  test('a single request-row share is refused with that copy and asks for no key', async () => {
+    const row = requestRow('request-1')
+    let keysAsked = 0
+    const deps = {
+      file: row,
+      getFileKey: async () => {
+        keysAsked++
+        return new Uint8Array(32)
+      },
+      getFileKeyForFile: async () => {
+        keysAsked++
+        return new Uint8Array(32)
+      },
+    }
+    const err = await shareFileKey('request-1', deps).then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(FileCannotBeSharedError)
+    expect((err as Error).message).toBe(REQUEST_COPY)
+    expect(keysAsked).toBe(0)
+  })
+
+  test('an ordinary row still shares the key that opens it', async () => {
+    const key = new Uint8Array(32).fill(9)
+    const row = plainRow('plain-1')
+    expect(
+      await shareFileKey('plain-1', {
+        file: row,
+        getFileKey: async () => new Uint8Array(32),
+        getFileKeyForFile: async () => key,
+      }),
+    ).toBe(key)
+    // Without the row (forwarded share) it keeps the old key lookup.
+    const fallback = new Uint8Array(32).fill(3)
+    expect(
+      await shareFileKey('other', {
+        file: row,
+        getFileKey: async () => fallback,
+        getFileKeyForFile: async () => key,
+      }),
+    ).toBe(fallback)
+  })
+
+  test('the dialog wires the skip rule and renders the row as not shared', () => {
+    const read = (rel: string) =>
+      readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
+    const dialog = read('../src/components/share-dialog.tsx')
+    expect(dialog).toContain('skipReason: folderSkipReason')
+    expect(dialog).toContain('FileCannotBeSharedError')
+    expect(dialog).toContain('<FolderSnapshotNotes')
+    // The skipped rows themselves live in their own module (file-size ratchet).
+    const notes = read('../src/components/share/folder-snapshot-notes.tsx')
+    expect(notes).toContain('data-testid="folder-skipped"')
+    expect(notes).toContain('skip.reason')
+  })
+})

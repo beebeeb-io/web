@@ -48,11 +48,25 @@ export interface FolderBundleScan {
   /** Ordered, non-trashed files in the subtree (at most `maxItems`). */
   files: FolderBundleFile[]
   /**
+   * Rows the walk left out of the link, with the sentence the owner is shown
+   * (L15: a request row "can't be shared"). Never a failure: the rest of the
+   * subtree is still shareable.
+   */
+  skipped: FolderBundleSkip[]
+  /**
    * True when the subtree holds MORE files than `maxItems` — the walk stops at
    * the cap, so `files.length === maxItems` in that case. The caller must
    * refuse to mint a link and explain the cap.
    */
   overCap: boolean
+}
+
+/** One row excluded from the snapshot, and why (`cannotShareReason` copy). */
+export interface FolderBundleSkip {
+  fileId: string
+  /** A plaintext name the server sent verbatim; null when it would need a key. */
+  name: string | null
+  reason: string
 }
 
 export interface FolderBundleOptions {
@@ -69,6 +83,12 @@ export interface FolderBundleDeps {
    * included, but sorting falls back to its id.
    */
   decryptName: (node: DriveFile) => Promise<string | null>
+  /**
+   * Why a row cannot be part of the link, or null to include it. A skipped row
+   * is never decrypted and never aborts the walk (L15: a request row lists as
+   * "can't be shared" and the rest of the folder still shares).
+   */
+  skipReason?: (node: DriveFile) => string | null
 }
 
 /**
@@ -90,6 +110,7 @@ export async function collectFolderBundle(
 ): Promise<FolderBundleScan> {
   const maxItems = options.maxItems ?? FOLDER_BUNDLE_MAX_ITEMS
   const files: FolderBundleFile[] = []
+  const skipped: FolderBundleSkip[] = []
   let overCap = false
 
   async function walk(folderId: string): Promise<void> {
@@ -98,16 +119,36 @@ export async function collectFolderBundle(
     const named = await Promise.all(
       children
         .filter((c) => c.is_trashed !== true)
-        .map(async (node) => ({ node, name: await deps.decryptName(node) })),
+        .map(async (node) => {
+          const reason = deps.skipReason?.(node) ?? null
+          if (reason) return { node, name: null, skip: reason }
+          let name: string | null = null
+          try {
+            name = await deps.decryptName(node)
+          } catch {
+            // Unreadable is not fatal: it still shares, sorted by id.
+            name = null
+          }
+          return { node, name, skip: null }
+        }),
     )
+    for (const entry of named) {
+      if (entry.skip === null) continue
+      skipped.push({
+        fileId: entry.node.id,
+        name: entry.node.name_encrypted.startsWith('{') ? null : entry.node.name_encrypted,
+        reason: entry.skip,
+      })
+    }
     named.sort((a, b) => {
       const an = a.name ?? a.node.id
       const bn = b.name ?? b.node.id
       return an.localeCompare(bn) || a.node.id.localeCompare(b.node.id)
     })
 
-    for (const { node, name } of named) {
+    for (const { node, name, skip } of named) {
       if (overCap) return
+      if (skip !== null) continue
       if (node.is_folder) {
         await walk(node.id)
         continue
@@ -121,5 +162,5 @@ export async function collectFolderBundle(
   }
 
   await walk(rootFolderId)
-  return { files, overCap }
+  return { files, skipped, overCap }
 }

@@ -23,6 +23,7 @@ import { listFilesPage, publishSharedFolderKeys } from './api'
 import { listSharedFolderKeys } from './api-folder-links'
 import { sealChildKey } from './folder-share-crypto'
 import { ownedItem, type KeyOrigin, type ResolvedOwnedItem } from './owned-item'
+import { isRequestUpload } from './request-row'
 
 /** At most this many items are listed per run (L15). */
 export const SHARE_LIST_LIMIT = 1000
@@ -65,6 +66,17 @@ export function cannotShareReason(status: ShareCandidateStatus): string | null {
   if (status === 'plaintext_name') return `${PLAINTEXT_REASON} (its name is not sealed)`
   if (status === 'unresolvable') return PLAINTEXT_REASON
   return null
+}
+
+/**
+ * The folder-snapshot rule (2238 + L15): a request row cannot be wrapped for a
+ * link and is listed as "can't be shared", never a fatal scan error. Every
+ * other row keeps its place in the snapshot.
+ */
+export function folderSkipReason(
+  node: Parameters<typeof isRequestUpload>[0],
+): string | null {
+  return isRequestUpload(node) ? cannotShareReason('request_row') : null
 }
 
 /** Every wrap R's inventory holds, by item id. */
