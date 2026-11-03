@@ -2,7 +2,8 @@
  * L13 (contract 2275, SF-0001) — the folder tree an import recreates, and the
  * per-file step of the import worker (settings/import.tsx).
  *
- * Every folder is created under a v4 id THIS run mints. It is never derived
+ * Every folder is created under an id THIS run mints, in core (L13's
+ * NewItemId; a canonical v4 with its tag). It is never derived
  * from the provider path: a hash of the path is the same for every account and
  * every run (and is not a v4), so it is not an id this client chose for this
  * folder. A run-local `path -> minted id` map makes every file of one folder
@@ -27,6 +28,7 @@
  * dropped connection under that id.
  */
 import { createOwnerFolder } from './owner-upload-key'
+import { ownedItem } from './owned-item'
 import { deriveFileKey, encryptFilename, serializeEncryptedBlob, zeroize } from './crypto'
 import { encryptedUpload } from './encrypted-upload'
 import { errorRetryable } from './user-friendly-error'
@@ -41,8 +43,8 @@ export interface ImportFolderTree {
 }
 
 export interface ImportFolderTreeOptions {
-  /** Mints each folder's id; a fresh v4 by default. */
-  mintId?: () => string
+  /** Mints each folder's id; core's NewItemId by default (L13). */
+  mintId?: () => string | Promise<string>
   /**
    * Called ONCE for a folder whose create failed (not again for the folders
    * and files under it), so the import can say which folder stopped and why.
@@ -55,7 +57,8 @@ export function createImportFolderTree(
   masterKey: Uint8Array,
   options: ImportFolderTreeOptions = {},
 ): ImportFolderTree {
-  const mintId = options.mintId ?? (() => crypto.randomUUID())
+  const mintId =
+    options.mintId ?? (() => ownedItem.mint(masterKey, 'owner').then((minted) => minted.idText))
   // Keyed by the normalised path ('/A/B'). The promise is kept unless it
   // rejects with a transient error: any other rejection keeps the subtree
   // stopped for the whole run.
@@ -72,7 +75,7 @@ export function createImportFolderTree(
     const name = parts[parts.length - 1]
     try {
       const minted = mintedFor.get(key)
-      const folderId = minted?.folderId ?? mintId()
+      const folderId = minted?.folderId ?? (await mintId())
       const nameKey = await deriveFileKey(masterKey, folderId)
       try {
         let nameEncrypted = minted?.nameEncrypted
@@ -144,7 +147,8 @@ export async function importFileInto(args: {
   args.onBytes(blob.size)
 
   args.onStatus('encrypting')
-  const fileId = crypto.randomUUID()
+  // L13: a create's id is core's, never a JS v4.
+  const fileId = (await ownedItem.mint(args.masterKey, 'owner')).idText
   const fileKey = await deriveFileKey(args.masterKey, fileId)
   try {
     args.onStatus('uploading')

@@ -132,7 +132,7 @@ const { renameKeyFor, RENAME_KEY_UNAVAILABLE } = await import('../src/lib/owner-
 const { saveTargetFor } = await import('../src/lib/owner-save-target')
 const { createOwnedItemOps } = await import('../src/lib/owned-item')
 const { clearSharedFolderLookups } = await import('../src/lib/owner-adoption')
-const { markCustodySeen, resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
+const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 
 beforeEach(() => {
   flagOn = true
@@ -161,9 +161,9 @@ const rows = [
 
 describe('P2-5: a move into a custody folder publishes its wraps', () => {
   test('the moved file, the moved folder and its own child get L7 wraps; a member-added child is never re-sealed', async () => {
-    // L15 (T5.4): the move picker showed R is what makes the move a share-time event.
-    markCustodySeen(ROOT)
-    await moveOwnerItems({ ids: [MOVED_FILE, MOVED_FOLDER], destinationId: DEST, rows, masterKey: MASTER, viewerId: VIEWER })
+    // L15 (T5.4): the move picker showed R is what makes the move a share-time
+    // event; the picker's own answer travels with the move (review F1).
+    await moveOwnerItems({ ids: [MOVED_FILE, MOVED_FOLDER], destinationId: DEST, rows, masterKey: MASTER, viewerId: VIEWER, pickerRootId: ROOT })
     expect(moved.map((m) => m.parent)).toEqual([DEST, DEST])
     const keys = published.flatMap((p) => p.keys)
     expect(published.every((p) => p.root === ROOT)).toBe(true)
@@ -190,9 +190,8 @@ describe('P2-5: a move into a custody folder publishes its wraps', () => {
 
   test('a publish that fails after the move says so plainly (the move itself stands)', async () => {
     publishFails = true
-    markCustodySeen(ROOT)
     await expect(
-      moveOwnerItems({ ids: [MOVED_FILE], destinationId: DEST, rows, masterKey: MASTER, viewerId: VIEWER }),
+      moveOwnerItems({ ids: [MOVED_FILE], destinationId: DEST, rows, masterKey: MASTER, viewerId: VIEWER, pickerRootId: ROOT }),
     ).rejects.toThrow(MOVED_BUT_UNPUBLISHED)
     expect(moved).toHaveLength(1)
   })

@@ -10,6 +10,7 @@
  */
 import type { IconName } from '@beebeeb/shared'
 import { createOwnerFolder } from './owner-upload-key'
+import { ownedItem } from './owned-item'
 import { serializeEncryptedBlob, zeroize, type EncryptedMetadata } from './crypto'
 import { userFriendlyError } from './user-friendly-error'
 import type { DriveFile } from './api'
@@ -37,7 +38,10 @@ export async function createNamedOwnerFolder(args: {
   seal: (nameKey: Uint8Array, name: string) => Promise<EncryptedMetadata>
 }): Promise<DriveFile> {
   if (!args.vaultReady) throw new VaultLockedFolderError()
-  const folderId = crypto.randomUUID()
+  const masterKey = args.getMasterKey()
+  // L13: the id is core's (NewItemId), never a JS v4: the tag it returns is
+  // what lets a retried create prove the same id.
+  const folderId = (await ownedItem.mint(masterKey, 'owner')).idText
   const nameKey = await args.getFileKey(folderId)
   try {
     const sealed = await args.seal(nameKey, args.name)
@@ -48,7 +52,7 @@ export async function createNamedOwnerFolder(args: {
       parentId: args.parentId,
       folderId,
       nameKey,
-      masterKey: args.getMasterKey(),
+      masterKey,
     })
   } finally {
     zeroize(nameKey)

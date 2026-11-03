@@ -198,7 +198,7 @@ export function pausedRowCheckFailedMessage(err: unknown): string {
  */
 export async function planResume(
   record: Pick<UploadState, 'fileId' | 'selfMinted' | 'replace_pin' | 'replace_pin_file_id'>,
-  deps: { mintId: () => string; lookupRow: (fileId: string) => Promise<StoredRow> },
+  deps: { mintId: () => string | Promise<string>; lookupRow: (fileId: string) => Promise<StoredRow> },
 ): Promise<ResumePlan> {
   if (record.selfMinted === true) {
     return { kind: 'resume', fileId: record.fileId, resumeFileId: record.fileId }
@@ -223,7 +223,7 @@ export async function planResume(
   // as a version of whatever row its id names (SF-0001 round 4): that id may
   // be the server's, or a row the user can write but does not own (a
   // shared-folder upload). Its row is not looked up.
-  return { kind: 'restart-new', fileId: deps.mintId(), resumeFileId: undefined }
+  return { kind: 'restart-new', fileId: await deps.mintId(), resumeFileId: undefined }
 }
 
 /**

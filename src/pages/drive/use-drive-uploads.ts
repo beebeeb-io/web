@@ -1,6 +1,7 @@
 // The drive's upload queue, conflict resolution, and progress.
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { mintUploadIdentity } from '../../lib/upload-identity'
+import { ownedItem } from '../../lib/owned-item'
 import { useToast } from '../../components/toast'
 import { useBrowseFiles, type FolderFile } from '../../components/upload-zone'
 import type { UploadItem } from '../../components/upload-progress'
@@ -154,7 +155,7 @@ export function useDriveUploads(params: DriveUploadsParams) {
         let plan: Awaited<ReturnType<typeof planResume>>
         try {
           plan = await planResume(match, {
-            mintId: () => crypto.randomUUID(),
+            mintId: () => ownedItem.mint(getMasterKey(), 'owner').then((minted) => minted.idText),
             lookupRow: (id) => lookupOwnRow(id, recordKey),
           })
         } catch (err) {

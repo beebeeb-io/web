@@ -157,6 +157,11 @@ export async function installMocks(): Promise<void> {
     }),
     serializeEncryptedBlob: (nonce: Uint8Array, ciphertext: Uint8Array) =>
       JSON.stringify({ nonce: Array.from(nonce), ciphertext: Array.from(ciphertext) }),
+    // L13: a create mints its id through core's NewItemId. This suite stubs
+    // the worker (as it stubs every other crossing), so the id is a canonical
+    // v4 with a 32-byte tag; the real mint is proven in
+    // f9-create-ids-through-core.test.ts over a mocked port.
+    mintItemIdWorker: async () => ({ idText: crypto.randomUUID(), tag: new Uint8Array(32) }),
     // A fresh array per call (callers zeroize what they derive); 0xd0 marks a
     // key derived inside the code under test rather than passed in by a test.
     deriveFileKey: async (_masterKey: Uint8Array, id: string) => {

@@ -112,6 +112,10 @@ export async function installWasmCryptoMirror(
         mirror.contentRepairKeys.push(r.key)
         return r
       },
+      // L13: a create's id is minted in core; run newOwnerItemId/newForeignItemId
+      // in process so code that mints under bun does not wait on the worker.
+      mintItemIdWorker: async (masterKey: Uint8Array, foreign: boolean) =>
+        foreign ? w.newForeignItemId(masterKey) : w.newOwnerItemId(masterKey),
       // 2275 L12: key-context resolves an owner row through core, never a local
       // derivation, so the owner resolver crossing is mirrored too.
       resolveOwnedItemWorker: async (args: ResolveOwnedItemArgs) => {

@@ -137,8 +137,12 @@ export const UNVERIFIED_REPLACE_COPY =
 
 const uploadAdmission = new WorkQueue(2)
 
-/** A fresh canonical v4 id, for an upload that may not reuse the id it found. */
-const mintFileId = (): string => crypto.randomUUID()
+/**
+ * A fresh id for an upload that may not reuse the id it found: minted in core
+ * (L13), never a JS v4, so the id carries the tag a create proposes.
+ */
+const mintFileId = async (masterKey: Uint8Array): Promise<string> =>
+  (await ownedItem.mint(masterKey, 'owner')).idText
 
 /** All upload entry points share admission, including retries and folder uploads. */
 export function encryptedUpload(...args: Parameters<typeof uploadFile>): ReturnType<typeof uploadFile> {
@@ -473,7 +477,7 @@ async function uploadFileWith(
     if (record.selfMinted !== true && options.replaceOf) {
       return { kind: 'restart-version', fileId, resumeFileId: fileId, replaceOf: options.replaceOf }
     }
-    return planResume(record, { mintId: mintFileId, lookupRow: (id) => lookupOwnRow(id, fileKey) })
+    return planResume(record, { mintId: () => mintFileId(masterKey), lookupRow: (id) => lookupOwnRow(id, fileKey) })
   }
 
   /**

@@ -58,12 +58,22 @@ export async function saveTargetFor({
   masterKey,
   mint,
 }: SaveTargetArgs): Promise<SaveTarget> {
-  const requested = targetFileId ?? crypto.randomUUID()
-  const sameFile = requested === file.id
+  const mintOwner = mint ?? ((masterKey: Uint8Array) => ownedItem.mint(masterKey, 'owner'))
+  if (targetFileId === undefined) {
+    // L13: "Keep Both" is a create too, so its id is core's, never a JS v4,
+    // and the tag travels with it so the seal can prove nothing substituted it.
+    const minted = await mintOwner(masterKey)
+    return {
+      uploadFileId: minted.idText,
+      newItemId: { idText: minted.idText, tag: Uint8Array.from(minted.tag) },
+      isNewItem: true,
+    }
+  }
+  const sameFile = targetFileId === file.id
   if (sameFile && isRequestUpload(file)) {
     // A9b: mint in core so the id class, tag and derivation are core's answers.
     // The tag travels with the id so the seal can prove nothing substituted it.
-    const minted = await (mint ?? ((masterKey) => ownedItem.mint(masterKey, 'owner')))(masterKey)
+    const minted = await mintOwner(masterKey)
     return {
       uploadFileId: minted.idText,
       newItemId: { idText: minted.idText, tag: Uint8Array.from(minted.tag) },
@@ -71,8 +81,8 @@ export async function saveTargetFor({
     }
   }
   return {
-    uploadFileId: requested,
+    uploadFileId: targetFileId,
     replaceOf: sameFile ? { nameEncrypted: file.name_encrypted } : undefined,
-    isNewItem: requested !== file.id,
+    isNewItem: targetFileId !== file.id,
   }
 }
