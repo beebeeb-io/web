@@ -392,8 +392,13 @@ describe('L7d: legacy is refused when ANY ancestor is in the set, not only the r
     // custody, and refuses before any proof exists, so nothing can be sealed
     // under a key this client does not hold.
     const { publishOrDeferOwnerUpload } = await import('../src/lib/owner-upload-key')
-    const { noteFolderClick } = await import('../src/lib/publish-anchor')
+    const { noteFolderClick, noteUrlFolder, resetAnchorsForTests } = await import('../src/lib/publish-anchor')
+    // The trail is process state and this file does not reset it per test:
+    // start from nothing and let the URL settle on SUB, so the anchor check
+    // is not what stops the call before the format check runs.
+    resetAnchorsForTests()
     noteFolderClick(SUB)
+    noteUrlFolder(SUB)
     await expect(
       publishOrDeferOwnerUpload({ masterKey: MASTER, parentId: SUB, fileId: FILE_ID, fileKey: CHILD_KEY }),
     ).rejects.toThrow("This folder's keys are unavailable")
