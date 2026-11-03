@@ -11,11 +11,18 @@ import { decodeShareKeyToken, parseShareKey } from '../src/lib/share-key'
  * host, both base64 alphabets, and the four cases the plan names — canonical,
  * legacy host, missing fragment, unicode key.
  *
+ * Updated for core 2f5cd8a (#65): the parser now takes attacker-controlled
+ * input, so a token must be in the route's canonical format — `/s/` is 27
+ * URL-safe base64 chars (20 bytes), `/f/` is 43 (32 bytes) — a public host
+ * must be `https`, and no userinfo or backslash is allowed.
+ *
  * `share-full-link.ts` and `share-key.ts` own no rule of their own: the first
  * asks core to build, the second asks core to decode.
  */
 
 const TOKEN = 'AAECAwQFBgcICQoLDA0ODxAREhM'
+// A folder link's token is 32 bytes (43 chars), not the 20-byte file token.
+const FOLDER_TOKEN = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'
 const B64URL_KEY = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'
 const STD_KEY = '+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/s='
 const B64URL_F_KEY = '-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_s'
@@ -106,9 +113,10 @@ describe('parse: /s/ and /f/ on any host, both alphabets, stable error codes', (
   })
 
   it('a folder link parses on route "f"', () => {
-    expect(coreParseShareLink(`https://app.beebeeb.io/f/${TOKEN}#key=${B64URL_F_KEY}`)).toMatchObject({
+    expect(coreParseShareLink(`https://app.beebeeb.io/f/${FOLDER_TOKEN}#key=${B64URL_F_KEY}`)).toMatchObject({
       base_url: 'https://app.beebeeb.io',
       route: 'f',
+      token: FOLDER_TOKEN,
       key: B64URL_F_KEY,
     })
   })
@@ -137,6 +145,14 @@ describe('parse: /s/ and /f/ on any host, both alphabets, stable error codes', (
       ['https://app.beebeeb.io/s/#key=' + B64URL_KEY, 'missing_token'],
       [`https://app.beebeeb.io/x/${TOKEN}#key=${B64URL_KEY}`, 'not_a_share_link'],
       ['nonsense', 'not_a_share_link'],
+      // Core 2f5cd8a: the token format is per route, and a link must be https
+      // with no userinfo or backslash (the parsers that read it treat `\` as `/`).
+      [`https://app.beebeeb.io/f/${TOKEN}#key=${B64URL_KEY}`, 'not_a_share_link'],
+      [`https://app.beebeeb.io/s/${FOLDER_TOKEN}#key=${B64URL_KEY}`, 'not_a_share_link'],
+      [`https://app.beebeeb.io/s/..#key=${B64URL_KEY}`, 'not_a_share_link'],
+      [`https://user:pass@app.beebeeb.io/s/${TOKEN}#key=${B64URL_KEY}`, 'not_a_share_link'],
+      [`https://evil.com\\@app.beebeeb.io/s/${TOKEN}#key=${B64URL_KEY}`, 'not_a_share_link'],
+      [`http://app.beebeeb.io/s/${TOKEN}#key=${B64URL_KEY}`, 'not_a_share_link'],
     ]
     for (const [url, code] of rows) {
       expect(() => coreParseShareLink(url)).toThrow(new RegExp(`^${code}:`))
