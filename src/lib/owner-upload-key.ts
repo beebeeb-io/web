@@ -108,7 +108,16 @@ export async function createOwnerFolder(args: {
     created = landed
   }
   if (args.parentId && args.nameKey && args.masterKey) {
-    await publishOwnerUploadKey(args.masterKey, args.parentId, created.id, args.nameKey, true)
+    // Review F2: same L15 (b)3 rule as an owner upload. A create from a site
+    // that did not show R (an import, a drop) defers its name-key wrap; only
+    // this tab's own click trail may publish it now.
+    await publishOrDeferOwnerUpload({
+      masterKey: args.masterKey,
+      parentId: args.parentId,
+      fileId: created.id,
+      fileKey: args.nameKey,
+      isFolder: true,
+    })
   }
   return created
 }
