@@ -4,11 +4,19 @@
  * static markup. The container's behaviour (selection, dnd, sorting state)
  * stays covered by the drive page's Playwright run.
  */
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { FileRow, type FileRowProps } from '../src/components/file-list/file-row'
 import { FileListHeader } from '../src/components/file-list/file-list-header'
 import type { DriveFile } from '../src/lib/api'
+import { ensureWasm } from '../src/lib/format'
+
+// The row's size label comes from core's ladder ("2 KB"); until the wasm
+// module is in memory the fallback prints "2048 B". The import starts it, but
+// a loaded runner can reach the first assertion first — wait for it.
+beforeAll(async () => {
+  await ensureWasm()
+})
 
 const html = (el: React.ReactElement) => renderToStaticMarkup(el)
 
