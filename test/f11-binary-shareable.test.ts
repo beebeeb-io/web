@@ -45,6 +45,14 @@ await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
   ...ownedFolderCrypto(),
   deriveFileKey: async (m: Uint8Array, id: string) => wasm.derive_file_key(m, encoder.encode(id)),
 }))
+// The publish sink is mocked on BOTH the facade and its source: `api.ts`
+// re-exports it, and code that imports the source directly (or held the
+// binding before this file's mock) must record here too. The full run caught
+// the facade-only mock being bypassed and the test posting to production.
+const publishSharedFolderKeys = async (root: string, keys: { file_id: string; encrypted_file_key: string }[]) => {
+  published.push({ root, keys })
+  return { written: keys.length, skipped: 0 }
+}
 await mockModuleScoped('../src/lib/api', import.meta.dir, () => ({
   updateFile: async (id: string, body: { parent_id?: string | null }) => ({ id, parent_id: body.parent_id ?? null }),
   getSharedFolder: async (folderId: string) => {
@@ -66,13 +74,11 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, () => ({
     files: parentId === ROOT ? listings : [],
     next_cursor: null,
   }),
-  publishSharedFolderKeys: async (root: string, keys: { file_id: string; encrypted_file_key: string }[]) => {
-    published.push({ root, keys })
-    return { written: keys.length, skipped: 0 }
-  },
+  publishSharedFolderKeys,
 }))
 await mockModuleScoped('../src/lib/api-folder-links', import.meta.dir, () => ({
   listSharedFolderKeys: async () => ({ keys: [], next_cursor: null }),
+  publishSharedFolderKeys,
 }))
 // The owned-item port crosses into the worker; run the same core calls here.
 await mockModuleScoped('../src/lib/owned-item', import.meta.dir, (real) => ({

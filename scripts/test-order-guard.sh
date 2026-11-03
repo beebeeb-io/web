@@ -40,7 +40,7 @@ ok() { echo "ok   $*"; }
 offenders="$(command grep -rnE '\.module\(' test \
   --include='*.ts' --include='*.tsx' \
   | command grep -vE '^[^:]+:[0-9]+:[[:space:]]*(\*|//|/\*)' \
-  | command grep -v '^test/helpers/scoped-module-mock\.ts:' || true)"
+  | command grep -v -e '^test/helpers/scoped-module-mock\.ts:' -e '^test/helpers/module-slots\.ts:' || true)"
 if [ -n "$offenders" ]; then
   red "static: direct mock.module() outside test/helpers/scoped-module-mock.ts — use mockModuleScoped():"
   echo "$offenders" | sed 's/^/       /'
