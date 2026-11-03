@@ -104,6 +104,7 @@ export const plan_chunks: (a: number, b: bigint, c: number, d: number) => void;
 export const plan_effective_quota: (a: number, b: number, c: bigint, d: bigint) => bigint;
 export const plan_max_extra_tb: (a: number, b: number) => bigint;
 export const plan_monthly_cost_cents: (a: number, b: number, c: bigint, d: bigint) => bigint;
+export const previewableBatchFor: (a: number, b: number, c: number, d: number, e: number) => void;
 export const recover_from_phrase: (a: number, b: number, c: number) => void;
 export const redactUrl: (a: number, b: number, c: number) => void;
 export const resolveOwnedKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number) => void;

@@ -4823,6 +4823,44 @@ export function plan_monthly_cost_cents(plan_slug, extra_tb, extra_users) {
 }
 
 /**
+ * One preview decision per name, for one platform: `result[i]` is `1` when
+ * `names[i]` can be previewed in-app on `platform`, `0` otherwise.
+ *
+ * `platform` is `"web"`, `"desktop"` or `"mobile"`. Any other string throws
+ * `unknown preview platform \`…\`` — it never falls back to a default, because
+ * answering for the wrong client is exactly the regression this export exists
+ * to prevent.
+ *
+ * The vector `test-vectors/consolidation/preview_platforms.json` carries the
+ * expected answer for every extension of the three-way union, per platform.
+ * @param {string[]} names
+ * @param {string} platform
+ * @returns {Uint8Array}
+ */
+export function previewableBatchFor(names, platform) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArrayJsValueToWasm0(names, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(platform, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.previewableBatchFor(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Recover a master key from a 12-word BIP39 recovery phrase.
  * Returns the 32-byte master key as `Uint8Array`.
  * @param {string} phrase
@@ -6778,6 +6816,16 @@ function passArray8ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 1, 1) >>> 0;
     getUint8ArrayMemory0().set(arg, ptr / 1);
     WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+function passArrayJsValueToWasm0(array, malloc) {
+    const ptr = malloc(array.length * 4, 4) >>> 0;
+    const mem = getDataViewMemory0();
+    for (let i = 0; i < array.length; i++) {
+        mem.setUint32(ptr + 4 * i, addHeapObject(array[i]), true);
+    }
+    WASM_VECTOR_LEN = array.length;
     return ptr;
 }
 

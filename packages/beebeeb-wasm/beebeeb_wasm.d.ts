@@ -1416,6 +1416,20 @@ export function plan_max_extra_tb(plan_slug: string): bigint;
 export function plan_monthly_cost_cents(plan_slug: string, extra_tb: bigint, extra_users: bigint): bigint;
 
 /**
+ * One preview decision per name, for one platform: `result[i]` is `1` when
+ * `names[i]` can be previewed in-app on `platform`, `0` otherwise.
+ *
+ * `platform` is `"web"`, `"desktop"` or `"mobile"`. Any other string throws
+ * `unknown preview platform \`…\`` — it never falls back to a default, because
+ * answering for the wrong client is exactly the regression this export exists
+ * to prevent.
+ *
+ * The vector `test-vectors/consolidation/preview_platforms.json` carries the
+ * expected answer for every extension of the three-way union, per platform.
+ */
+export function previewableBatchFor(names: string[], platform: string): Uint8Array;
+
+/**
  * Recover a master key from a 12-word BIP39 recovery phrase.
  * Returns the 32-byte master key as `Uint8Array`.
  */
@@ -1837,6 +1851,7 @@ export interface InitOutput {
     readonly plan_effective_quota: (a: number, b: number, c: bigint, d: bigint) => bigint;
     readonly plan_max_extra_tb: (a: number, b: number) => bigint;
     readonly plan_monthly_cost_cents: (a: number, b: number, c: bigint, d: bigint) => bigint;
+    readonly previewableBatchFor: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly recover_from_phrase: (a: number, b: number, c: number) => void;
     readonly redactUrl: (a: number, b: number, c: number) => void;
     readonly resolveOwnedKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number) => void;
