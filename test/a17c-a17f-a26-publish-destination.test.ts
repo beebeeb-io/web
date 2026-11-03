@@ -87,6 +87,8 @@ let rootInventory: Array<{ file_id: string; encrypted_file_key: string }> = []
 
 const published: Array<{ folderId: string; keys: Array<{ file_id: string; encrypted_file_key: string }> }> = []
 let inventoryReads = 0
+/** N2: fires on the first inventory read, mid-call (see the test). */
+let onInventory: (() => void) | null = null
 
 const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
   ...r,
@@ -133,6 +135,9 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => ({
   },
   listSharedFolderKeys: async () => {
     inventoryReads += 1
+    const hook = onInventory
+    onInventory = null
+    hook?.()
     return { keys: rootInventory, next_cursor: null }
   },
   publishSharedFolderKeys: async (folderId: string, keys: Array<{ file_id: string; encrypted_file_key: string }>) => {
@@ -189,7 +194,7 @@ await mockModuleScoped('../src/lib/owned-item', import.meta.dir, (r) => ({
   },
 }))
 
-const { publishOrDeferOwnerUpload, publishOwnerUploadKey } = await import('../src/lib/owner-upload-key')
+const { publishOrDeferOwnerUpload } = await import('../src/lib/owner-upload-key')
 const { noteFolderClick, noteUrlFolder, resetAnchorsForTests, readDeferredPublishes, PUBLISH_QUEUE_KEY } =
   await import('../src/lib/publish-anchor')
 const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
@@ -214,6 +219,7 @@ function reset(): void {
     { file_id: DECOY, encrypted_file_key: childWrap(DECOY) },
   ]
   inventoryReads = 0
+  onInventory = null
   published.length = 0
   store.clear()
   resetAnchorsForTests()
@@ -313,15 +319,23 @@ describe('A26: a plaintext-named O folder is not a proven publish destination', 
 })
 
 describe('N2: the seal uses the proven root, not a second parent walk', () => {
-  test('a later walk that names R2 publishes nothing under R2', async () => {
-    // The L14 proof named ROOT and unwrapped ROOT's folder key. Afterwards the
-    // server (and the 10 s parent cache) answers the next step of the walk with
-    // a different custody root R2. The seal must stay under the proven ROOT.
-    rows[DEST] = { ...rows[DEST], parent_id: R2 }
-    await publishOwnerUploadKey(MASTER, DEST, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', new Uint8Array(32).fill(9), false, {
-      rootId: ROOT,
-      folderKey: FOLDER_KEY,
-    })
+  test('a chain that names R2 mid-call publishes once, under the proven R', async () => {
+    // The whole chain runs through the real entry point (publishOrDefer), not a
+    // hand-fed proven root. The create is anchored: the tab clicked R then DEST.
+    noteFolderClick(ROOT)
+    noteFolderClick(DEST)
+    noteUrlFolder(DEST)
+    // The L14 proof named ROOT and unwrapped ROOT's folder key. From the first
+    // inventory read on, the server (and the 10 s parent cache) would answer a
+    // fresh walk with a different custody root R2; a re-walk would prove
+    // against R2, whose key is not ROOT's, and the seal must not follow it.
+    onInventory = () => {
+      rows[DEST] = { ...rows[DEST], parent_id: R2 }
+      adoption.clearSharedFolderLookups()
+      resetCustodyMemoryForTests()
+    }
+    expect(await create(DEST)).toBe('published')
+    expect(onInventory).toBeNull()
     expect(published).toHaveLength(1)
     expect(published[0].folderId).toBe(ROOT)
     expect(published.some((p) => p.folderId === R2)).toBe(false)

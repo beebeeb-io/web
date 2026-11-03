@@ -21,6 +21,7 @@ import { encodeEnvelope } from '../src/lib/metadata-envelope'
 const wasm = loadWasm()
 const MASTER = new Uint8Array(32).fill(7)
 const ROOT = '11111111-1111-4111-8111-111111111111'
+const DEST = '22222222-2222-4222-8222-222222222222'
 const FILE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const FOLDER_KEY = new Uint8Array(32).fill(0x5a)
 const FILE_KEY = new Uint8Array(32).fill(0x11)
@@ -44,6 +45,8 @@ afterAll(() => {
 })
 
 const published: Array<{ root: string; keys: { file_id: string; encrypted_file_key: string }[] }> = []
+/** A14: DEST's L14 wrap is in R's inventory only once this is true. */
+let destProven = false
 
 const strKey = (id: string) => wasm.derive_file_key(MASTER, encoder.encode(id)) as Uint8Array
 const sealedName = (key: Uint8Array) => {
@@ -100,8 +103,8 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => ({
   getFile: async (id: string) => ({
     id,
     parent_id: id === ROOT ? null : ROOT,
-    is_folder: id === ROOT,
-    name_encrypted: id === ROOT ? sealedName(strKey(ROOT)) : sealedName(strKey(FILE_ID)),
+    is_folder: id === ROOT || id === DEST,
+    name_encrypted: sealedName(strKey(id)),
     uploaded_by: 'owner',
   }),
   getSharedFolder: async (folderId: string) => {
@@ -118,7 +121,19 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => ({
     }
   },
   getSentInvites: async () => [],
-  listSharedFolderKeys: async () => ({ keys: [], next_cursor: null }),
+  listSharedFolderKeys: async () => ({
+    keys: destProven
+      ? [
+          {
+            file_id: DEST,
+            encrypted_file_key: Buffer.from(
+              wasm.wrapFolderChild(FOLDER_KEY, ROOT, DEST, 2, strKey(DEST)) as Uint8Array,
+            ).toString('base64'),
+          },
+        ]
+      : [],
+    next_cursor: null,
+  }),
   listFilesPage: async () => ({ files: [], next_cursor: null }),
   publishSharedFolderKeys: async (
     root: string,
@@ -138,6 +153,7 @@ const { resetAnchorsForTests, readDeferredPublishes } = await import('../src/lib
 
 beforeEach(() => {
   published.length = 0
+  destProven = false
   clearSharedFolderLookups()
   resetAnchorsForTests()
   Object.defineProperty(globalThis, 'localStorage', { value: new MemoryStore(), configurable: true, writable: true })
@@ -188,6 +204,31 @@ describe('F8: the drive wires the anchor trail in production', () => {
     expect(await publishDeferredOnAnchoredSite(MASTER)).toBe(0)
     expect(published).toEqual([])
     expect(readDeferredPublishes(globalThis.localStorage)).toEqual([])
+  })
+
+  test('A14: an anchored create deferred while DEST is unproven publishes once when the trail flushes it', async () => {
+    // Click into R then DEST: anchored, so the create is not refused — but DEST
+    // has no L14 wrap in R's inventory yet, so it is deferred, not published.
+    noteDriveFolderClick(ROOT)
+    noteDriveFolderClick(DEST)
+    expect(
+      await publishOrDeferOwnerUpload({ masterKey: MASTER, parentId: DEST, fileId: FILE_ID, fileKey: FILE_KEY }),
+    ).toBe('deferred')
+    expect(published).toEqual([])
+    expect(readDeferredPublishes(globalThis.localStorage)).toHaveLength(1)
+
+    // DEST's wrap lands in R's inventory. The drive flushes on a later anchored
+    // site: the row's pinned root is proven now, so the wrap goes out once.
+    destProven = true
+    expect(await publishDeferredOnAnchoredSite(MASTER)).toBe(1)
+    expect(published).toHaveLength(1)
+    expect(published[0].root).toBe(ROOT)
+    expect(published[0].keys.map((k) => k.file_id)).toEqual([FILE_ID])
+    expect(readDeferredPublishes(globalThis.localStorage)).toEqual([])
+
+    // The queue row is gone: a second site publishes nothing.
+    expect(await publishDeferredOnAnchoredSite(MASTER)).toBe(0)
+    expect(published).toHaveLength(1)
   })
 
   test('the drive page and its hook call the wiring (no dead exports)', async () => {
