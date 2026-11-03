@@ -174,10 +174,10 @@ export type MovableRow = Pick<DriveFile, 'id'> &
  * resolver key), never a derived key that is not its key. The one route that
  * moves a row in the web client: a guard test pins it.
  *
- * L15 (2275): a move is a share-time event only when the picker showed the
- * shared root `R` for the chosen destination; `pickerRootId` carries that
- * answer. When the caller omits it, this client's own custody proof for `R`
- * stands in for the marker (the picker marks shared roots from that proof).
+ * L15 (2275): a move is a share-time event only when the move picker answered
+ * that it showed the shared root `R` for the chosen destination;
+ * `pickerRootId` carries that answer. No answer (undefined or null) means no
+ * publish: a local custody record for R does not say the user saw R there.
  */
 export async function moveOwnerItems(args: {
   ids: string[]
@@ -215,6 +215,7 @@ export async function moveOwnerItems(args: {
 async function adoptBeforeLeavingRoot(args: {
   ids: string[]
   destinationId: string | null
+  rows?: ReadonlyMap<string, MovableRow> | MovableRow[]
   masterKey?: Uint8Array
 }): Promise<void> {
   if (!args.masterKey) return
@@ -222,10 +223,20 @@ async function adoptBeforeLeavingRoot(args: {
   // (rv-web198e P3), and with it off there is no custody to adopt out of.
   if (!(await sharedFoldersEnabled())) return
   const destinationRoot = args.destinationId ? await sharedRootFor(args.destinationId, args.destinationId) : null
+  const byId: ReadonlyMap<string, MovableRow> = Array.isArray(args.rows)
+    ? new Map(args.rows.map((row) => [row.id, row]))
+    : (args.rows ?? new Map())
   for (const id of args.ids) {
     const source = await sharedRootFor(null, id)
     if (!source || source === destinationRoot) continue
-    await adoptForeignTreeBeforeMove({ masterKey: args.masterKey, rootId: source, itemIds: [id] })
+    const row = byId.get(id)
+    await adoptForeignTreeBeforeMove({
+      masterKey: args.masterKey,
+      rootId: source,
+      itemIds: [id],
+      // F4: the row's kind decides whether its descendants are walked.
+      items: row ? [{ id, is_folder: !!row.is_folder }] : undefined,
+    })
   }
 }
 

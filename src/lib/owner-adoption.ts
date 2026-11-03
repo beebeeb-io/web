@@ -573,10 +573,21 @@ export async function adoptForeignTreeBeforeMove(args: {
   masterKey: Uint8Array
   rootId: string
   itemIds: string[]
+  /** The moved rows' kinds, when the caller has them (F4): a folder's
+   * descendants are only adopted when it is known to be a folder. */
+  items?: ReadonlyArray<{ id: string; is_folder: boolean }>
 }): Promise<{ adopted: number }> {
   const { masterKey, rootId, itemIds } = args
   const index = await keysUnderRoot(rootId)
-  const queue: { id: string; isFolder: boolean }[] = itemIds.map((id) => ({ id, isFolder: false }))
+  const kinds = new Map((args.items ?? []).map((item) => [item.id, item.is_folder]))
+  const queue: { id: string; isFolder: boolean }[] = []
+  for (const id of itemIds) {
+    const known = kinds.get(id)
+    // F4: a moved folder seeded as a file never had its contents adopted. Take
+    // the kind from the caller's row, else from the server row for this id.
+    const isFolder = known ?? !!(await getFile(id).catch(() => null))?.is_folder
+    queue.push({ id, isFolder })
+  }
   const seen = new Set<string>()
   const failed: string[] = []
   let adopted = 0

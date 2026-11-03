@@ -59,7 +59,7 @@ await mockModuleScoped('../src/lib/owned-item', import.meta.dir, {
 })
 
 let keyIndex: Map<string, string> = new Map()
-let files: Map<string, { id: string; parent_id: string | null; name_encrypted?: string; owner_wrapped_file_key?: string | null }> = new Map()
+let files: Map<string, { id: string; parent_id: string | null; is_folder?: boolean; name_encrypted?: string; owner_wrapped_file_key?: string | null }> = new Map()
 await mockModuleScoped('../src/lib/api', import.meta.dir, {
   getFile: async (id: string) => {
     const row = files.get(id)
@@ -79,6 +79,10 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
       wrapped_folder_key: null,
     }
   },
+  listFilesPage: async ({ parentId }: { parentId?: string | null }) => ({
+    files: [...files.values()].filter((row) => row.parent_id === parentId),
+    next_cursor: null,
+  }),
   adoptOwnerFileKey: async (fileId: string, wrapped: string) => {
     adoptCalls.push({ fileId, wrapped })
     const row = files.get(fileId)
@@ -410,6 +414,30 @@ describe('A19: F descendants are adopted before a move out of the root (L12)', (
     const res = await adoptForeignTreeBeforeMove({ masterKey: MASTER, rootId: FOLDER_ID, itemIds: [file.id] })
     expect(res.adopted).toBe(1)
     expect(adoptCalls.map((c) => c.fileId)).toEqual([file.id])
+  })
+
+  test('a moved FOLDER of guest uploads adopts every file inside it', async () => {
+    seedCustody()
+    adoptResult = { adopted: true }
+    // An owner-created folder (a v4 id, so not foreign) holding two guest
+    // uploads (v8 F ids). Only the row's is_folder reaches its contents.
+    const guestFolder = { id: '33333333-3333-4333-8333-333333333333', parent_id: FOLDER_ID, is_folder: true }
+    files.set(guestFolder.id, guestFolder)
+    const a = { ...seedFile(), id: 'aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa', parent_id: guestFolder.id }
+    const b = { ...seedFile(), id: 'bbbbbbbb-bbbb-8bbb-8bbb-bbbbbbbbbbbb', parent_id: guestFolder.id }
+    for (const child of [a, b]) {
+      files.set(child.id, { id: child.id, parent_id: child.parent_id, name_encrypted: child.name_encrypted })
+      keyIndex.set(child.id, l7(child.id))
+    }
+    const { adoptForeignTreeBeforeMove } = await import('../src/lib/owner-adoption')
+    const res = await adoptForeignTreeBeforeMove({
+      masterKey: MASTER,
+      rootId: FOLDER_ID,
+      itemIds: [guestFolder.id],
+      items: [{ id: guestFolder.id, is_folder: true }],
+    })
+    expect(res.adopted).toBe(2)
+    expect(adoptCalls.map((c) => c.fileId).sort()).toEqual([a.id, b.id].sort())
   })
 
   test('an F child with no key row refuses the whole move, and posts nothing', async () => {
