@@ -183,3 +183,53 @@ describe('§15 resolver: request rows are read only through core', () => {
     resolver.clear()
   })
 })
+
+/**
+ * 2326 review P3-1: the rename target's pin is the row's RECORDED format and it
+ * must survive the rename. Every other web fixture seals with `encrypt_metadata`
+ * (pin 0), so hard-coding `pin: 0` in the resolver passed them all.
+ */
+describe('§15 resolver: a pin-2 row renames with pin 2', () => {
+  test('sealRequestRename gets pin 2, the new name is subkey-sealed, pin and MIME survive', async () => {
+    // The name writer records the pin (a v2 request upload: `encrypt_name_for`
+    // with 2), which core reports as both chunkFormat and renameTarget.pin.
+    const namePin2 = wasm.encrypt_name_for(CONTENT, 'clip.mp4', 'video/mp4', 2) as string
+    const fileRow = row(sealContent(EMPTY), namePin2)
+    const base = createLocalRequestRowEngine(wasm, async () => [requestRow()])
+    const sealArgs: Array<{ pin: number; filename: string; mimeType: string | null }> = []
+    const resolver = createRequestRowResolverWith({
+      ...base,
+      async sealRename(args) {
+        sealArgs.push({ pin: args.pin, filename: args.filename, mimeType: args.mimeType })
+        return base.sealRename(args)
+      },
+    })
+
+    const resolved = await resolver.resolveRow(fileRow, MASTER)
+    expect(resolved.chunkFormat).toBe(2)
+    expect(resolved.renameTarget).toEqual({ origin: 'derived', pin: 2 })
+
+    const renamed = await resolver.sealRename(fileRow, 'renamed.mp4', MASTER)
+    expect(sealArgs).toEqual([{ pin: 2, filename: 'renamed.mp4', mimeType: 'video/mp4' }])
+
+    // The rename is sealed under the v2 name subkey: the documented reader opens
+    // it, the raw derived key does not.
+    expect(wasm.decrypt_file_metadata_with_key(DERIVED, renamed)).toEqual({
+      name: 'renamed.mp4',
+      mime_type: 'video/mp4',
+      chunk_format: 2,
+    })
+    const { nonce, ciphertext } = wasm.decodeMetadataEnvelope(renamed) as {
+      nonce: Uint8Array
+      ciphertext: Uint8Array
+    }
+    expect(() => wasm.decrypt_metadata(DERIVED, nonce, ciphertext)).toThrow()
+
+    // Re-resolving the renamed row still reports pin 2 and keeps the MIME.
+    const again = await resolver.resolveRow(row(sealContent(EMPTY), renamed), MASTER)
+    expect(again.name).toBe('renamed.mp4')
+    expect(again.mimeType).toBe('video/mp4')
+    expect(again.renameTarget).toEqual({ origin: 'derived', pin: 2 })
+    resolver.clear()
+  })
+})
