@@ -185,6 +185,17 @@ describe('§15 resolver: request rows are read only through core', () => {
 })
 
 /**
+ * 2326 review P3-2: a plaintext name authenticates nothing. Core refuses it for
+ * a request row, so the list must ASK core (never show the string verbatim).
+ */
+describe('§15 resolver: a plaintext request-row name is refused', () => {
+  test('core refuses the row instead of naming it', async () => {
+    const fileRow = row(sealContent(EMPTY), 'plain-note.txt')
+    await expect(resolverFor(fileRow).resolveRow(fileRow, MASTER)).rejects.toThrow(/encrypted envelope/i)
+  })
+})
+
+/**
  * 2326 review P3-1: the rename target's pin is the row's RECORDED format and it
  * must survive the rename. Every other web fixture seals with `encrypt_metadata`
  * (pin 0), so hard-coding `pin: 0` in the resolver passed them all.

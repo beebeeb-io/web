@@ -65,17 +65,25 @@ export function useDecryptedNames(
       | { id: string; status: 'error'; error: unknown }
 
     async function prepareOne(file: DriveFile): Promise<Prepared> {
+      // §15 (2326 review P3-2): a request row is asked of core FIRST, even
+      // when its name_encrypted is not an envelope. Core refuses a plaintext
+      // request-row name ("must be an encrypted envelope"), and showing that
+      // string verbatim would display a name nobody sealed for this account.
+      if (isRequestUpload(file)) {
+        try {
+          // Core's resolver picks the name key (derived first, or under C for
+          // a shipped row); there is no key to hand out.
+          const row = await getRequestRow(file)
+          return { id: file.id, status: 'resolved', name: row.name }
+        } catch (err) {
+          return { id: file.id, status: 'error', error: err }
+        }
+      }
       // Legacy format (iOS before 930c61a): plain-text name, not JSON-encrypted.
       if (!file.name_encrypted.startsWith('{')) {
         return { id: file.id, status: 'plaintext', name: file.name_encrypted }
       }
       try {
-        // §15: a request row's name is decrypted by core's resolver (derived
-        // first, or under C for a shipped row); there is no key to hand out.
-        if (isRequestUpload(file)) {
-          const row = await getRequestRow(file)
-          return { id: file.id, status: 'resolved', name: row.name }
-        }
         // A file another person added to a shared folder is sealed under a key
         // this account cannot derive; getFileKeyForFile takes the folder-key
         // path for it (owner wrap, then `shared_folder_keys` under the shared
