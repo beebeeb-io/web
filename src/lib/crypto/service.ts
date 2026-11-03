@@ -34,7 +34,7 @@ let idleNotifier: (() => void) | null = null
 
 function spawnWorker(): { worker: Worker; proxy: Comlink.Remote<CryptoWorker> } {
   const worker = new Worker(
-    new URL('../workers/crypto.worker.ts', import.meta.url),
+    new URL('../../workers/crypto.worker.ts', import.meta.url),
     { type: 'module' },
   )
   const proxy = Comlink.wrap<CryptoWorker>(worker)
