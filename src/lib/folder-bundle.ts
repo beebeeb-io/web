@@ -19,6 +19,7 @@
  * `listAllFiles` / key-derivation in.
  */
 import type { DriveFile } from '@beebeeb/shared'
+import { isRequestUpload } from './request-row'
 
 /**
  * The bundle item cap from the bundle spec (BUNDLE_MAX_ITEMS, 0417 D2). The
@@ -136,7 +137,13 @@ export async function collectFolderBundle(
       if (entry.skip === null) continue
       skipped.push({
         fileId: entry.node.id,
-        name: entry.node.name_encrypted.startsWith('{') ? null : entry.node.name_encrypted,
+        // 2326 review2 P3-4: the walk never decrypted this row, so a name here
+        // would be the server's string verbatim. A request row is never named
+        // from it (a non-request skip may show its own legacy plaintext name).
+        name:
+          isRequestUpload(entry.node) || entry.node.name_encrypted.startsWith('{')
+            ? null
+            : entry.node.name_encrypted,
         reason: entry.skip,
       })
     }

@@ -85,7 +85,10 @@ describe('2326 P2-2: a request row is skipped, never fatal', () => {
     expect(decrypted.sort()).toEqual(['folder-1', 'plain-a', 'plain-b'])
   })
 
-  test('a plaintext-named request row is listed by the name the server sent', async () => {
+  // 2326 review2 P3-4: a skipped request row's name is never authenticated
+  // (the walk never decrypts it), so the server's plaintext string is not
+  // echoed into the skipped list. The row is listed by its reason only.
+  test('a plaintext-named request row is never shown by its server-supplied name', async () => {
     const row = { ...requestRow('request-plain'), name_encrypted: 'received.png' } as DriveFile
     const scan = await collectFolderBundle('root', {
       listChildren: async () => [row],
@@ -96,7 +99,23 @@ describe('2326 P2-2: a request row is skipped, never fatal', () => {
     })
     expect(scan.files).toEqual([])
     expect(scan.skipped).toEqual([
-      { fileId: 'request-plain', name: 'received.png', reason: REQUEST_COPY },
+      { fileId: 'request-plain', name: null, reason: REQUEST_COPY },
+    ])
+  })
+
+  test('a skipped non-request row may still be named by its plaintext name', async () => {
+    // The rule is about the request row, not every skip: a legacy plaintext
+    // name on an ordinary row is the row's own name.
+    const row = { ...plainRow('plain-plain'), name_encrypted: 'legacy.txt' } as DriveFile
+    const scan = await collectFolderBundle('root', {
+      listChildren: async () => [row],
+      skipReason: () => 'cannot be shared',
+      decryptName: async () => {
+        throw new Error('must not be decrypted')
+      },
+    })
+    expect(scan.skipped).toEqual([
+      { fileId: 'plain-plain', name: 'legacy.txt', reason: 'cannot be shared' },
     ])
   })
 
