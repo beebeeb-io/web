@@ -98,15 +98,18 @@ describe('encryptedUpload v2: the client id is the id, or the write aborts (L13)
   })
 })
 
-test('B owner upload publishes the actual v2 file key to the shared root without an invite', async () => {
+test('L15: the owner upload sink publishes nothing, even when the parent is a custody root', async () => {
+  // The mock above still answers `nested-folder` with the shared root
+  // `shared-root` (L7), so the sink could reach a publish if it had a hook.
+  // Contract 2275 L15 removed it: an upload is owner-only until the anchored
+  // create site (`publishOrDeferOwnerUpload`) publishes it, so nothing is
+  // sealed for sharing here (A14b for desktop/CLI; web's anchored path is
+  // covered in a17c-a17f-a26-publish-destination.test.ts).
   resetCaptures()
   const { encryptedUpload } = await import('../src/lib/encrypted-upload')
   await encryptedUpload(new File(['data'], 'late.txt'), 'proposed', new Uint8Array([1]),
     new Uint8Array([9]), 'nested-folder')
-  expect(cap.ownerKeys).toHaveLength(1)
-  expect(cap.ownerKeys[0].folderId).toBe('shared-root')
-  // L7: bound to (shared root, the client's file id, file), sealing the real file key.
-  expect(cap.ownerKeys[0].keys).toEqual([{ file_id: 'proposed', encrypted_file_key: btoa('l7|shared-root|proposed|1|1') }])
+  expect(cap.ownerKeys).toHaveLength(0)
   expect(cap.addFolderKeysCalls).toHaveLength(0)
 })
 
