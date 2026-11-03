@@ -1121,8 +1121,6 @@ const cryptoWorker = {
     }
   },
 
-  /** Open a sealed request upload (owner decrypt path). Recovers the content key. */
-
   // ─── Constellation peer transfer ──────────────────────────────────────────
   // Ephemeral X25519 + HKDF-SHA256 + AES-256-GCM, all in core. The receiver
   // generates a keypair, performs ECDH against the sender's public key, derives
