@@ -1,10 +1,18 @@
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import {
   CHUNK_OVERHEAD_BYTES,
   canDeleteVersion,
   versionContentBytes,
   versionDeleteCopy,
 } from '../src/lib/version-delete-copy'
+import { ensureWasm } from '../src/lib/format'
+
+// `versionDeleteCopy` sizes the confirmation with core's format ladder, which
+// is only correct once the wasm module is loaded. Init it here so the file is
+// green alone, not just behind another file's settled init in a full run.
+beforeAll(async () => {
+  await ensureWasm()
+})
 
 /**
  * Task 1809 — deleting a kept version of a file. The confirmation is a promise
