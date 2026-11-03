@@ -102,10 +102,14 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => ({
 }))
 
 const { createOwnerFolder } = await import('../src/lib/owner-upload-key')
+const { noteFolderClick, resetAnchorsForTests } = await import('../src/lib/publish-anchor')
 const { clearSharedFolderLookups } = await import('../src/lib/owner-adoption')
 const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 
 beforeEach(() => {
+  // Every file starts with an empty click trail: the trail is process state,
+  // and a folder another file clicked is not this test's anchor.
+  resetAnchorsForTests()
   resetCustodyMemoryForTests()
   custodyOn = true
   dropNextCreates = 0
@@ -123,6 +127,9 @@ function nameKey(): Uint8Array {
 
 describe('createOwnerFolder', () => {
   test('inside a custody folder: the new folder name-key wrap is published, L7 as a folder', async () => {
+    // Review F2: a create publishes only from this tab's own click trail; a
+    // create the user reached by clicking R does publish.
+    noteFolderClick(ROOT)
     await createOwnerFolder({ nameEncrypted: '{}', parentId: ROOT, folderId: NEW_FOLDER, nameKey: nameKey(), masterKey: MASTER })
     expect(created).toEqual([{ parentId: ROOT, folderId: NEW_FOLDER }])
     expect(published).toHaveLength(1)
@@ -216,6 +223,8 @@ describe('createOwnerFolder after a dropped connection: the folder may already b
   test('dropped, then 500; the row is there with exactly the name sent: created, and the wrap is published', async () => {
     dropNextCreates = 1
     conflictAfterDrops = true
+    // Review F2: landed or not, the wrap goes out only from a clicked root.
+    noteFolderClick(ROOT)
     const args = createArgs()
     landedNewFolder = folderRow(sent)
     const folder = await createOwnerFolder(args)
@@ -248,6 +257,7 @@ describe('createOwnerFolder after a dropped connection: the folder may already b
   // primary key of the folder an earlier call committed). These replace R4-3's
   // "a lone 500 is just an error: no lookup" control, removed in 51e233f.
   test('F2: a lone 500 (no dropped connection in this call) with exactly the folder sent: adopted', async () => {
+    noteFolderClick(ROOT)
     conflictAfterDrops = true
     const args = createArgs()
     landedNewFolder = folderRow(sent)
