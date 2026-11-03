@@ -32,6 +32,8 @@ await mockModuleScoped('../src/lib/folder-share-crypto', import.meta.dir, (r) =>
 /** Every POST /files/{id}/owner-key this file's fake API saw. */
 const adoptCalls: Array<{ fileId: string; wrapped: string }> = []
 let adoptResult: { adopted: boolean } = { adopted: true }
+/** What the server stores instead of the posted wrap (F13 read-back tests). */
+let storedWrapOverride: string | null = null
 let custody: { owner_wrapped_folder_key: string } | null = null
 
 const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
@@ -87,7 +89,9 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
     adoptCalls.push({ fileId, wrapped })
     const row = files.get(fileId)
     // Write-once on the server: the first accepted wrap is the stored one.
-    if (adoptResult.adopted && row && !row.owner_wrapped_file_key) row.owner_wrapped_file_key = wrapped
+    if (adoptResult.adopted && row && !row.owner_wrapped_file_key) {
+      row.owner_wrapped_file_key = storedWrapOverride ?? wrapped
+    }
     return adoptResult
   },
 })
@@ -154,6 +158,7 @@ beforeEach(() => {
   inviteFolderKey = null
   adoptCalls.length = 0
   adoptResult = { adopted: true }
+  storedWrapOverride = null
   keyIndex = new Map()
   files = new Map()
   clearSharedFolderLookups()
@@ -438,6 +443,37 @@ describe('A19: F descendants are adopted before a move out of the root (L12)', (
     })
     expect(res.adopted).toBe(2)
     expect(adoptCalls.map((c) => c.fileId).sort()).toEqual([a.id, b.id].sort())
+  })
+
+  test('a read-back wrap that opens but holds a different key refuses the move', async () => {
+    seedCustody()
+    const file = seedFile()
+    keyIndex.set(file.id, l7(file.id))
+    files.set(file.id, { id: file.id, parent_id: FOLDER_ID, name_encrypted: file.name_encrypted })
+    // The server accepts the adoption but stores a wrap of its own making: it
+    // opens for this item under the owner's master, so "it opens" is not proof
+    // that it holds the key this client adopted.
+    storedWrapOverride = l8(file.id, new Uint8Array(32).fill(0x77))
+    const { adoptForeignTreeBeforeMove, MoveNeedsAdoptionError } = await import('../src/lib/owner-adoption')
+    await expect(
+      adoptForeignTreeBeforeMove({ masterKey: MASTER, rootId: FOLDER_ID, itemIds: [file.id] }),
+    ).rejects.toBeInstanceOf(MoveNeedsAdoptionError)
+  })
+
+  test('more than 10,000 F items refuses the move before adopting anything', async () => {
+    seedCustody()
+    const ids = Array.from({ length: 10_001 }, (_, i) => `aaaaaaaa-aaaa-8aaa-8aaa-${String(i).padStart(12, '0')}`)
+    const { adoptForeignTreeBeforeMove, ADOPTION_MAX_ITEMS, AdoptionTooLargeError } = await import('../src/lib/owner-adoption')
+    expect(ADOPTION_MAX_ITEMS).toBe(10_000)
+    await expect(
+      adoptForeignTreeBeforeMove({
+        masterKey: MASTER,
+        rootId: FOLDER_ID,
+        itemIds: ids,
+        items: ids.map((id) => ({ id, is_folder: false })),
+      }),
+    ).rejects.toBeInstanceOf(AdoptionTooLargeError)
+    expect(adoptCalls).toHaveLength(0)
   })
 
   test('an F child with no key row refuses the whole move, and posts nothing', async () => {

@@ -550,6 +550,27 @@ export class MoveNeedsAdoptionError extends Error {
   }
 }
 
+/** L12 bound: at most this many F items are adopted for one move. */
+export const ADOPTION_MAX_ITEMS = 10_000
+
+/** A move that would sweep more than `ADOPTION_MAX_ITEMS` F items. */
+export class AdoptionTooLargeError extends Error {
+  constructor(readonly total: number) {
+    super(
+      `This folder holds more than ${ADOPTION_MAX_ITEMS} items added by someone else, so it was not moved.`,
+    )
+    this.name = 'AdoptionTooLargeError'
+  }
+}
+
+/** Two core-resolved keys are the same key (the check, not a crypto step). */
+function keysEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i += 1) diff |= a[i] ^ b[i]
+  return diff === 0
+}
+
 /** The wraps a custody root holds, by item id (owner or member read). */
 async function keysUnderRoot(rootId: string): Promise<Map<string, string>> {
   const index = new Map<string, string>()
@@ -578,6 +599,9 @@ export async function adoptForeignTreeBeforeMove(args: {
   items?: ReadonlyArray<{ id: string; is_folder: boolean }>
 }): Promise<{ adopted: number }> {
   const { masterKey, rootId, itemIds } = args
+  // L12 bound: a move that would adopt more than the cap is refused outright,
+  // before a single key is written.
+  if (itemIds.length > ADOPTION_MAX_ITEMS) throw new AdoptionTooLargeError(itemIds.length)
   const index = await keysUnderRoot(rootId)
   const kinds = new Map((args.items ?? []).map((item) => [item.id, item.is_folder]))
   const queue: { id: string; isFolder: boolean }[] = []
@@ -598,6 +622,9 @@ export async function adoptForeignTreeBeforeMove(args: {
     if (item.isFolder) {
       for (const child of await collectAllChildItems(item.id)) {
         queue.push({ id: child.id, isFolder: child.isFolder })
+      }
+      if (seen.size + queue.length > ADOPTION_MAX_ITEMS) {
+        throw new AdoptionTooLargeError(seen.size + queue.length)
       }
     }
     if (!(await itemIsForeign(item.id))) continue
@@ -621,18 +648,23 @@ export async function adoptForeignTreeBeforeMove(args: {
         file: { id: item.id, parent_id: row?.parent_id ?? null, is_folder: item.isFolder, name_encrypted: row?.name_encrypted },
         encryptedFileKeyB64: wrapped,
       })
-      zeroize(res.fileKey)
       if (!res.adopted) {
+        zeroize(res.fileKey)
         // Write-once: a wrap another owner client stored is proof enough.
         const readBack = row?.owner_wrapped_file_key ?? null
         if (!readBack || !(await unwrapOwnerFileKey(masterKey, item.id, readBack))) failed.push(item.id)
         continue
       }
       adopted += 1
+      // F13: the stored wrap must hold the key this client just adopted, not
+      // merely open for this item — a server that accepted the adoption could
+      // store a wrap of its own. Both sides come from core; compare the keys.
       const readBack = await getFile(item.id).catch(() => null)
       const stored = await unwrapOwnerFileKey(masterKey, item.id, readBack?.owner_wrapped_file_key ?? '')
-      if (!stored) failed.push(item.id)
-      else zeroize(stored)
+      const holdsAdopted = !!stored && keysEqual(stored, res.fileKey)
+      if (stored) zeroize(stored)
+      zeroize(res.fileKey)
+      if (!holdsAdopted) failed.push(item.id)
     } catch {
       failed.push(item.id)
     }
