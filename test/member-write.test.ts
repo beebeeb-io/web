@@ -20,6 +20,11 @@ const FILE_ID = '22222222-2222-4222-8222-222222222222'
 const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
   ...r,
   unwrapFolderChild: ownedFolderCrypto().unwrapFolderChild,
+  // F9 (L13): memberUploadFiles mints each create's id through core. Without
+  // this mirror the call crosses to the crypto worker, which has no worker
+  // under `bun test`, and every upload hangs until the test times out.
+  mintItemIdWorker: async (masterKey: Uint8Array, foreign: boolean) =>
+    foreign ? wasm.newForeignItemId(masterKey) : wasm.newOwnerItemId(masterKey),
   deriveFileKey: async (masterKey: Uint8Array, fileId: string) =>
     wasm.derive_file_key(masterKey, encoder.encode(fileId)),
   encryptChunk: async (key: Uint8Array, plaintext: Uint8Array) => {
