@@ -44,6 +44,14 @@ let urlFolder: string | null = null
 let urlKnown = false
 
 export function noteFolderClick(folderId: string): void {
+  // A click only extends a path that still leads to the URL's folder. While a
+  // navigation is in flight (or the folder was reached from elsewhere) the old
+  // path no longer leads here, so neither a re-click of a folder on it nor a
+  // click of an ancestor may revive it: this click starts a new path.
+  if (!navigationSettled()) {
+    path = [folderId]
+    return
+  }
   if (folderId === path[path.length - 1]) return
   const at = path.indexOf(folderId)
   if (at >= 0) {
@@ -51,15 +59,9 @@ export function noteFolderClick(folderId: string): void {
     path = path.slice(0, at + 1)
     return
   }
-  if (navigationSettled()) {
-    // A child click from the folder the URL currently shows.
-    path.push(folderId)
-    if (path.length > PATH_MAX) path.splice(0, path.length - PATH_MAX)
-    return
-  }
-  // Something other than a child click happened (in-flight navigation, a jump
-  // from elsewhere): the old path no longer leads here.
-  path = [folderId]
+  // A child click from the folder the URL currently shows.
+  path.push(folderId)
+  if (path.length > PATH_MAX) path.splice(0, path.length - PATH_MAX)
 }
 
 /** The app's location changed; a URL folder the path has not reached means in flight. */

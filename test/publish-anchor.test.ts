@@ -84,6 +84,21 @@ describe('anchored publishes (L15/§14)', () => {
     expect(canPublishAnchored(FOLDER, ROOT)).toBe(true)
   })
 
+  test('review-3 F3(i): a URL-reached folder starts a new path; an earlier R->D cannot revive', () => {
+    // The user clicked R then D: the path is [R, D] and D is anchored.
+    noteFolderClick(ROOT)
+    noteFolderClick(FOLDER)
+    noteUrlFolder(FOLDER)
+    expect(canPublishAnchored(FOLDER, ROOT)).toBe(true)
+    // They leave by URL only (a deep link, Back/forward): no click in this tab.
+    // Clicking D now is not a breadcrumb back to a folder the path reached —
+    // the attempt starts a NEW path at D, with no R behind it.
+    noteUrlFolder(ELSEWHERE)
+    noteFolderClick(FOLDER)
+    noteUrlFolder(FOLDER)
+    expect(canPublishAnchored(FOLDER, ROOT)).toBe(false)
+  })
+
   test('A15/A16: a create for a server-reported parent never anchors by itself', () => {
     // A remote move or an existing-row save names the root as its parent, but
     // this tab never clicked it, so there is no anchor.
