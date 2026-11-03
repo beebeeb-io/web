@@ -997,6 +997,28 @@ export function directTransferConstants(): any;
  * Returns `{"ciphertext":"<base64>","nonce":"<base64>"}` — byte-identical to
  * `beebeeb_core::metadata_wire::serialize_encrypted_metadata`. Never emits a
  * `cipher_suite`: the writer is frozen.
+ *
+ * Throws for a nonce that is not exactly 12 bytes (AES-GCM's nonce length).
+ *
+ * # Names, thumbnails and notes are not this pair
+ *
+ * The envelope is generic: no AAD, no field identity, so a reader can open a
+ * value sealed for one field as if it were another. The fields are kept
+ * apart by PURPOSE SUBKEY: one per-file HKDF subkey per purpose
+ * (`beebeeb/name/v1`, `beebeeb/thumb/v1`, `beebeeb/note/v1` in core's
+ * `encrypt`). Subkeys apply to a file whose metadata records a v2 pin —
+ * every name, thumbnail and note write for that file is subkey-sealed — and
+ * to every write once the gated core `WRITE_FORMAT` switch flips. Until then
+ * core's `METADATA_SEAL_WRITE` is `Legacy`, so a non-v2 file's names,
+ * thumbnails and notes are sealed under the raw file key.
+ *
+ * Use `encryptNameForNewItem` / `encryptNameForTarget` for a name,
+ * `encryptThumbnailForNewItem` / `encryptThumbnailForTarget` for a
+ * thumbnail, and `encryptNoteForNewItem` / `encryptNoteForTarget` for a
+ * note. Read them with `decrypt_file_metadata`, `decrypt_note` and
+ * `decrypt_thumbnail` (snake_case: these exports have no `js_name`). Never
+ * use `decrypt_metadata` for them: it checks no AAD and cannot tell which
+ * field a value was sealed for.
  */
 export function encodeMetadataEnvelope(nonce: Uint8Array, ciphertext: Uint8Array): string;
 
@@ -1342,7 +1364,8 @@ export function parseDirectDiscovery(body: Uint8Array): any;
 export function parseRetryAfter(value: string): any;
 
 /**
- * Parse a share link on either route and on any host. Returns
+ * Parse a share link on either route and on any `https` host (legacy hosts
+ * included; plain `http` only for loopback). Returns
  * `{ base_url, route, token, key }`; `key` is the percent-decoded fragment
  * value, not yet decoded as bytes — use `shareKeyBytes(key)` for that.
  *

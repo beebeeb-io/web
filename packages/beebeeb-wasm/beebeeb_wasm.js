@@ -3292,13 +3292,35 @@ export function directTransferConstants() {
  * Returns `{"ciphertext":"<base64>","nonce":"<base64>"}` — byte-identical to
  * `beebeeb_core::metadata_wire::serialize_encrypted_metadata`. Never emits a
  * `cipher_suite`: the writer is frozen.
+ *
+ * Throws for a nonce that is not exactly 12 bytes (AES-GCM's nonce length).
+ *
+ * # Names, thumbnails and notes are not this pair
+ *
+ * The envelope is generic: no AAD, no field identity, so a reader can open a
+ * value sealed for one field as if it were another. The fields are kept
+ * apart by PURPOSE SUBKEY: one per-file HKDF subkey per purpose
+ * (`beebeeb/name/v1`, `beebeeb/thumb/v1`, `beebeeb/note/v1` in core's
+ * `encrypt`). Subkeys apply to a file whose metadata records a v2 pin —
+ * every name, thumbnail and note write for that file is subkey-sealed — and
+ * to every write once the gated core `WRITE_FORMAT` switch flips. Until then
+ * core's `METADATA_SEAL_WRITE` is `Legacy`, so a non-v2 file's names,
+ * thumbnails and notes are sealed under the raw file key.
+ *
+ * Use `encryptNameForNewItem` / `encryptNameForTarget` for a name,
+ * `encryptThumbnailForNewItem` / `encryptThumbnailForTarget` for a
+ * thumbnail, and `encryptNoteForNewItem` / `encryptNoteForTarget` for a
+ * note. Read them with `decrypt_file_metadata`, `decrypt_note` and
+ * `decrypt_thumbnail` (snake_case: these exports have no `js_name`). Never
+ * use `decrypt_metadata` for them: it checks no AAD and cannot tell which
+ * field a value was sealed for.
  * @param {Uint8Array} nonce
  * @param {Uint8Array} ciphertext
  * @returns {string}
  */
 export function encodeMetadataEnvelope(nonce, ciphertext) {
-    let deferred3_0;
-    let deferred3_1;
+    let deferred4_0;
+    let deferred4_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(nonce, wasm.__wbindgen_export);
@@ -3308,12 +3330,20 @@ export function encodeMetadataEnvelope(nonce, ciphertext) {
         wasm.encodeMetadataEnvelope(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        deferred3_0 = r0;
-        deferred3_1 = r1;
-        return getStringFromWasm0(r0, r1);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
+        wasm.__wbindgen_export4(deferred4_0, deferred4_1, 1);
     }
 }
 
@@ -4647,7 +4677,8 @@ export function parseRetryAfter(value) {
 }
 
 /**
- * Parse a share link on either route and on any host. Returns
+ * Parse a share link on either route and on any `https` host (legacy hosts
+ * included; plain `http` only for loopback). Returns
  * `{ base_url, route, token, key }`; `key` is the percent-decoded fragment
  * value, not yet decoded as bytes — use `shareKeyBytes(key)` for that.
  *
