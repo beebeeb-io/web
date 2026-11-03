@@ -111,6 +111,18 @@ export async function installModuleSlots(): Promise<void> {
   }
 }
 
+/**
+ * Can the slot deliver this override? `wrap()` proxies functions and plain
+ * objects only; every other export (constants, arrays, typed arrays,
+ * built-ins) is returned as-is, so an override of one would be silently
+ * dropped. mockModuleScoped() refuses those rather than lie to the test.
+ */
+export function slotAcceptsOverride(realValue: unknown, override: unknown): boolean {
+  if (typeof realValue === 'function') return typeof override === 'function'
+  if (isPlainObject(realValue)) return override !== null && typeof override === 'object'
+  return false
+}
+
 /** Is this resolved path one whose exports go through a slot? */
 export function isSlotted(path: string): boolean {
   return realByPath.has(path)

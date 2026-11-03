@@ -136,7 +136,6 @@ export async function installMocks(): Promise<void> {
   // ./crypto — the streaming primitive + a capturing encryptFilename for the
   // upload contract. Every other export is the real one.
   await mockModuleScoped('../../src/lib/crypto', here, {
-    CHUNK_SIZE: 4,
     planChunks: async () => ({ chunk_size_bytes: 4, chunk_count: 1 }),
     startEncryptedStream: async (masterKey: Uint8Array) => stubStream(masterKey),
     startEncryptedStreamWithChunkSize: async (masterKey: Uint8Array) => stubStream(masterKey),

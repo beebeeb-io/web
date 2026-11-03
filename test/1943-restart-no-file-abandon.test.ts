@@ -75,7 +75,6 @@ function coreBackedEncryptor() {
 }
 
 await mockModuleScoped('../src/lib/crypto', import.meta.dir, {
-  CHUNK_SIZE: 4,
   planChunks: async () => ({ chunk_size_bytes: 4, chunk_count: 1 }),
   startEncryptedStream: async () => coreBackedEncryptor(),
   startEncryptedStreamWithChunkSize: async () => coreBackedEncryptor(),
