@@ -239,13 +239,38 @@ export async function publishOrDeferOwnerUpload(args: {
   const root = await sharedRootFor(parentId, parentId)
   if (!root) return 'not_published'
   if ((await folderWrapFormat(root, parentId)) !== 'l7') return 'not_published'
+  if (!(await destinationProven(parentId, root))) return deferOwnerCreate(fileId, parentId, root)
   if (canPublishAnchored(parentId, root)) {
     await publishOwnerUploadKey(masterKey, parentId, fileId, fileKey, isFolder)
     return 'published'
   }
+  return deferOwnerCreate(fileId, parentId, root)
+}
+
+/** Pin a deferral for (item, parent, root); 7 days, dropped with the item. */
+function deferOwnerCreate(fileId: string, parentId: string, root: string): 'deferred' {
   const store = localStorageQueue()
   if (store) deferPublish(store, { id: fileId, parentId, rootId: root, at: Date.now(), own: true })
   return 'deferred'
+}
+
+/**
+ * L15(b)2 / A26: the destination must be proven. `R` itself is (its custody
+ * record is the proof); any other folder is proven only by an L7 wrap whose
+ * name authenticates under its own key — never by a plaintext name, which
+ * stays unproven until the folder is renamed under its derived key. An
+ * unreadable destination is not proven either.
+ */
+async function destinationProven(parentId: string, root: string): Promise<boolean> {
+  if (parentId === root) return true
+  try {
+    const row = await getFile(parentId)
+    // Core's own rule (resolve_owned_key): a sealed name is a `{` envelope; a
+    // plaintext name has no owner key convention to prove it with.
+    return row.is_folder && row.name_encrypted.startsWith('{')
+  } catch {
+    return false
+  }
 }
 
 /** Origins whose key the resolver proved against the row's own name. */
