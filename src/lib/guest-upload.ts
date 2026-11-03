@@ -7,10 +7,12 @@
  * sealed under the folder's own random name key, which is wrapped under the
  * folder key.
  *
- * Decisions L7 and L7a: every wrap is core's child wrap, bound to the shared
- * ROOT id, the new item's id and its kind. The guest therefore picks the id: a
- * UUIDv4 sent with the write (the upload's `metadata` part comes FIRST, before
- * any chunk), which the server stores exactly. A taken id is answered 409
+ * Decisions L7 and L7a (L12 amends L7a): every wrap is core's child wrap,
+ * bound to the shared ROOT id, the new item's id and its kind. The guest
+ * therefore picks the id, and it must be an F id from core
+ * (`mintGuestItemId`, RFC 9562 UUID v8) — never a locally made v4. The id is
+ * sent with the write (the upload's `metadata` part comes FIRST, before any
+ * chunk), which the server stores exactly. A taken id is answered 409
  * `id_taken` with nothing stored, and the write is re-sealed under a fresh id.
  *
  * Uploads are sequential on purpose: one file in memory at a time, and the
@@ -20,6 +22,7 @@ import {
   encryptChunk,
   planChunks,
   encryptFileMetadata,
+  mintGuestItemIdWorker,
   serializeEncryptedBlob,
 } from './crypto'
 import type { Proof } from './folder-link-types'
@@ -129,7 +132,7 @@ function rejectFor(status: number, code: string | undefined): GuestRejectReason 
   return 'network'
 }
 
-/** Fresh ids tried after `409 id_taken` (a UUIDv4 collision: in practice never). */
+/** Fresh ids tried after `409 id_taken` (an F-id collision: in practice never). */
 export const GUEST_ID_RETRIES = 2
 /** Waits before retrying a `409 share_busy` write; nothing was stored. */
 export const SHARE_BUSY_WAITS_MS: readonly number[] = [250, 750, 1500]
@@ -150,7 +153,7 @@ async function sendGuestWrite(
   let idRetries = 0
   let busyWaits = 0
   for (;;) {
-    const id = crypto.randomUUID()
+    const id = await mintGuestItemIdWorker()
     const response = await send(id)
     if (response.ok) return { id, response }
     if (response.status === 401) await throwFolderResponseError(token, response)
