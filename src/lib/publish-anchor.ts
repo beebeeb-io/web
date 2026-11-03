@@ -10,8 +10,9 @@
  * palette never anchors, and nothing anchors while a navigation is in flight
  * (the URL folder differs from the path's last segment). A navigation that is
  * not a child click resets the path, so an earlier visit to R cannot anchor a
- * create made somewhere else. A create that is not anchored is owner-only: it
- * is never published and never queued. Only an anchored create whose
+ * create made somewhere else; a URL that leaves the path's last segment drops
+ * it, so Back or Recent back to a visited folder cannot revive it. A create
+ * that is not anchored is owner-only: it is never published and never queued. Only an anchored create whose
  * destination is not yet proven is deferred.
  */
 export const PUBLISH_QUEUE_KEY = 'beebeeb.owner-publish-queue.v1'
@@ -64,8 +65,15 @@ export function noteFolderClick(folderId: string): void {
   if (path.length > PATH_MAX) path.splice(0, path.length - PATH_MAX)
 }
 
-/** The app's location changed; a URL folder the path has not reached means in flight. */
+/**
+ * The app's location changed. A URL that leaves the path's last segment means
+ * the user left the trail without a click (Back/forward, Recent, a deep link),
+ * so the trail is dropped: the URL coming back to a folder it once visited is
+ * not a new click and must not anchor. (An in-flight click still settles: the
+ * app changes the URL to the folder it just noted.)
+ */
 export function noteUrlFolder(folderId: string | null): void {
+  if (path.length > 0 && folderId !== path[path.length - 1]) path = []
   urlFolder = folderId
   urlKnown = true
 }

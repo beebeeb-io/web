@@ -80,23 +80,29 @@ describe('anchored publishes (L15/§14)', () => {
     // The user clicked, then navigated elsewhere before the create landed.
     noteUrlFolder(ELSEWHERE)
     expect(canPublishAnchored(FOLDER, ROOT)).toBe(false)
-    noteUrlFolder(FOLDER)
-    expect(canPublishAnchored(FOLDER, ROOT)).toBe(true)
   })
 
-  test('review-3 F3(i): a URL-reached folder starts a new path; an earlier R->D cannot revive', () => {
-    // The user clicked R then D: the path is [R, D] and D is anchored.
+  test('review-4 P2: Back/Recent to the trail last folder is not a click', () => {
+    // R -> D is anchored. The user then leaves by URL only (Back to R, a Recent
+    // jump elsewhere) and comes back to D the same way: no click in this tab
+    // on the way back, so nothing is anchored.
     noteFolderClick(ROOT)
     noteFolderClick(FOLDER)
     noteUrlFolder(FOLDER)
     expect(canPublishAnchored(FOLDER, ROOT)).toBe(true)
-    // They leave by URL only (a deep link, Back/forward): no click in this tab.
-    // Clicking D now is not a breadcrumb back to a folder the path reached —
-    // the attempt starts a NEW path at D, with no R behind it.
     noteUrlFolder(ELSEWHERE)
+    noteUrlFolder(FOLDER)
+    expect(canPublishAnchored(FOLDER, ROOT)).toBe(false)
+    // Clicking D alone starts a new path at D: R is not behind it.
     noteFolderClick(FOLDER)
     noteUrlFolder(FOLDER)
     expect(canPublishAnchored(FOLDER, ROOT)).toBe(false)
+    // A new click trail from R (R, then a child of R) anchors again.
+    noteFolderClick(ROOT)
+    noteUrlFolder(ROOT)
+    noteFolderClick(ELSEWHERE)
+    noteUrlFolder(ELSEWHERE)
+    expect(canPublishAnchored(ELSEWHERE, ROOT)).toBe(true)
   })
 
   test('A15/A16: a create for a server-reported parent never anchors by itself', () => {
