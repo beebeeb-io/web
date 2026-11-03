@@ -238,6 +238,9 @@ describe('createOwnerFolder after a dropped connection: the folder may already b
   test('dropped, then 500; no such row: the error surfaces, nothing is published', async () => {
     dropNextCreates = 1
     conflictAfterDrops = true
+    // Anchored, so "nothing published" is a real assertion: only the refusal
+    // to adopt can keep the wrap in.
+    noteFolderClick(ROOT)
     await expect(createOwnerFolder(createArgs())).rejects.toMatchObject({ status: 500 })
     expect(rowLookups).toContain(NEW_FOLDER)
     expect(published).toEqual([])
@@ -247,6 +250,7 @@ describe('createOwnerFolder after a dropped connection: the folder may already b
     dropNextCreates = 1
     conflictAfterDrops = true
     landedNewFolder = folderRow(sealedName(new Uint8Array(32).fill(9), 'Taxes'))
+    noteFolderClick(ROOT)
     await expect(createOwnerFolder(createArgs())).rejects.toMatchObject({ status: 500 })
     expect(rowLookups).toContain(NEW_FOLDER)
     expect(published).toEqual([])
@@ -269,6 +273,7 @@ describe('createOwnerFolder after a dropped connection: the folder may already b
 
   test('F2: a lone 500 and no such row: the 500 surfaces', async () => {
     conflictAfterDrops = true
+    noteFolderClick(ROOT)
     await expect(createOwnerFolder(createArgs())).rejects.toMatchObject({ status: 500 })
     expect(rowLookups).toContain(NEW_FOLDER)
     expect(published).toEqual([])
@@ -289,6 +294,7 @@ describe('createOwnerFolder after a dropped connection: the folder may already b
       conflictAfterDrops = true
       const args = createArgs()
       landedNewFolder = row()
+      noteFolderClick(ROOT)
       await expect(createOwnerFolder(args)).rejects.toMatchObject({ status: 500 })
       expect(rowLookups).toContain(NEW_FOLDER)
       expect(published).toEqual([])
