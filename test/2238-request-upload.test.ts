@@ -15,11 +15,19 @@
  *      key in (`getFileKeyForFile(file)`); RED before the fix: the scan only
  *      carried {fileId, position, name}, so no envelope field survived it.
  */
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import type { DriveFile } from '@beebeeb/shared'
 import { prepareBundleShareItems, toBase64, unwrapKeyFromShare } from '../src/lib/crypto'
 import { decodeShareKeyToken } from '../src/lib/share-key'
 import { collectFolderBundle } from '../src/lib/folder-bundle'
+import { ensureShareLinkWasm } from '../src/lib/share-links-wasm'
+
+// `decodeShareKeyToken` runs core's base64 decoder synchronously, so the wasm
+// module must be in memory before the first test — this file initialises it
+// itself (a full run only looked green because another file's init had settled).
+beforeAll(async () => {
+  await ensureShareLinkWasm()
+})
 
 /** A row exactly as the server returns a file that arrived via a file request. */
 function requestRow(id: string): DriveFile {
