@@ -5,14 +5,22 @@
  * (`InvoiceRow`) and the extracted formatting helper; the page itself stays
  * covered by its Playwright snapshot pair.
  */
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { invoiceRow, invoiceRowChipVariant, invoiceRowLabel, InvoiceTable } from '../src/components/billing/InvoiceTable'
 import { formatCentsAsEur, formatMoneyCents } from '../src/lib/billing/money'
+import { ensureWasm } from '../src/lib/format'
 import type { BillingInvoice, PaymentMethod } from '../src/lib/api'
 import { PaymentMethodPanel } from '../src/pages/billing/PaymentMethodPanel'
 import { PlanCard } from '../src/pages/billing/PlanCard'
 import { UsagePanel } from '../src/pages/billing/UsagePanel'
+
+// `format.ts` starts the wasm init on import but does not wait for it; alone
+// (the guard's isolated step, or a loaded CI runner) the first size assertion
+// can beat it and read the raw-byte fallback ("1000000000000 B").
+beforeAll(async () => {
+  await ensureWasm()
+})
 
 const html = (el: React.ReactElement) => renderToStaticMarkup(el)
 
