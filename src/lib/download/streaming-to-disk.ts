@@ -6,6 +6,7 @@
 
 import { pipeDecryptedChunks } from '../encrypted-download'
 import type { DownloadTarget, EncryptedDownloadOptions } from '../encrypted-download'
+import type { ContentKey } from '../request-row'
 
 /** True when we believe the streaming path is safe to use. */
 export function canStreamToDisk(): boolean {
@@ -149,7 +150,7 @@ async function startStreamingDownload(
 export async function streamTargetToDisk(
   target: DownloadTarget,
   body: ReadableStream<Uint8Array>,
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   controller: ServiceWorker,
   opts?: EncryptedDownloadOptions,
 ): Promise<void> {

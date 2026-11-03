@@ -37,6 +37,7 @@ import { decryptToBlob } from '../lib/encrypted-download'
 import { decryptFileMetadata } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { useKeys } from '../lib/key-context'
+import { isRequestContentSource } from '../lib/request-row'
 import { resolveOfficeFileKind } from '../lib/office/office-file-kind'
 import { checkOfficeBytes, extensionOf } from '../lib/office/office-magic'
 import { OfficeOpenError, asDecryptFailure, errorText } from '../lib/office/office-open-error'
@@ -93,9 +94,12 @@ export function OfficeEditorPage() {
         const fileKey = await getFileKeyForFile(file, { plaintextChunk: true })
         // Codex P2 on PR #123: a corrupt name blob or a wrong file key fails
         // HERE, before the content download; it is the same honest kind.
-        const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted).catch((err: unknown) => {
-          throw asDecryptFailure(err)
-        })
+        // §15: core already decrypted a request row's name for us.
+        const { name, mimeType } = isRequestContentSource(fileKey)
+          ? { name: fileKey.name ?? '', mimeType: fileKey.mimeType }
+          : await decryptFileMetadata(fileKey, file.name_encrypted).catch((err: unknown) => {
+              throw asDecryptFailure(err)
+            })
         const officeKind = resolveOfficeFileKind(mimeType ?? file.mime_type, name)
         if (!officeKind) {
           if (!cancelled) setState({ stage: 'error', message: `"${name}" is not an office document this editor can open.` })
@@ -109,7 +113,7 @@ export function OfficeEditorPage() {
           // CRITIQUE.md finding #5: best-effort — a brand-new/never-
           // thumbnailed file has none, and that must never block opening
           // the document itself.
-          fetchAndDecryptThumbnail(file.id, fileKey).catch(() => null),
+          fileKey instanceof Uint8Array ? fetchAndDecryptThumbnail(file.id, fileKey).catch(() => null) : Promise.resolve(null),
         ])
         const bytes = new Uint8Array(await plaintext.arrayBuffer())
         if (cancelled) return

@@ -1,32 +1,53 @@
-# core wasm package — head ebf166d963156602f8a5108d28d4c3ac544809cc
+# beebeeb-wasm exports — head 31b0c6c8d3390843185167335f72a42f686470bd
 
-Built on the testrig (rust:1.96-bookworm, wasm-pack 0.14.0, release + wasm-opt,
-`wasm-pack build beebeeb-wasm --target web --out-name beebeeb_wasm`), from branch
-`refactor/modular-split` at head `ebf166d963156602f8a5108d28d4c3ac544809cc`.
+Built from branch `feat/2326-request-row-shipped-seal` (core repo) on the wasm
+testrig image bb-rust-wasm:1.96 with wasm-pack 0.14.0, `--target web --release`:
 
-- `beebeeb_wasm_bg.wasm` sha256: `bcb3d2358c1701f466cadb2e7643d60ae4d8a119efc9f9e7d6688db685f6c7b3`
-- files here: `beebeeb_wasm.js`, `beebeeb_wasm.d.ts`, `beebeeb_wasm_bg.wasm`,
-  `beebeeb_wasm_bg.wasm.d.ts` (generated alongside the other three, needed for
-  the TS types), `package.json`.
+```
+BB_REMOTE_IMAGE=wasm /Users/guuslangelaar/code/bb-gate-logs/modular-split/remote-run-wasm.sh \
+  oc-core-2326 /Users/guuslangelaar/code/bb-worktrees/oc-core-2326 -- \
+  'rm -rf /w/pkg-web-final && wasm-pack build beebeeb-wasm --target web --release --out-dir /w/pkg-web-final'
+```
 
-## Export diff vs 2f5cd8a (previous head)
+- `beebeeb_wasm_bg.wasm` sha256: `c403337609b5b0401fd69400bffb7b36373485d892a3c82c5f961b87883f0e31`
+- files: `beebeeb_wasm.js`, `beebeeb_wasm.d.ts`, `beebeeb_wasm_bg.wasm`,
+  `beebeeb_wasm_bg.wasm.d.ts`, `package.json`.
 
-Same extraction on both revs: every `export` name in the generated
-`beebeeb_wasm.js` (the `export { … }` table, `export function` and `export class`
-declarations), which is what a bundler sees; `initSync` is present in both.
+## Export diff vs base 2f5cd8a (branch point; 5894fa4 has the same 145 names)
 
+Compared the `export function` / `export class` names in `beebeeb_wasm.d.ts`.
+
+- base: 145 names
+- head: 149 names
 - **removed: 0**
-- **total: 145 -> 146**
-- **added: 1** — `previewableBatchFor(names: string[], platform: string): Uint8Array`
+- **added: 4** — `mintGuestItemId`, `sealRequestRename`, `previewableBatchFor`
+  (core #65 merge), `WasmRequestContentReader` (2326 delta2 P2-2).
 
-`previewableBatchFor` is a thin wrapper over `beebeeb_core::media::previewable_batch_for`:
-`result[i]` is `1` when `names[i]` can be previewed in-app on `platform`
-(`"web"`, `"desktop"` or `"mobile"`), `0` otherwise. An unknown platform string
-throws `unknown preview platform \`…\`` — it never falls back to a default.
+No exported name, signature or byte output changed in delta3: that run added
+tests and docs only. The `.d.ts` text changed (doc comments on
+`WasmRequestContentReader.decryptor` / `openFrame` / `sealRequestRename`), not
+the export list.
 
-The table behind it is proved by `test-vectors/consolidation/preview_platforms.json`
-(131 cases: 123 extensions of the three-way union + 8 shape rows, one expected
-answer per platform; web 78, desktop 88, mobile 90 types), and the pipeline is
-`beebeeb-wasm/js-tests/preview_platforms.test.cjs` (part of the 98/98 JS run).
-`previewableBatch`-style platform-less export never existed here, and core's
-existing `is_previewable_by_extension` / `previewable_batch` are untouched.
+## Changed result shapes (2326 delta2)
+
+| Surface | Removed | Replacement |
+| --- | --- | --- |
+| WASM `resolveRequestRow` | `contentKey`, `nameKey`; `content: WasmChunkDecryptor` | `content: WasmRequestContentReader` (`fileId`, `chunkFormat`, `decryptor()`, `openFrame(...)`); no key fields |
+| WASM `resolveRequestRow.renameTarget` | `key` | `{origin, pin}`; seal with `sealRequestRename` |
+| uniffi `RequestRowKeys` | `content_key`, `name_key`; `content: ChunkDecryptorHandle` | `content: RequestContentReader` |
+| uniffi `resolve_request_row` | returned `content: ChunkDecryptorHandle` | returns `RequestRowKeys.content: RequestContentReader` |
+| uniffi `resolve_request_row_detailed` | returned `content: ChunkDecryptorHandle` | returns `ResolvedRequestRow.content: RequestContentReader` |
+| uniffi `ResolvedRequestRow` | `content_key`, `name_key`; `content: ChunkDecryptorHandle` | `content: RequestContentReader` |
+| uniffi `RequestRenameTarget` | `key` | `{origin, pin}`; seal with `MasterKeyHandle::seal_request_rename` |
+
+The in-tree `EXPORTS.md` at the repo root is the authoritative manifest; it
+also lists the three uniffi additions and the uniffi caller change
+(`content.push_frame(...)` -> `content.decryptor().push_frame(...)`).
+
+## Checks at this head
+
+- `cargo check --workspace --all-targets --locked`: 0 errors, 0 warnings
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`: 0/0
+- `cargo fmt --all -- --check`: clean
+- `cargo test --workspace --locked`: 1200 passed, 0 failed, 2 ignored
+- `bash beebeeb-wasm/js-tests/run.sh`: 103 tests, 103 pass, 0 fail

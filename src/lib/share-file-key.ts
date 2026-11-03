@@ -13,15 +13,16 @@
  * SF-0002's scope.
  */
 import type { DriveFile } from './api'
+import { contentKeyBytes, type ContentKey } from './request-row'
 
 export async function shareFileKey(
   fileId: string,
   deps: {
     file?: DriveFile
     getFileKey: (id: string) => Promise<Uint8Array>
-    getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>
+    getFileKeyForFile: (file: DriveFile) => Promise<ContentKey>
   },
 ): Promise<Uint8Array> {
-  if (deps.file && deps.file.id === fileId) return deps.getFileKeyForFile(deps.file)
+  if (deps.file && deps.file.id === fileId) return contentKeyBytes(await deps.getFileKeyForFile(deps.file))
   return deps.getFileKey(fileId)
 }

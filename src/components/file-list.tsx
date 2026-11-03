@@ -13,6 +13,7 @@ import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
 import { readFileMetadata } from '../lib/crypto'
 import { renameOwnerRow } from '../lib/owner-rename'
+import { contentKeyBytes } from '../lib/request-row'
 import { ownerWriteRefusal } from '../lib/owner-write-guard'
 import { onDecrypted } from '../lib/decrypt-events'
 import { isPreviewable } from '../lib/preview'
@@ -175,7 +176,7 @@ export function FileList({
   parentId,
   onRefresh,
 }: FileListProps) {
-  const { getFileKeyForFile, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
+  const { getFileKeyForFile, sealRequestRename, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
   const { showToast } = useToast()
 
   // ─── Active-share lookup ───────────────────────────
@@ -738,9 +739,10 @@ export function FileList({
         viewerId: null,
         residentUserId: getResidentUserId(),
         masterKey: getMasterKey(),
-        getFileKey: async () => getFileKeyForFile(file, { plaintextChunk: true }),
+        getFileKey: async () => contentKeyBytes(await getFileKeyForFile(file, { plaintextChunk: true })),
         getFileKeyForFile: (f) => getFileKeyForFile(f, { plaintextChunk: true }),
         readName: readFileMetadata,
+        sealRequestRename,
       })
       onRefresh?.()
     } catch (err) {

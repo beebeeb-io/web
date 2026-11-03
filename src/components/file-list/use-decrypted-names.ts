@@ -1,5 +1,6 @@
 // Decrypts file names for the list and caches them by file id.
 import { useEffect, useState } from 'react'
+import { contentKeyBytes, isRequestUpload } from '../../lib/request-row'
 import { useKeys } from '../../lib/key-context'
 import { decryptManyNames } from '../../lib/crypto'
 import type { DriveFile } from '../../lib/api'
@@ -21,7 +22,7 @@ export function useDecryptedNames(
   files: DriveFile[],
   externalDecryptedNames?: Record<string, string>,
 ): DecryptedNames {
-  const { getFileKeysForFile, isUnlocked } = useKeys()
+  const { getFileKeyForFile, getRequestRow, isUnlocked } = useKeys()
   const [decryptedNames, setDecryptedNames] = useState<DecryptedNames>({})
 
   useEffect(() => {
@@ -59,6 +60,7 @@ export function useDecryptedNames(
     // per-item (an unparsable or unopenable envelope included).
     type Prepared =
       | { id: string; status: 'ok'; fileKey: Uint8Array; nameEncrypted: string }
+      | { id: string; status: 'resolved'; name: string | null }
       | { id: string; status: 'plaintext'; name: string }
       | { id: string; status: 'error'; error: unknown }
 
@@ -68,14 +70,17 @@ export function useDecryptedNames(
         return { id: file.id, status: 'plaintext', name: file.name_encrypted }
       }
       try {
+        // §15: a request row's name is decrypted by core's resolver (derived
+        // first, or under C for a shipped row); there is no key to hand out.
+        if (isRequestUpload(file)) {
+          const row = await getRequestRow(file)
+          return { id: file.id, status: 'resolved', name: row.name }
+        }
         // A file another person added to a shared folder is sealed under a key
-        // this account cannot derive; getFileKeysForFile takes the folder-key
+        // this account cannot derive; getFileKeyForFile takes the folder-key
         // path for it (owner wrap, then `shared_folder_keys` under the shared
         // ROOT), the same path download, rename and zip use (task 2237b).
-        // A9c: a request row's NAME lives under its own key (derived-or-C,
-        // derived first) while its content stays under C — read the name with
-        // the name key so a row renamed under the string convention still shows.
-        const { nameKey: fileKey } = await getFileKeysForFile(file)
+        const fileKey = contentKeyBytes(await getFileKeyForFile(file))
         return { id: file.id, status: 'ok', fileKey, nameEncrypted: file.name_encrypted }
       } catch (err) {
         return { id: file.id, status: 'error', error: err }
@@ -122,6 +127,11 @@ export function useDecryptedNames(
             errors.delete(p.id)
             continue
           }
+          if (p.status === 'resolved') {
+            names[p.id] = p.name
+            errors.delete(p.id)
+            continue
+          }
           if (p.status === 'error') {
             errors.set(p.id, p.error)
             const f = pending.find((file) => file.id === p.id)
@@ -163,7 +173,7 @@ export function useDecryptedNames(
     }
     decryptAll()
     return () => { cancelled = true }
-  }, [files, isUnlocked, getFileKeysForFile, externalDecryptedNames])
+  }, [files, isUnlocked, getFileKeyForFile, getRequestRow, externalDecryptedNames])
 
   return decryptedNames
 }

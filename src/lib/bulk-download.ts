@@ -23,6 +23,7 @@ import { decryptToBlob } from './encrypted-download'
 import { listFiles, type DriveFile } from './api'
 import { decryptFileMetadata } from './crypto'
 import { ensureArchiveNameWasm, safeArchiveName } from './archive-name'
+import { contentKeyBytes, type ContentKey } from './request-row'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -53,10 +54,10 @@ export interface BulkDownloadOptions {
  */
 export interface BulkDownloadPorts {
   listChildren(folderId: string): Promise<DriveFile[]>
-  getFileKey(file: DriveFile): Promise<Uint8Array>
+  getFileKey(file: DriveFile): Promise<ContentKey>
   decryptToBlob(
     file: DriveFile,
-    fileKey: Uint8Array,
+    fileKey: ContentKey,
   ): Promise<{ plaintext: Blob; filename: string }>
 }
 
@@ -104,7 +105,7 @@ async function expandToFiles(
     // but ports.getFileKey handles that branch transparently).
     let folderName = `folder-${item.id.slice(0, 8)}`
     try {
-      const key = await ports.getFileKey(item)
+      const key = contentKeyBytes(await ports.getFileKey(item))
       const { name } = await decryptFileMetadata(key, item.name_encrypted)
       folderName = name
     } catch {
@@ -610,7 +611,7 @@ export async function packageZip(
 
 /** The owner drive's sources: the vault's own list and decrypt routes. */
 export function ownerDownloadPorts(
-  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>,
+  getFileKeyForFile: (file: DriveFile) => Promise<ContentKey>,
   masterKey?: Uint8Array,
 ): BulkDownloadPorts {
   if (!masterKey) return { ...OWNER_DOWNLOAD_PORTS, getFileKey: getFileKeyForFile }
@@ -698,7 +699,7 @@ export async function downloadAsZipWith(
  */
 export async function downloadAsZip(
   items: DriveFile[],
-  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>,
+  getFileKeyForFile: (file: DriveFile) => Promise<ContentKey>,
   options: BulkDownloadOptions = {},
   masterKey?: Uint8Array,
 ): Promise<BulkDownloadResult> {

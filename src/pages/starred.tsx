@@ -29,7 +29,7 @@ import { userFriendlyError } from '../lib/user-friendly-error'
 import { EmptyStarred } from '../components/empty-states/empty-starred'
 
 export function Starred() {
-  const { getFileKey, getFileKeyForFile, getMasterKey, getResidentUserId, isUnlocked, cryptoReady } = useKeys()
+  const { getFileKey, getFileKeyForFile, sealRequestRename, getMasterKey, getResidentUserId, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
   const { setNodeStarred } = useSync()
   const navigate = useNavigate()
@@ -137,6 +137,7 @@ export function Starred() {
         getFileKey,
         getFileKeyForFile: (f) => getFileKeyForFile(f, { plaintextChunk: true }),
         readName: readFileMetadata,
+        sealRequestRename,
       })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })
       fetchFiles()

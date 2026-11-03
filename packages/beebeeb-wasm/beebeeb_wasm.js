@@ -1362,6 +1362,113 @@ export class WasmNewItemId {
 if (Symbol.dispose) WasmNewItemId.prototype[Symbol.dispose] = WasmNewItemId.prototype.free;
 
 /**
+ * A request row's decrypt-only content reader (task 2275 §15; 2326 delta2
+ * P2-2). It owns a copy of the row's content key `C`, bound to the row's file
+ * id and recorded chunk-format pin; the key is zeroized when the reader drops
+ * and no getter exposes it.
+ *
+ * `decryptor()` returns a FRESH sequential [`WasmChunkDecryptor`] at chunk 0
+ * on every call (retry after a mid-stream error); `openFrame(...)` opens ONE
+ * frame by index for a seek / range read.
+ */
+export class WasmRequestContentReader {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(WasmRequestContentReader.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmRequestContentReaderFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmRequestContentReaderFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmrequestcontentreader_free(ptr, 0);
+    }
+    /**
+     * The row's recorded chunk-format pin: 0 = unrecorded, 2 = v2.
+     * @returns {number}
+     */
+    get chunkFormat() {
+        const ret = wasm.wasmrequestcontentreader_chunkFormat(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * A FRESH sequential decryptor at chunk 0. Call again after any error.
+     *
+     * Retry contract: discard EVERYTHING the failed attempt produced; never
+     * splice attempt 1's prefix with attempt 2's suffix (after a replace that
+     * splices two uploads of one id). The failed cursor is not poisoned
+     * (`open_next` does not advance `next_index` on an error), but the output
+     * must still be rebuilt from frame 0.
+     * @returns {WasmChunkDecryptor}
+     */
+    decryptor() {
+        const ret = wasm.wasmrequestcontentreader_decryptor(this.__wbg_ptr);
+        return WasmChunkDecryptor.__wrap(ret);
+    }
+    /**
+     * The file id every frame of this row must be bound to.
+     * @returns {string}
+     */
+    get fileId() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmrequestcontentreader_fileId(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Open ONE content frame at `index` without the frames before it (seek /
+     * range read). `isLast = index == chunkCount - 1`. `format` (1 = v1,
+     * 2 = v2) and `versionId` (12 bytes, v2 only) must come from authenticated
+     * data. When the row is pinned to v2, `format: 1` is refused.
+     * @param {Uint8Array} version_id
+     * @param {number} index
+     * @param {boolean} is_last
+     * @param {number} format
+     * @param {Uint8Array} frame
+     * @returns {Uint8Array}
+     */
+    openFrame(version_id, index, is_last, format, frame) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(version_id, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passArray8ToWasm0(frame, wasm.__wbindgen_export);
+            const len1 = WASM_VECTOR_LEN;
+            wasm.wasmrequestcontentreader_openFrame(retptr, this.__wbg_ptr, ptr0, len0, index, is_last, format, ptr1, len1);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            if (r3) {
+                throw takeObject(r2);
+            }
+            var v3 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+            return v3;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+}
+if (Symbol.dispose) WasmRequestContentReader.prototype[Symbol.dispose] = WasmRequestContentReader.prototype.free;
+
+/**
  * A stateful, client-side search index over a vault's file names.
  *
  * Build it from a file list, mutate it incrementally (`upsert`/`remove` return
@@ -4186,6 +4293,38 @@ export function maxInFlightBytes(_class) {
 }
 
 /**
+ * Mint a guest (F) item id with NO master key (task 2275 §15). The anonymous
+ * uploader path uses this; the id is a canonical RFC 9562 UUID v8 and core's
+ * class check classifies it as foreign. The server has no T2 F-class check
+ * yet (future server work), so only the core check protects this id today.
+ * @returns {string}
+ */
+export function mintGuestItemId() {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.mintGuestItemId(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr1 = r0;
+        var len1 = r1;
+        if (r3) {
+            ptr1 = 0; len1 = 0;
+            throw takeObject(r2);
+        }
+        deferred2_0 = ptr1;
+        deferred2_1 = len1;
+        return getStringFromWasm0(ptr1, len1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Mint a new foreign (F) item id (RFC 9562 UUID v8) for `master_key`.
  * @param {Uint8Array} master_key
  * @returns {WasmNewItemId}
@@ -4464,7 +4603,14 @@ export function openLegacyInviteOwnerCopy(master_key, folder_id, legacy_copy, ro
 
 /**
  * Open a sealed request upload (owner decrypt path). Recovers the content key.
- * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
+ * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns
+ * 32-byte `Uint8Array`.
+ *
+ * **DECRYPT-ONLY.** This is a request row's content key `C`, and the
+ * anonymous uploader holds it. Use it to read the row's content; never seal a
+ * name, note or thumbnail under this key. For a request row the owner's rename
+ * goes through `seal_request_rename` / `sealRequestRename` (the §15
+ * string-derived key), never `C`.
  * @param {Uint8Array} r_priv
  * @param {Uint8Array} e_pub
  * @param {Uint8Array} file_id
@@ -4972,11 +5118,20 @@ export function resolveOwnedKey(master_key, item_id, kind, owner_wrap, name_encr
 }
 
 /**
- * Resolve a 2236 request row: `{contentKey, nameKey, nameOrigin, name,
- * mimeType, chunkFormat}`. Read-only; no write target.
+ * Resolve a 2236 request row: `{content, nameOrigin, name, mimeType,
+ * chunkFormat, seal, renameTarget}`. `content` is a decrypt-only
+ * `WasmRequestContentReader` for the row's content key; no raw key reaches JS,
+ * so a request-row result offers no sealing path. The seal is `"bound"` or
+ * `"unbound"` (§15), and `renameTarget` is `{origin, pin}` or null when the
+ * name is upper-repair (read-only). Renames go through `sealRequestRename`.
+ *
+ * `request_wrap_context` is the context the owner wrapped the request private
+ * key under: empty for every request created so far (the server mints the
+ * request id after the wrap). A real request id refuses a shipped row; this
+ * function never tries both contexts.
  * @param {Uint8Array} master_key
  * @param {string} item_id
- * @param {Uint8Array} request_id
+ * @param {Uint8Array} request_wrap_context
  * @param {Uint8Array} wrapped_request_private
  * @param {Uint8Array} wrap_nonce
  * @param {Uint8Array} sender_ephemeral_pubkey
@@ -4984,14 +5139,14 @@ export function resolveOwnedKey(master_key, item_id, kind, owner_wrap, name_encr
  * @param {string} name_encrypted
  * @returns {any}
  */
-export function resolveRequestRow(master_key, item_id, request_id, wrapped_request_private, wrap_nonce, sender_ephemeral_pubkey, wrapped_content_key, name_encrypted) {
+export function resolveRequestRow(master_key, item_id, request_wrap_context, wrapped_request_private, wrap_nonce, sender_ephemeral_pubkey, wrapped_content_key, name_encrypted) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passArray8ToWasm0(request_id, wasm.__wbindgen_export);
+        const ptr2 = passArray8ToWasm0(request_wrap_context, wasm.__wbindgen_export);
         const len2 = WASM_VECTOR_LEN;
         const ptr3 = passArray8ToWasm0(wrapped_request_private, wasm.__wbindgen_export);
         const len3 = WASM_VECTOR_LEN;
@@ -5288,6 +5443,61 @@ export function sealFolderActorName(folder_key, shared_folder_id, name) {
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
         wasm.__wbindgen_export4(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
+ * Seal a request-row rename under the section 15 string-convention key derived
+ * from `item_id`, keeping the row's recorded `pin` (`chunkFormat` from
+ * `resolveRequestRow`). This is the only sealing path a request-row result
+ * offers: `resolveRequestRow` hands back no key, so a rename cannot be sealed
+ * under the content key `C` that the anonymous uploader holds (A9).
+ *
+ * An F id is refused by the same owner-class check the resolver runs. `pin` is
+ * the `renameTarget.pin` the resolver returned (the row's recorded format),
+ * never a field from the wire. Pin direction matters both ways:
+ * - a pin of 2 on a v1 row makes the file unreadable until it is renamed again
+ *   with the correct pin;
+ * - a pin of 0 on a v2 row drops the recorded 2, turns frame-0 detection back
+ *   on, and lets a server serve the uploader's old no-AAD name blob under `C`
+ *   as a one-frame v1 file.
+ * @param {Uint8Array} master_key
+ * @param {string} item_id
+ * @param {number} pin
+ * @param {string} filename
+ * @param {string | null} [mime_type]
+ * @returns {string}
+ */
+export function sealRequestRename(master_key, item_id, pin, filename, mime_type) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(filename, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(mime_type) ? 0 : passStringToWasm0(mime_type, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len3 = WASM_VECTOR_LEN;
+        wasm.sealRequestRename(retptr, ptr0, len0, ptr1, len1, pin, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr5 = r0;
+        var len5 = r1;
+        if (r3) {
+            ptr5 = 0; len5 = 0;
+            throw takeObject(r2);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred6_0, deferred6_1, 1);
     }
 }
 
@@ -6564,6 +6774,10 @@ function __wbg_get_imports() {
             const ret = getObject(arg0).versions;
             return addHeapObject(ret);
         },
+        __wbg_wasmrequestcontentreader_new: function(arg0) {
+            const ret = WasmRequestContentReader.__wrap(arg0);
+            return addHeapObject(ret);
+        },
         __wbg_wasmsignedurl_new: function(arg0) {
             const ret = WasmSignedUrl.__wrap(arg0);
             return addHeapObject(ret);
@@ -6635,6 +6849,9 @@ const WasmDownloadPlannerFinalization = (typeof FinalizationRegistry === 'undefi
 const WasmNewItemIdFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmnewitemid_free(ptr >>> 0, 1));
+const WasmRequestContentReaderFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmrequestcontentreader_free(ptr >>> 0, 1));
 const WasmSearchIndexFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsearchindex_free(ptr >>> 0, 1));

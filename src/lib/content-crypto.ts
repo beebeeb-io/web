@@ -24,6 +24,7 @@ import type * as Wasm from 'beebeeb-wasm'
 export type ContentWasm = Pick<
   typeof Wasm,
   | 'WasmChunkDecryptor'
+  | 'WasmRequestContentReader'
   | 'decrypt_chunk_frame'
   | 'decrypt_file_metadata_with_key'
   | 'decrypt_name_metadata_with_key'
@@ -127,6 +128,8 @@ export function createContentOps(wasm: ContentWasm) {
   }
   const liveDecryptors = new Map<number, LiveDecryptor>()
   const liveReaders = new Map<number, LiveReader>()
+  /** §15/2326: decrypt-only readers for request rows; they hold no key we can copy. */
+  const liveRequestReaders = new Map<number, Wasm.WasmRequestContentReader>()
   let nextHandle = 1
 
   function decryptor(handle: number): LiveDecryptor {
@@ -281,6 +284,72 @@ export function createContentOps(wasm: ContentWasm) {
     /** Decryptors not yet finished or disposed (the worker never recycles while one is live). */
     liveDecryptorCount(): number {
       return liveDecryptors.size
+    },
+
+    // ── §15 (2326): a request row's decrypt-only reader ─────────────────────
+    //
+    // Core's `resolveRequestRow` hands back a `WasmRequestContentReader`; it
+    // never exposes the row's content key. The reader stays in this worker
+    // alongside the other handles, so no key crosses to the page.
+
+    /** Register a reader core produced; returns its worker handle. */
+    registerRequestReader(reader: Wasm.WasmRequestContentReader): number {
+      const handle = nextHandle++
+      liveRequestReaders.set(handle, reader)
+      return handle
+    },
+
+    /**
+     * A FRESH sequential decryptor at chunk 0, registered like any other
+     * decryptor so `decryptorPushFrame/Finish/Dispose` drive it.
+     */
+    requestReaderDecryptor(readerHandle: number): number {
+      const reader = liveRequestReaders.get(readerHandle)
+      if (!reader) throw new Error(`No live request reader for handle ${readerHandle}`)
+      const d = reader.decryptor()
+      const handle = nextHandle++
+      liveDecryptors.set(handle, {
+        decryptor: d,
+        key: new Uint8Array(0),
+        fileId: reader.fileId,
+        pin: toContentPin(reader.chunkFormat),
+      })
+      return handle
+    },
+
+    /** Open ONE frame at `index` through the request reader (seek / range read). */
+    requestReaderOpenFrame(
+      readerHandle: number,
+      versionId: Uint8Array,
+      index: number,
+      isLast: boolean,
+      format: number,
+      frame: Uint8Array,
+    ): Uint8Array {
+      const reader = liveRequestReaders.get(readerHandle)
+      if (!reader) throw new Error(`No live request reader for handle ${readerHandle}`)
+      try {
+        return reader.openFrame(versionId, index, isLast, format, frame) as Uint8Array
+      } catch (err) {
+        throw chunkAuthError(err)
+      }
+    },
+
+    /** Free a request reader. Idempotent. */
+    requestReaderFree(readerHandle: number): void {
+      const reader = liveRequestReaders.get(readerHandle)
+      if (!reader) return
+      liveRequestReaders.delete(readerHandle)
+      try {
+        reader.free()
+      } catch {
+        // already freed
+      }
+    },
+
+    /** Request readers not yet freed. */
+    liveRequestReaderCount(): number {
+      return liveRequestReaders.size
     },
 
     /** Random-access readers not yet closed (the worker never recycles while one is live). */

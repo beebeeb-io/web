@@ -1,13 +1,14 @@
 // The crypto facade: named re-exports of the key, chunk, and folder-link primitives.
 import * as Comlink from 'comlink'
 import type { ContentPin, DecryptSummary, PinnedMetadata } from './content-crypto'
+import type { ContentKey } from './request-row'
 import { withProxy } from './crypto/service'
 import { fromBase64, toBase64, x25519SharedSecret, zeroize } from './crypto/helpers'
 import { withCryptoError } from './crypto/errors'
 export { __cryptoRestartInternals, initCrypto, withProxy } from './crypto/service'
 export { SearchIndexProxy, buildSearchIndex, createSearchIndex, createSharedSearchIndex, searchIndexFromShards, searchIndexSyncPlan, sharedSearchIndexFromShards } from './crypto/search-index'
 export type { CoreEncryptedShard, ShardCoordinate, ShardSyncPlan } from './crypto/search-index'
-export { FILE_REQUEST_EMPTY_ID, derivePublicFromPrivate, generateRequestKeypair, openRequestUpload, sealToRequest, unwrapRequestPrivate, wrapRequestPrivate } from './crypto/file-requests'
+export { FILE_REQUEST_EMPTY_ID, derivePublicFromPrivate, generateRequestKeypair, sealToRequest, unwrapRequestPrivate, wrapRequestPrivate } from './crypto/file-requests'
 export type { RequestKeypair } from './crypto/file-requests'
 export { decryptTransferBlob, deriveTransferSession, sessionIdToBytes, transferDecrypt, transferDeriveKey, transferDeriveSasBytes, transferEncrypt, transferGenerateKeypair, transferSasToWords } from './crypto/transfers'
 export { CHUNK_SIZE, chunkFile, fromBase64, toBase64, x25519SharedSecret, zeroize } from './crypto/helpers'
@@ -219,15 +220,16 @@ export async function childWrapMatchesWorker(
   return withProxy((p) => p.childWrapMatches(folderKey, sharedFolderId, itemId, kind, wrapped, expectedKey))
 }
 
-// ─── 2275 L13: the request-row resolver ─────────────────────────────────────
-// A request row's CONTENT stays under the request content key C; its NAME key
-// is derived-or-C (derived first). Core returns both so a reader never seals a
-// name under C and never opens content with the derived key. Read-only.
+// ─── 2275 §15 (2326 = A): the request-row resolver ──────────────────────────
+// Core opens BOTH seals (bound and the shipped empty-id one), names the seal
+// it opened, and returns a decrypt-only content reader. No content key crosses
+// to the page; the reader stays in the worker behind a handle.
 
 export interface ResolveRequestRowArgs {
   masterKey: Uint8Array
   itemId: string
-  requestId: Uint8Array
+  /** The context the request private key was wrapped under: empty for every request so far. */
+  requestWrapContext: Uint8Array
   wrappedRequestPrivate: Uint8Array
   wrapNonce: Uint8Array
   senderEphemeralPubkey: Uint8Array
@@ -235,20 +237,26 @@ export interface ResolveRequestRowArgs {
   nameEncrypted: string
 }
 
-export async function resolveRequestRowWorker(args: ResolveRequestRowArgs): Promise<{
-  contentKey: Uint8Array
-  nameKey: Uint8Array
+export interface WorkerResolvedRequestRow {
+  /** Worker handle of the decrypt-only `WasmRequestContentReader`. */
+  handle: number
+  fileId: string
+  chunkFormat: number
   nameOrigin: string
-  /** Core returns the name FLAT (a string), not a nested object. */
   name: string | null
-  mimeType?: string | null
-  chunkFormat?: number
-}> {
+  mimeType: string | null
+  seal: 'bound' | 'unbound'
+  renameTarget: { origin: string; pin: number } | null
+}
+
+export async function resolveRequestRowWorker(
+  args: ResolveRequestRowArgs,
+): Promise<WorkerResolvedRequestRow> {
   return withProxy((p) =>
     p.resolveRequestRow(
       args.masterKey,
       args.itemId,
-      args.requestId,
+      args.requestWrapContext,
       args.wrappedRequestPrivate,
       args.wrapNonce,
       args.senderEphemeralPubkey,
@@ -256,6 +264,46 @@ export async function resolveRequestRowWorker(args: ResolveRequestRowArgs): Prom
       args.nameEncrypted,
     ),
   )
+}
+
+/** §15: a fresh sequential decryptor over a request row's worker-held reader. */
+export async function requestReaderDecryptor(readerHandle: number): Promise<number> {
+  return withProxy((p) => p.requestReaderDecryptor(readerHandle))
+}
+
+/** §15: open ONE frame of a request row (seek / range read). */
+export async function requestReaderOpenFrame(
+  readerHandle: number,
+  versionId: Uint8Array,
+  index: number,
+  isLast: boolean,
+  format: number,
+  frame: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) =>
+    p.requestReaderOpenFrame(readerHandle, versionId, index, isLast, format, frame),
+  )
+}
+
+/** §15: free a request row's worker-held reader. */
+export async function requestReaderFree(readerHandle: number): Promise<void> {
+  await withProxy((p) => p.requestReaderFree(readerHandle))
+}
+
+/** §15: the ONLY request-row rename path (string convention, never C). */
+export async function sealRequestRenameWorker(
+  masterKey: Uint8Array,
+  itemId: string,
+  pin: number,
+  filename: string,
+  mimeType: string | null = null,
+): Promise<string> {
+  return withProxy((p) => p.sealRequestRename(masterKey, itemId, pin, filename, mimeType))
+}
+
+/** L12: mint a guest (F-class) item id from core. Needs no master key. */
+export async function mintGuestItemIdWorker(): Promise<string> {
+  return withProxy((p) => p.mintGuestItemId())
 }
 
 /** The worker calls a content decryptor needs. Production: the crypto worker over Comlink. */
@@ -270,6 +318,21 @@ const workerDecryptorPort: DecryptorPort = {
     withProxy((p) => p.decryptorPushFrame(handle, Comlink.transfer(frame, [frame.buffer]))),
   decryptorFinish: (handle) => withProxy((p) => p.decryptorFinish(handle)),
   decryptorDispose: (handle) => withProxy((p) => p.decryptorDispose(handle)),
+}
+
+/** Push one frame into a worker-owned decryptor (see `StreamingDecryptor`). */
+export async function decryptorPushFrame(handle: number, frame: Uint8Array): Promise<Uint8Array> {
+  return workerDecryptorPort.decryptorPushFrame(handle, frame)
+}
+
+/** Finish a worker-owned decryptor; consumes it. */
+export async function decryptorFinish(handle: number): Promise<DecryptSummary> {
+  return workerDecryptorPort.decryptorFinish(handle)
+}
+
+/** Release a worker-owned decryptor that will not be finished. */
+export async function decryptorDispose(handle: number): Promise<void> {
+  return workerDecryptorPort.decryptorDispose(handle)
 }
 
 /**
@@ -337,12 +400,19 @@ export class StreamingDecryptor {
 /**
  * Start reading one file's content. `fileId` is the id the file was uploaded
  * under (v2 frames bind it); `pin` comes from `readFileMetadata` of that file.
+ *
+ * A request row has no key to pass: its `RequestContentSource` starts the
+ * decryptor core bound to the row (and ignores `fileId`/`pin`, which core
+ * already fixed). Every other row passes its 32-byte key.
  */
 export async function startDecryptStream(
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   fileId: string,
   pin: ContentPin,
 ): Promise<StreamingDecryptor> {
+  if (!(fileKey instanceof Uint8Array)) {
+    return (await fileKey.startStream()) as unknown as StreamingDecryptor
+  }
   const handle = await withProxy((p) => p.createDecryptor(fileKey, fileId, pin))
   return new StreamingDecryptor(handle)
 }

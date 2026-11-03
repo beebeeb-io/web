@@ -49,6 +49,7 @@ import { ensureOwnerFolderKey } from '../lib/folder-link-create'
 import { useKeys } from '../lib/key-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { isTypedRefusal } from '../lib/no-card-trial'
+import { contentKeyBytes } from '../lib/request-row'
 import { buildFullShareLink } from '../lib/share-full-link'
 import { SHARED_FOLDERS_FLAG } from '../lib/flags'
 import { sharedFoldersEnabledForWrite, useFeatureFlag } from '../lib/use-feature-flag'
@@ -596,7 +597,7 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
             // getFileKeyForFile, not getFileKey: a row received through a file
             // request is sealed under a random content key, so the id-derived
             // key would fail (or decrypt nothing) for exactly those items.
-            const fileKey = await getFileKeyForFile(node)
+            const fileKey = contentKeyBytes(await getFileKeyForFile(node))
             try {
               const [row] = await decryptManyNames([
                 { id: node.id, fileKey, nameEncrypted: node.name_encrypted },
@@ -659,7 +660,7 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
               folderFiles.map(async (f, i) => ({
                 fileId: f.fileId,
                 position: i,
-                fileKey: await getFileKeyForFile(f.file),
+                fileKey: contentKeyBytes(await getFileKeyForFile(f.file)),
               })),
             )
           : null

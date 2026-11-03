@@ -63,7 +63,12 @@ import { isSealedName } from './sealed-name'
 import { decryptLinkLabel } from './link-label'
 import { useAuth } from './auth-context'
 import { isImpersonationSessionActive, shouldReconcileLock } from './impersonation-context'
-import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver, type ResolvedRowKeys } from './file-request-crypto'
+import { isRequestUpload, type ContentKey } from './request-row'
+import {
+  createRequestRowResolver,
+  type ResolvedRequestRow,
+  type RequestRowResolver,
+} from './request-row-resolver'
 import { fetchOwnerFirstChunkFrames } from './owner-write-guard'
 import { backfillRecoveryCheckIfAbsent, recoveredKeyMatchesAccount } from './recovery-validation'
 import { getAuthStamp, setExpectedUserProvider, registerAccountMismatchHandler } from '@beebeeb/shared'
@@ -167,14 +172,14 @@ interface KeyState {
    *  files use the normal derive_file_key(master, id) path. Prefer this over
    *  getFileKey wherever the full file object is available (naming, preview,
    *  download). `expectedUserId` — see `getFileKey`. */
-  getFileKeyForFile: (file: DriveFile, options?: FileKeyOptions) => Promise<Uint8Array>
-  /** 2275 L13 / A9c: BOTH keys of a row. A request row's content stays under
-   *  the sealed content key C while its name key is derived-or-C (derived
-   *  first), because an old client may have renamed the row under the string
-   *  convention. Every other row reads under one key, returned for both. The
-   *  request branch returns the name core decrypted and its origin, and is
-   *  read-only — there is no write target. */
-  getFileKeysForFile: (file: DriveFile, expectedUserId?: string) => Promise<ResolvedRowKeys>
+  getFileKeyForFile: (file: DriveFile, options?: FileKeyOptions) => Promise<ContentKey>
+  /** 2275 §15: a request row, resolved by core: the name core decrypted, the
+   *  seal it opened, and a decrypt-only content source (never a key). Every
+   *  other row is not a request row and must use `getFileKeyForFile`. */
+  getRequestRow: (file: DriveFile, expectedUserId?: string) => Promise<ResolvedRequestRow>
+  /** §15: the ONLY request-row rename path — the new name sealed under the
+   *  string-convention key, never under C. Refuses a read-only row. */
+  sealRequestRename: (file: DriveFile, newName: string) => Promise<string>
   /** Task 2237b: the key for a file the owner did not upload (a guest- or
    *  member-added row in a shared folder). Resolves the owner wrap or the
    *  folder key's copy of the file key, adopting the file on first sight.
@@ -618,7 +623,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
 
   // Lazily-created resolver for files received through a file request. Caches the
   // request list + unwrapped R_priv per request for the drive session.
-  const requestResolverRef = useRef<RequestKeyResolver | null>(null)
+  const requestResolverRef = useRef<RequestRowResolver | null>(null)
 
   // Successful key indexes are reused; misses refresh once, rejected fetches are evicted.
   const sharedFolderCacheRef = useRef(createSharedFolderKeyCache(async (folderId) => {
@@ -664,14 +669,14 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     return labels
   }))
 
-  const getFileKeyForFile = useCallback(async (file: DriveFile, options: FileKeyOptions = {}): Promise<Uint8Array> => {
+  const getFileKeyForFile = useCallback(async (file: DriveFile, options: FileKeyOptions = {}): Promise<ContentKey> => {
     if (!isBoundTo(options.expectedUserId)) {
       throw new Error('Vault is locked — unlock first')
     }
     const key = masterKeyRef.current as Uint8Array
     if (isRequestUpload(file)) {
-      if (!requestResolverRef.current) requestResolverRef.current = createRequestKeyResolver()
-      return requestResolverRef.current.resolveFileKey(file, key)
+      if (!requestResolverRef.current) requestResolverRef.current = createRequestRowResolver()
+      return (await requestResolverRef.current.resolveRow(file, key)).content
     }
     // Task 2237b: a row a link guest or another member added to a shared
     // folder is not sealed under a key we derive. Every caller (download, zip,
@@ -692,24 +697,24 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   }, [isBoundTo])
 
   /**
-   * 2275 L13 / A9c — both keys of a row. A request row's CONTENT stays under the
-   * sealed content key C; its NAME key is derived-or-C (derived first), because
-   * an old client may have renamed the row under the string convention. Core
-   * `resolveRequestRow` picks the name key and decrypts the name, so no client
-   * re-implements that choice. Every other row reads under one key, returned in
-   * both fields with no decrypted name and no request origin.
+   * 2275 §15 — a request row as core resolved it: name, seal, rename target and
+   * a decrypt-only content source. Never a key: only core holds the row's
+   * content key and the reader is the way to it.
    */
-  const getFileKeysForFile = useCallback(async (file: DriveFile, expectedUserId?: string): Promise<ResolvedRowKeys> => {
+  const getRequestRow = useCallback(async (file: DriveFile, expectedUserId?: string): Promise<ResolvedRequestRow> => {
     if (!isBoundTo(expectedUserId)) {
       throw new Error('Vault is locked — unlock first')
     }
-    if (isRequestUpload(file)) {
-      if (!requestResolverRef.current) requestResolverRef.current = createRequestKeyResolver()
-      return requestResolverRef.current.resolveRow(file, masterKeyRef.current as Uint8Array)
-    }
-    const key = await getFileKeyForFile(file, { expectedUserId })
-    return { contentKey: key, nameKey: key, nameOrigin: 'single', name: null }
-  }, [isBoundTo, getFileKeyForFile])
+    if (!isRequestUpload(file)) throw new Error('getRequestRow called on a non-request file')
+    if (!requestResolverRef.current) requestResolverRef.current = createRequestRowResolver()
+    return requestResolverRef.current.resolveRow(file, masterKeyRef.current as Uint8Array)
+  }, [isBoundTo])
+
+  const sealRequestRename = useCallback(async (file: DriveFile, newName: string): Promise<string> => {
+    if (!isBoundTo()) throw new Error('Vault is locked — unlock first')
+    if (!requestResolverRef.current) requestResolverRef.current = createRequestRowResolver()
+    return requestResolverRef.current.sealRename(file, newName, masterKeyRef.current as Uint8Array)
+  }, [isBoundTo])
 
   const getSharedFileOrigin = useCallback(async (file: DriveFile, folderId: string): Promise<string | null> => {
     if (!isBoundTo()) throw new Error('Vault is locked — unlock first')
@@ -978,7 +983,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       getResidentUserId,
       getFileKey,
       getFileKeyForFile,
-      getFileKeysForFile,
+      getRequestRow,
+      sealRequestRename,
       getFileKeyForSharedFile,
       getSharedFileOrigin,
       getMasterKey,
@@ -986,7 +992,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       lock,
       fullLogout,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getFileKeysForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, discardStalePasswordVault, lock, fullLogout],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getRequestRow, sealRequestRename, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, discardStalePasswordVault, lock, fullLogout],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>

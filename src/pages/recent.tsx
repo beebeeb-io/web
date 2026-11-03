@@ -33,7 +33,7 @@ import { mergeRecentlyChangedFiles } from '../lib/recent-files'
 const RECENT_LIMIT = 50
 
 export function Recent() {
-  const { getFileKey, getFileKeyForFile, getMasterKey, getResidentUserId, isUnlocked, cryptoReady } = useKeys()
+  const { getFileKey, getFileKeyForFile, sealRequestRename, getMasterKey, getResidentUserId, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
   const { setNodeStarred } = useSync()
   const navigate = useNavigate()
@@ -132,6 +132,7 @@ export function Recent() {
         getFileKey,
         getFileKeyForFile: (f) => getFileKeyForFile(f, { plaintextChunk: true }),
         readName: readFileMetadata,
+        sealRequestRename,
       })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })
       fetchFiles()

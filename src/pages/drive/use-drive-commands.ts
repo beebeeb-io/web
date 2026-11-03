@@ -7,6 +7,7 @@ import type { FolderSuggestion } from './drive-banners'
 import type { UploadItem } from '../../components/upload-progress'
 import type { NewDocumentType } from '../../lib/new-document'
 import type { useKeys } from '../../lib/key-context'
+import { isRequestContentSource } from '../../lib/request-row'
 import type { useSearchIndex } from '../../hooks/use-search-index'
 import type { useDriveData } from '../../lib/drive-data-context'
 import type { useSync } from '../../lib/sync-context'
@@ -186,7 +187,10 @@ export function useDriveCommands(params: DriveCommandsParams) {
         for (const f of siblings) {
           let sibling: string | null = null
           try {
-            sibling = (await decryptFileMetadata(await getFileKeyForFile(f), f.name_encrypted)).name
+            const key = await getFileKeyForFile(f)
+            sibling = isRequestContentSource(key)
+              ? (key.name ?? null)
+              : (await decryptFileMetadata(key, f.name_encrypted)).name
           } catch {
             sibling = null // undecryptable: cannot clash with a name we can see
           }

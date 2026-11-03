@@ -12,12 +12,11 @@
  */
 import { getFile, updateFile, type DriveFile } from './api'
 import { encryptFilename, serializeEncryptedBlob } from './crypto'
-import { isRequestUpload } from './file-request-crypto'
+import { contentKeyBytes, isRequestUpload, RENAME_KEY_UNAVAILABLE, type ContentKey } from './request-row'
+export { RENAME_KEY_UNAVAILABLE } from './request-row'
 import { needsOwnership } from './owner-adoption'
 import { assertOwnerRepairWritable } from './owner-repair'
 import { assertCurrentVersionWritable } from './owner-write-guard'
-
-export const RENAME_KEY_UNAVAILABLE = "This file's key isn't available, so it can't be renamed here."
 
 export interface RenameKeyArgs {
   fileId: string
@@ -26,27 +25,26 @@ export interface RenameKeyArgs {
   /** null where the page does not know it: any row a guest or member could have added is then verified. */
   viewerId: string | null
   getFileKey: (fileId: string) => Promise<Uint8Array>
-  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>
+  getFileKeyForFile: (file: DriveFile) => Promise<ContentKey>
   /** Opens a stored name with a key; throws when it does not open. */
   readName: (fileKey: Uint8Array, nameEncrypted: string) => Promise<unknown>
+  /**
+   * §15: seal a request row's new name through core (`sealRequestRename`), the
+   * only path that exists — it derives the string-convention key from the id
+   * and keeps the recorded pin, so a name is never sealed under C. Refuses an
+   * upper-repair (read-only) row.
+   */
+  sealRequestRename?: (file: DriveFile, newName: string) => Promise<string>
 }
 
 export async function renameKeyFor(args: RenameKeyArgs): Promise<Uint8Array> {
   const { file } = args
   if (!file) return args.getFileKey(args.fileId)
-  // L13: a request row's content stays sealed under the request content key C,
-  // reached through the request keypair. Its NAME belongs to the string
-  // convention derived from its id — sealing the new name under C would mix the
-  // conventions and leave the name unreadable to the owner's derived key. So a
-  // request row is renamed under the plain derivation, and its content is never
-  // touched here. getFileKeyForFile returns C for these rows, so it must not be
-  // consulted for the name.
-  if (isRequestUpload(file)) return args.getFileKey(args.fileId)
   // SF-0002 review: an OWNER row is renamed under the key that authenticated
   // its name (the resolved key), not the plain string derivation. A binary-
   // convention row therefore stays on its binary key and no mixed-key row is
   // created. Foreign rows keep the proven-name check below.
-  const key = await args.getFileKeyForFile(file)
+  const key = contentKeyBytes(await args.getFileKeyForFile(file))
   if (!needsOwnership(file, args.viewerId)) return key
   try {
     await args.readName(key, file.name_encrypted)
@@ -81,6 +79,15 @@ export async function renameOwnerRow(
   assertOwnerRepairWritable(args.fileId)
   const file = args.file && args.file.id === args.fileId ? args.file : await getFile(args.fileId)
   await assertCurrentVersionWritable(file, args.masterKey, { viewerId: args.residentUserId })
+  // §15: a request row has no key of ours to seal with. Its rename goes only
+  // through core's string-convention seal (never C); an upper-repair row has no
+  // rename target and is refused by the resolver.
+  if (isRequestUpload(file)) {
+    if (!args.sealRequestRename) throw new Error(RENAME_KEY_UNAVAILABLE)
+    const sealed = await args.sealRequestRename(file, args.newName)
+    await updateFile(args.fileId, { name_encrypted: sealed })
+    return
+  }
   const fileKey = await renameKeyFor({ ...args, file })
   const enc = await encryptFilename(fileKey, args.newName)
   await updateFile(args.fileId, { name_encrypted: await serializeEncryptedBlob(enc.nonce, enc.ciphertext) })

@@ -6,6 +6,7 @@
 // encrypted-download.ts unchanged (move only).
 
 import { ownerRepairContentKey, deriveFileKey, startDecryptStream } from './crypto'
+import { contentKeyBytes, isRequestContentSource, type ContentKey } from './request-row'
 import { isOwnerRepairReadOnly, markOwnerRepairReadOnly, ownerRepairKeyFor } from './owner-repair'
 import type { FileContentRef } from './encrypted-download'
 
@@ -74,15 +75,21 @@ export type ContentDecryptor = Awaited<ReturnType<typeof startDecryptStream>>
 export async function pushHeadWithRepair(
   decryptor: ContentDecryptor,
   frame: Uint8Array,
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   content: FileContentRef,
   masterKey: Uint8Array | undefined,
 ): Promise<{ decryptor: ContentDecryptor; plaintext: Uint8Array }> {
+  // A request row has no key to repair with: core's reader is the only path
+  // and the owner has no derivation for it. Push chunk 0 and let it decide.
+  if (isRequestContentSource(fileKey)) {
+    return { decryptor, plaintext: await decryptor.pushFrame(frame) }
+  }
+  const key = contentKeyBytes(fileKey)
   const head = masterKey ? frame.slice() : null
   try {
     return { decryptor, plaintext: await decryptor.pushFrame(frame) }
   } catch (err) {
-    const repaired = head ? await contentKeyFromFrame(masterKey, fileKey, content, head) : null
+    const repaired = head ? await contentKeyFromFrame(masterKey, key, content, head) : null
     if (!head || !repaired) throw err
     let next: ContentDecryptor
     try {

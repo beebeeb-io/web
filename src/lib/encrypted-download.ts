@@ -23,12 +23,14 @@ import {
   readFileMetadata,
   startDecryptStream,
   UnverifiedFileMetadataError,
+  toContentPin,
   type ContentPin,
 } from './crypto'
 import { getToken, getApiUrl, ApiError } from './api'
 import { dispatchDecrypted } from './decrypt-events'
 import { mediaKind, TooLargeToPreviewError } from './preview-load-policy'
 import { pushHeadWithRepair } from './owner-content-repair'
+import { contentKeyBytes, isRequestContentSource, type ContentKey } from './request-row'
 import { withServerBusyRetry } from './server-busy-retry'
 import { canStreamToDisk, awaitController, streamTargetToDisk } from './download/streaming-to-disk'
 import { directResponse, readDirectWholeFile, decryptWholeFileResponse } from './download/response-pipeline'
@@ -56,17 +58,24 @@ export const UNVERIFIED_FILE_COPY = "We couldn't verify this file's encrypted de
  */
 export async function openFileMetadata(
   fileId: string,
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   nameEncryptedJson: string,
-  nameKey?: Uint8Array,
+  nameKey?: Uint8Array | null,
 ): Promise<{ name: string; mimeType: string | null; content: FileContentRef }> {
+  // §15: a request row's content is a core-held reader; core already decrypted
+  // its name (derived-first, or under C for a shipped row) and recorded its
+  // pin. Nothing here reads the name again under a key we would have to pick.
+  if (isRequestContentSource(fileKey)) {
+    return {
+      name: fileKey.name ?? '',
+      mimeType: fileKey.mimeType,
+      content: { fileId: fileKey.fileId, pin: toContentPin(fileKey.chunkFormat) },
+    }
+  }
   try {
-    // 2275 L13 / A9c: a request row's content stays under C but its name key is
-    // derived-or-C (derived first) — an old client may have renamed the row
-    // under the string convention. Read the name with the name key when the
-    // caller resolved one; ordinary rows pass only the content key and it
-    // opens both.
-    const meta = await readFileMetadata(nameKey ?? fileKey, nameEncryptedJson)
+    // Ordinary rows read the name under the resolved key; the same key opens
+    // the file's content.
+    const meta = await readFileMetadata(nameKey ?? contentKeyBytes(fileKey), nameEncryptedJson)
     return { name: meta.name, mimeType: meta.mimeType, content: { fileId, pin: meta.pin } }
   } catch (err) {
     throw new UnverifiedFileMetadataError(UNVERIFIED_FILE_COPY, { cause: err })
@@ -135,7 +144,7 @@ export { pushHeadWithRepair, type ContentDecryptor } from './owner-content-repai
 
 
 export async function decryptEncryptedBytes(
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   content: FileContentRef,
   encryptedBytes: Uint8Array,
   chunkCount: number,
@@ -259,7 +268,7 @@ export interface WholeFileOptions {
    * stays under the content key. Omitted for ordinary rows, where the content
    * key opens both.
    */
-  nameKey?: Uint8Array
+  nameKey?: Uint8Array | null
 }
 
 
@@ -295,7 +304,7 @@ export interface EncryptedDownloadOptions {
    * content stays under the content key. Omitted for ordinary rows, where the
    * content key opens both.
    */
-  nameKey?: Uint8Array
+  nameKey?: Uint8Array | null
 }
 
 /** The over-cap Download could not stream to disk in this browser window (C2). */
@@ -328,7 +337,7 @@ export function downloadUrlFor(fileId: string, versionId: string | null): string
  */
 export async function pipeDecryptedChunks(
   body: ReadableStream<Uint8Array>,
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   content: FileContentRef,
   chunkCount: number,
   plaintextSize: number,
@@ -459,7 +468,7 @@ export interface DownloadTarget {
 /** Verify the metadata, open the body, and read the sizes both save paths need. */
 async function openDownloadTarget(
   fileId: string,
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   nameEncryptedJson: string,
   mimeType: string | null | undefined,
   chunkCount: number,
@@ -530,7 +539,7 @@ async function openDownloadTarget(
 /** Read the whole body, decrypt it in memory, and trigger the browser save. */
 async function saveTargetAsBlob(
   target: DownloadTarget,
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   sizeBytes: number,
   opts?: EncryptedDownloadOptions,
 ): Promise<void> {
@@ -603,7 +612,7 @@ async function saveTargetAsBlob(
  */
 export async function encryptedDownload(
   fileId: string,
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   nameEncryptedJson: string,
   mimeType: string | null | undefined,
   chunkCount: number,
@@ -622,7 +631,7 @@ export async function encryptedDownload(
 /** What the over-cap card's Download streams to disk. */
 export interface OverCapDownloadArgs {
   fileId: string
-  fileKey: Uint8Array
+  fileKey: ContentKey
   nameEncrypted: string
   mimeType: string | null | undefined
   /** null = the live version. */
@@ -634,7 +643,7 @@ export interface OverCapDownloadArgs {
    * A request row's content stays under C while its name is derived-or-C
    * (derived first); metadata is read with this key. Omitted elsewhere.
    */
-  nameKey?: Uint8Array
+  nameKey?: Uint8Array | null
 }
 
 /**
@@ -693,7 +702,7 @@ function guardMediaCap(
  */
 export async function decryptToBlob(
   fileId: string,
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   nameEncryptedJson: string,
   mimeType: string | null | undefined,
   chunkCount: number,
@@ -742,7 +751,7 @@ export async function decryptToBlob(
 export async function decryptVersionToBlob(
   fileId: string,
   versionId: string,
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   nameEncryptedJson: string,
   mimeType: string | null | undefined,
   chunkCount: number,

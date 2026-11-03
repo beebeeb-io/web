@@ -473,6 +473,47 @@ export class WasmNewItemId {
 }
 
 /**
+ * A request row's decrypt-only content reader (task 2275 §15; 2326 delta2
+ * P2-2). It owns a copy of the row's content key `C`, bound to the row's file
+ * id and recorded chunk-format pin; the key is zeroized when the reader drops
+ * and no getter exposes it.
+ *
+ * `decryptor()` returns a FRESH sequential [`WasmChunkDecryptor`] at chunk 0
+ * on every call (retry after a mid-stream error); `openFrame(...)` opens ONE
+ * frame by index for a seek / range read.
+ */
+export class WasmRequestContentReader {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * A FRESH sequential decryptor at chunk 0. Call again after any error.
+     *
+     * Retry contract: discard EVERYTHING the failed attempt produced; never
+     * splice attempt 1's prefix with attempt 2's suffix (after a replace that
+     * splices two uploads of one id). The failed cursor is not poisoned
+     * (`open_next` does not advance `next_index` on an error), but the output
+     * must still be rebuilt from frame 0.
+     */
+    decryptor(): WasmChunkDecryptor;
+    /**
+     * Open ONE content frame at `index` without the frames before it (seek /
+     * range read). `isLast = index == chunkCount - 1`. `format` (1 = v1,
+     * 2 = v2) and `versionId` (12 bytes, v2 only) must come from authenticated
+     * data. When the row is pinned to v2, `format: 1` is refused.
+     */
+    openFrame(version_id: Uint8Array, index: number, is_last: boolean, format: number, frame: Uint8Array): Uint8Array;
+    /**
+     * The row's recorded chunk-format pin: 0 = unrecorded, 2 = v2.
+     */
+    readonly chunkFormat: number;
+    /**
+     * The file id every frame of this row must be bound to.
+     */
+    readonly fileId: string;
+}
+
+/**
  * A stateful, client-side search index over a vault's file names.
  *
  * Build it from a file list, mutate it incrementally (`upsert`/`remove` return
@@ -1229,6 +1270,14 @@ export function list_tar_entries(data: Uint8Array): any;
 export function maxInFlightBytes(_class: string): number;
 
 /**
+ * Mint a guest (F) item id with NO master key (task 2275 §15). The anonymous
+ * uploader path uses this; the id is a canonical RFC 9562 UUID v8 and core's
+ * class check classifies it as foreign. The server has no T2 F-class check
+ * yet (future server work), so only the core check protects this id today.
+ */
+export function mintGuestItemId(): string;
+
+/**
  * Mint a new foreign (F) item id (RFC 9562 UUID v8) for `master_key`.
  */
 export function newForeignItemId(master_key: Uint8Array): WasmNewItemId;
@@ -1292,7 +1341,14 @@ export function openLegacyInviteOwnerCopy(master_key: Uint8Array, folder_id: str
 
 /**
  * Open a sealed request upload (owner decrypt path). Recovers the content key.
- * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
+ * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns
+ * 32-byte `Uint8Array`.
+ *
+ * **DECRYPT-ONLY.** This is a request row's content key `C`, and the
+ * anonymous uploader holds it. Use it to read the row's content; never seal a
+ * name, note or thumbnail under this key. For a request row the owner's rename
+ * goes through `seal_request_rename` / `sealRequestRename` (the §15
+ * string-derived key), never `C`.
  */
 export function open_request_upload(r_priv: Uint8Array, e_pub: Uint8Array, file_id: Uint8Array, wrapped_key: Uint8Array): Uint8Array;
 
@@ -1461,10 +1517,19 @@ export function redactUrl(url: string): string;
 export function resolveOwnedKey(master_key: Uint8Array, item_id: string, kind: number, owner_wrap: Uint8Array | null | undefined, name_encrypted: string, shared_folder_id?: string | null, folder_key?: Uint8Array | null, folder_wrap?: Uint8Array | null, first_chunk_frame?: Uint8Array | null): any;
 
 /**
- * Resolve a 2236 request row: `{contentKey, nameKey, nameOrigin, name,
- * mimeType, chunkFormat}`. Read-only; no write target.
+ * Resolve a 2236 request row: `{content, nameOrigin, name, mimeType,
+ * chunkFormat, seal, renameTarget}`. `content` is a decrypt-only
+ * `WasmRequestContentReader` for the row's content key; no raw key reaches JS,
+ * so a request-row result offers no sealing path. The seal is `"bound"` or
+ * `"unbound"` (§15), and `renameTarget` is `{origin, pin}` or null when the
+ * name is upper-repair (read-only). Renames go through `sealRequestRename`.
+ *
+ * `request_wrap_context` is the context the owner wrapped the request private
+ * key under: empty for every request created so far (the server mints the
+ * request id after the wrap). A real request id refuses a shipped row; this
+ * function never tries both contexts.
  */
-export function resolveRequestRow(master_key: Uint8Array, item_id: string, request_id: Uint8Array, wrapped_request_private: Uint8Array, wrap_nonce: Uint8Array, sender_ephemeral_pubkey: Uint8Array, wrapped_content_key: Uint8Array, name_encrypted: string): any;
+export function resolveRequestRow(master_key: Uint8Array, item_id: string, request_wrap_context: Uint8Array, wrapped_request_private: Uint8Array, wrap_nonce: Uint8Array, sender_ephemeral_pubkey: Uint8Array, wrapped_content_key: Uint8Array, name_encrypted: string): any;
 
 /**
  * Resume a minted id from the id text and tag persisted with an upload session
@@ -1539,6 +1604,24 @@ export function scrubText(text: string): string;
  * `ciphertext`.
  */
 export function sealFolderActorName(folder_key: Uint8Array, shared_folder_id: string, name: string): string;
+
+/**
+ * Seal a request-row rename under the section 15 string-convention key derived
+ * from `item_id`, keeping the row's recorded `pin` (`chunkFormat` from
+ * `resolveRequestRow`). This is the only sealing path a request-row result
+ * offers: `resolveRequestRow` hands back no key, so a rename cannot be sealed
+ * under the content key `C` that the anonymous uploader holds (A9).
+ *
+ * An F id is refused by the same owner-class check the resolver runs. `pin` is
+ * the `renameTarget.pin` the resolver returned (the row's recorded format),
+ * never a field from the wire. Pin direction matters both ways:
+ * - a pin of 2 on a v1 row makes the file unreadable until it is renamed again
+ *   with the correct pin;
+ * - a pin of 0 on a v2 row drops the recorded 2, turns frame-0 detection back
+ *   on, and lets a server serve the uploader's old no-AAD name blob under `C`
+ *   as a one-frame v1 file.
+ */
+export function sealRequestRename(master_key: Uint8Array, item_id: string, pin: number, filename: string, mime_type?: string | null): string;
 
 /**
  * Seal a content key to a request's public key (anonymous uploader path).
@@ -1756,6 +1839,7 @@ export interface InitOutput {
     readonly __wbg_wasmdirecthealth_free: (a: number, b: number) => void;
     readonly __wbg_wasmdownloadplanner_free: (a: number, b: number) => void;
     readonly __wbg_wasmnewitemid_free: (a: number, b: number) => void;
+    readonly __wbg_wasmrequestcontentreader_free: (a: number, b: number) => void;
     readonly __wbg_wasmsearchindex_free: (a: number, b: number) => void;
     readonly __wbg_wasmsignedurl_free: (a: number, b: number) => void;
     readonly __wbg_wasmsignupceremony_free: (a: number, b: number) => void;
@@ -1827,6 +1911,7 @@ export interface InitOutput {
     readonly list_archive: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly list_tar_entries: (a: number, b: number, c: number) => void;
     readonly maxInFlightBytes: (a: number, b: number, c: number) => void;
+    readonly mintGuestItemId: (a: number) => void;
     readonly newForeignItemId: (a: number, b: number, c: number) => void;
     readonly newOwnerItemId: (a: number, b: number, c: number) => void;
     readonly opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
@@ -1865,6 +1950,7 @@ export interface InitOutput {
     readonly sanitizePathComponent: (a: number, b: number, c: number) => void;
     readonly scrubText: (a: number, b: number, c: number) => void;
     readonly sealFolderActorName: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly sealRequestRename: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly seal_to_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly searchIndexSyncPlan: (a: number, b: number, c: number, d: number) => void;
     readonly shareKeyBytes: (a: number, b: number) => number;
@@ -1939,6 +2025,10 @@ export interface InitOutput {
     readonly wasmdownloadplanner_windowMalformed: (a: number) => void;
     readonly wasmnewitemid_idText: (a: number, b: number) => void;
     readonly wasmnewitemid_tag: (a: number, b: number) => void;
+    readonly wasmrequestcontentreader_chunkFormat: (a: number) => number;
+    readonly wasmrequestcontentreader_decryptor: (a: number) => number;
+    readonly wasmrequestcontentreader_fileId: (a: number, b: number) => void;
+    readonly wasmrequestcontentreader_openFrame: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly wasmsearchindex_build: (a: number, b: number, c: number) => void;
     readonly wasmsearchindex_encryptBuckets: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmsearchindex_encryptBucketsWithFolderKey: (a: number, b: number, c: number, d: number, e: number, f: number) => void;

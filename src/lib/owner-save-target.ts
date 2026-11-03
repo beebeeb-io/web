@@ -13,7 +13,7 @@
  *         C; only the NAME may move to the string convention (A9).
  */
 import type { DriveFile } from './api'
-import { isRequestUpload } from './file-request-crypto'
+import { isRequestUpload } from './request-row'
 import { ownedItem, type NewItemIdHandle } from './owned-item'
 
 /** The fields a save decision reads. Anything else stays with the editor. */

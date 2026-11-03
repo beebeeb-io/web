@@ -31,7 +31,7 @@ import { decryptToBlob } from '../../lib/encrypted-download'
 import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly } from '../../lib/owner-repair'
 import { assertCurrentVersionWritable } from '../../lib/owner-write-guard'
 import { encryptedUpload } from '../../lib/encrypted-upload'
-import { isRequestUpload } from '../../lib/file-request-crypto'
+import { contentKeyBytes, isRequestUpload } from '../../lib/request-row'
 import { saveTargetFor } from '../../lib/owner-save-target'
 import { useKeys } from '../../lib/key-context'
 import {
@@ -235,7 +235,7 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
     // A same-row save goes through the RESOLVED key (SF-0002: a binary-convention
     // or repair row opens under its own key, not the plain derivation). A new
     // item's key is the plain derivation of its freshly minted id.
-    const fileKey = target.replaceOf ? await getFileKeyForFile(file) : await getFileKey(uploadFileId)
+    const fileKey = target.replaceOf ? contentKeyBytes(await getFileKeyForFile(file)) : await getFileKey(uploadFileId)
     const name = nameOverride ?? decryptedName
     const effectiveType = mimeType ?? (isMarkdown ? 'text/markdown' : 'text/plain')
     const uploadFile = new File([doc], name, { type: effectiveType })

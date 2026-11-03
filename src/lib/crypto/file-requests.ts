@@ -65,13 +65,3 @@ export async function sealToRequest(
   const result = await withProxy((p) => p.sealToRequest(rPub, fileId, contentKey))
   return { ePub: result.e_pub, wrappedKey: result.wrapped_key }
 }
-
-/** Open a sealed upload, recovering the content key C (owner decrypt path). */
-export async function openRequestUpload(
-  rPriv: Uint8Array,
-  ePub: Uint8Array,
-  wrappedKey: Uint8Array,
-  fileId: Uint8Array = FILE_REQUEST_EMPTY_ID,
-): Promise<Uint8Array> {
-  return withProxy((p) => p.openRequestUpload(rPriv, ePub, fileId, wrappedKey))
-}

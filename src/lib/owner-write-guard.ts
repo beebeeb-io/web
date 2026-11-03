@@ -26,7 +26,7 @@
 import { getFile, restoreVersion, type DriveFile, type FileVersion } from './api'
 import { ownerRepairContentKey } from './crypto'
 import { parseHeaderInt, requestEncryptedBody } from './encrypted-download'
-import { isRequestUpload } from './file-request-crypto'
+import { isRequestUpload } from './request-row'
 import {
   OWNER_REPAIR_READ_ONLY,
   isKnownWritableVersion,

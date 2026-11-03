@@ -41,7 +41,7 @@ import { MAX_ZOOM, MIN_ZOOM, ZOOM_STEP, pickRenderer, type ImageControlProps } f
 import type { RawExifInfo } from '../../lib/raw-embedded-jpeg'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
-import { isRequestUpload } from '../../lib/file-request-crypto'
+import { contentKeyBytes, isRequestUpload, type ContentKey } from '../../lib/request-row'
 import { needsOwnership, sharedRootFor } from '../../lib/owner-adoption'
 import { sharedFoldersEnabled } from '../../lib/use-feature-flag'
 import { useAuth } from '../../lib/auth-context'
@@ -76,7 +76,7 @@ interface FilePreviewProps {
 
 
 export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext, startInEditMode, folderId, onDelete }: FilePreviewProps) {
-  const { getFileKeyForFile, getFileKeysForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
+  const { getFileKeyForFile, getRequestRow, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
   // SF-0002: the row's name or a version was sealed under the iOS Files-app
   // convention, so it is openable/downloadable but not writable in place.
   const ownerReadOnly = isOwnerRepairReadOnly(file.id)
@@ -198,33 +198,37 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // Only then may a content read ask core for the read-only repair key: a
   // shared-folder or foreign key is never switched to an owner key (SF-0002
   // review).
-  const resolveFileKey = useCallback(async (): Promise<{ key: Uint8Array; nameKey: Uint8Array; ownerDerived: boolean }> => {
-    // 2275 L13 / A9c: a request row's content stays under C while its name key
-    // is derived-or-C (derived first) — an old client may have renamed the row
-    // under the string convention. Core's request-row resolver picks both and
-    // is read-only. Checked before the shared walk: a request uploader's row is
-    // not a guest/member-added row in a shared folder.
+  const resolveFileKey = useCallback(async (): Promise<{
+    key: ContentKey
+    nameKey: Uint8Array | null
+    name: string | null
+    mimeType: string | null
+    ownerDerived: boolean
+  }> => {
+    // 2275 §15: a request row comes back from core as metadata plus a
+    // decrypt-only content source — there is no key. Checked before the shared
+    // walk: a request uploader's row is not a guest/member-added row.
     if (isRequestUpload(file)) {
-      const row = await getFileKeysForFile(file)
-      return { key: row.contentKey, nameKey: row.nameKey, ownerDerived: false }
+      const row = await getRequestRow(file)
+      return { key: row.content, nameKey: null, name: row.name, mimeType: row.mimeType, ownerDerived: false }
     }
     if (!sharedFile) {
       const key = await getFileKeyForFile(file, { plaintextChunk: true })
-      return { key, nameKey: key, ownerDerived: true }
+      return { key, nameKey: contentKeyBytes(key), name: null, mimeType: null, ownerDerived: true }
     }
     // rv-web198d R1: with the flag off there is no shared-folder walk for the
     // owner (no invites read, no link route asked); the key is derived, as on main.
     if (!(await sharedFoldersEnabled())) {
       const key = await getFileKeyForFile(file, { plaintextChunk: true })
-      return { key, nameKey: key, ownerDerived: true }
+      return { key, nameKey: contentKeyBytes(key), name: null, mimeType: null, ownerDerived: true }
     }
     const root = await sharedRootFor(folderId ?? null, file.id)
     const key = root ? await getFileKeyForSharedFile(file, root) : null
-    if (key) return { key, nameKey: key, ownerDerived: false }
+    if (key) return { key, nameKey: key, name: null, mimeType: null, ownerDerived: false }
     const label = root ? await getSharedFileOrigin(file, root) : null
     setShareOrigin(label)
     throw new Error(label ? `Can't open this file (added via ${label})` : "Can't open this file")
-  }, [sharedFile, getFileKeyForFile, getFileKeysForFile, getFileKeyForSharedFile, getSharedFileOrigin, file, folderId])
+  }, [sharedFile, getFileKeyForFile, getRequestRow, getFileKeyForSharedFile, getSharedFileOrigin, file, folderId])
 
   // Display name: use prop, then locally decrypted, then raw
   const name = decryptedNameProp ?? localDecryptedName ?? file.name_encrypted
@@ -239,8 +243,10 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     let cancelled = false
     async function decrypt() {
       try {
-        const { nameKey } = await resolveFileKey()
-        const { name, mimeType } = await decryptFileMetadata(nameKey, file.name_encrypted)
+        const { nameKey, name: resolvedName, mimeType: resolvedMime } = await resolveFileKey()
+        const { name, mimeType } = resolvedName !== null
+          ? { name: resolvedName, mimeType: resolvedMime }
+          : await decryptFileMetadata(nameKey as Uint8Array, file.name_encrypted)
         if (!cancelled) {
           setLocalDecryptedName(name)
           setLocalMimeType(mimeType)
@@ -286,7 +292,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
   /** The streaming reader's key resolver: the same lookup, key only. */
   const resolveStreamKey = useCallback(
-    async () => (await resolveFileKey()).key,
+    async () => contentKeyBytes((await resolveFileKey()).key),
     [resolveFileKey],
   )
 
@@ -370,7 +376,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           // unconditional /thumbnail/large request would waste a guaranteed-404.
           // The medium fallback below is a reachable sibling: it runs whenever
           // the large fetch is skipped (no large variant) OR fails.
-          if (file.has_large_thumbnail) {
+          if (fileKey instanceof Uint8Array && file.has_large_thumbnail) {
             const largeThumbnailUrl = await fetchAndDecryptLargeThumbnail(file.id, fileKey)
             if (largeThumbnailUrl && !cancelled) {
               const thumbRes = await fetch(largeThumbnailUrl)
@@ -385,7 +391,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             }
           }
           // Large skipped or failed — try medium thumbnail
-          if (!cancelled) {
+          if (!cancelled && fileKey instanceof Uint8Array) {
             const mediumThumbnailUrl = await fetchAndDecryptThumbnail(file.id, fileKey)
             if (mediumThumbnailUrl && !cancelled) {
               const thumbRes = await fetch(mediumThumbnailUrl)

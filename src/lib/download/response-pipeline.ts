@@ -5,6 +5,7 @@
 // pipelined response readers.
 
 import { CHUNK_SIZE, startDecryptStream } from '../crypto'
+import type { ContentKey } from '../request-row'
 import { pushHeadWithRepair } from '../owner-content-repair'
 import {
   decryptEncryptedBytes,
@@ -21,7 +22,7 @@ const PROGRESS_BYTES_STEP = 64 * 1024
 // Import/init failures only select the legacy transport before any bytes arrive.
 // Negotiation/auth/version failures retain their existing terminal semantics.
 export async function directResponse(
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   content: FileContentRef,
   signal: AbortSignal,
   masterKey?: Uint8Array,
@@ -42,7 +43,7 @@ export async function directResponse(
  * chunk 0 proved. Without it a repaired row could never be streamed from S3.
  */
 async function openRepairingStream(
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   content: FileContentRef,
   masterKey: Uint8Array | undefined,
 ): Promise<FrameOpener> {
@@ -143,7 +144,7 @@ export async function readDirectWholeFile(
  */
 async function decryptBufferedResponseBody(
   res: Response,
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   content: FileContentRef,
   totalChunks: number,
   sizeBytes: number,
@@ -184,7 +185,7 @@ async function decryptBufferedResponseBody(
 
 export async function decryptWholeFileResponse(
   res: Response,
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   content: FileContentRef,
   chunkCount: number,
   sizeBytes: number,

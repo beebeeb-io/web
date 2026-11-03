@@ -15,6 +15,7 @@ import {
 } from '../lib/content-crypto'
 import { decodeEnvelope, encodeEnvelope, type EnvelopeBytes } from '../lib/metadata-envelope'
 import { ownedItemWorkerOps } from './crypto-owned-item'
+import { requestRowWorkerOps } from './crypto-request-row'
 import { l16WorkerOps } from './crypto-l16'
 
 // Import the .wasm binary URL via Vite's ?url suffix so it resolves
@@ -384,6 +385,9 @@ const cryptoWorker = {
     ;(await content()).closeChunkReader(handle)
   },
 
+  // §15 request-row readers (same file-size ratchet as the owner ops).
+  ...requestRowWorkerOps(content),
+
   /** Live decryptors: the owner never recycles this worker while one is live. */
   liveDecryptorCount(): number {
     return contentOps ? contentOps.liveDecryptorCount() : 0
@@ -407,11 +411,15 @@ const cryptoWorker = {
   // Owner reads, id minting, the resolver and the wrap comparison live in
   // crypto-owned-item.ts (same file-size ratchet); spread in so the Comlink
   // surface is unchanged.
-  ...ownedItemWorkerOps(ensureWasm, (enc) => {
-    const handle = nextEncryptorHandle++
-    liveEncryptors.set(handle, enc)
-    return handle
-  }),
+  ...ownedItemWorkerOps(
+    ensureWasm,
+    (enc) => {
+      const handle = nextEncryptorHandle++
+      liveEncryptors.set(handle, enc)
+      return handle
+    },
+    async (reader) => (await content()).registerRequestReader(reader),
+  ),
 
   /** Generate a 12-word BIP39 recovery phrase and the corresponding master key. */
   async generateRecoveryPhrase(): Promise<{
@@ -1114,15 +1122,6 @@ const cryptoWorker = {
   },
 
   /** Open a sealed request upload (owner decrypt path). Recovers the content key. */
-  async openRequestUpload(
-    rPriv: Uint8Array,
-    ePub: Uint8Array,
-    fileId: Uint8Array,
-    wrappedKey: Uint8Array,
-  ): Promise<Uint8Array> {
-    const wasm = await ensureWasm()
-    return wasm.open_request_upload(rPriv, ePub, fileId, wrappedKey) as Uint8Array
-  },
 
   // ─── Constellation peer transfer ──────────────────────────────────────────
   // Ephemeral X25519 + HKDF-SHA256 + AES-256-GCM, all in core. The receiver

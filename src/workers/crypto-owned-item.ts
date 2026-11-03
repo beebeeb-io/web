@@ -7,6 +7,12 @@
  * call shapes on the main thread (`src/lib/crypto.ts`) are unchanged.
  */
 import type * as WasmTypes from 'beebeeb-wasm'
+import {
+  resolveRequestRowWith,
+  sealRequestRenameWith,
+  type RequestRenameTarget,
+  type RequestSeal,
+} from '../lib/request-row'
 
 export interface OwnedItemWorkerOps {
   ownerRepairNameKey(
@@ -50,21 +56,33 @@ export interface OwnedItemWorkerOps {
   resolveRequestRow(
     masterKey: Uint8Array,
     itemId: string,
-    requestId: Uint8Array,
+    requestWrapContext: Uint8Array,
     wrappedRequestPrivate: Uint8Array,
     wrapNonce: Uint8Array,
     senderEphemeralPubkey: Uint8Array,
     wrappedContentKey: Uint8Array,
     nameEncrypted: string,
   ): Promise<{
-    contentKey: Uint8Array
-    nameKey: Uint8Array
+    /** Worker handle of the decrypt-only `WasmRequestContentReader`. */
+    handle: number
+    fileId: string
+    chunkFormat: number
     nameOrigin: string
-    /** Core returns the name FLAT (a string), not a nested object. */
     name: string | null
-    mimeType?: string | null
-    chunkFormat?: number
+    mimeType: string | null
+    seal: RequestSeal
+    renameTarget: RequestRenameTarget | null
   }>
+  /** §15: the only request-row rename path (string convention, never C). */
+  sealRequestRename(
+    masterKey: Uint8Array,
+    itemId: string,
+    pin: number,
+    filename: string,
+    mimeType: string | null,
+  ): Promise<string>
+  /** L12: mint a guest (F-class) item id from core. */
+  mintGuestItemId(): Promise<string>
   createEncryptorForNewItem(
     masterKey: Uint8Array,
     itemId: string,
@@ -77,7 +95,12 @@ export interface OwnedItemWorkerOps {
 type Wasm = typeof WasmTypes
 
 /** `register` puts a worker-owned encryptor in the registry and returns its handle. */
-export function ownedItemWorkerOps(ensureWasm: () => Promise<Wasm>, register: (enc: WasmTypes.WasmChunkEncryptor) => number): OwnedItemWorkerOps {
+/** `registerRequestReader` does the same for a §15 request content reader. */
+export function ownedItemWorkerOps(
+  ensureWasm: () => Promise<Wasm>,
+  register: (enc: WasmTypes.WasmChunkEncryptor) => number,
+  registerRequestReader: (reader: WasmTypes.WasmRequestContentReader) => number | Promise<number>,
+): OwnedItemWorkerOps {
   return {
     // ── SF-0002 owner read-repair ──────────────────────────────────────────
     async ownerRepairNameKey(masterKey, fileId, nameEncrypted) {
@@ -143,15 +166,15 @@ export function ownedItemWorkerOps(ensureWasm: () => Promise<Wasm>, register: (e
     },
 
     /**
-     * L13's request-row resolver: a request row's NAME key is derived-or-C
-     * (derived first), while its CONTENT stays under C. Core returns both so a
-     * reader never seals a name under C and never opens content with the
-     * derived key. Read-only: there is no write target.
+     * §15 (2326 = A): one resolver for both seals. Core opens the bound seal
+     * or the shipped empty-id seal, names the one it opened, and returns a
+     * decrypt-only reader. No content key reaches this side, so a rename can
+     * never be sealed under C (`sealRequestRename` is the only path).
      */
     async resolveRequestRow(
       masterKey,
       itemId,
-      requestId,
+      requestWrapContext,
       wrappedRequestPrivate,
       wrapNonce,
       senderEphemeralPubkey,
@@ -159,31 +182,35 @@ export function ownedItemWorkerOps(ensureWasm: () => Promise<Wasm>, register: (e
       nameEncrypted,
     ) {
       const wasm = await ensureWasm()
-      const resolved = wasm.resolveRequestRow(
+      const row = resolveRequestRowWith(wasm, {
         masterKey,
         itemId,
-        requestId,
+        requestWrapContext,
         wrappedRequestPrivate,
         wrapNonce,
         senderEphemeralPubkey,
         wrappedContentKey,
         nameEncrypted,
-      ) as {
-        contentKey: Uint8Array
-        nameKey: Uint8Array
-        nameOrigin: string
-        name?: string | null
-        mimeType?: string | null
-        chunkFormat?: number
-      }
+      })
       return {
-        contentKey: resolved.contentKey,
-        nameKey: resolved.nameKey,
-        nameOrigin: resolved.nameOrigin,
-        name: resolved.name ?? null,
-        mimeType: resolved.mimeType ?? null,
-        chunkFormat: resolved.chunkFormat,
+        handle: await registerRequestReader(row.content),
+        fileId: row.content.fileId,
+        chunkFormat: row.content.chunkFormat,
+        nameOrigin: row.nameOrigin,
+        name: row.name,
+        mimeType: row.mimeType,
+        seal: row.seal,
+        renameTarget: row.renameTarget,
       }
+    },
+
+    async sealRequestRename(masterKey, itemId, pin, filename, mimeType) {
+      const wasm = await ensureWasm()
+      return sealRequestRenameWith(wasm, { masterKey, itemId, pin, filename, mimeType })
+    },
+
+    async mintGuestItemId() {
+      return (await ensureWasm()).mintGuestItemId()
     },
 
     /**

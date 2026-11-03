@@ -83,7 +83,7 @@ export function useDriveActions(params: DriveActionsParams) {
     fetchFiles,
     fetchMyShares,
   } = params
-  const { getFileKey, getMasterKey, getFileKeyForFile, getResidentUserId, isUnlocked, cryptoReady } = keys
+  const { getFileKey, getMasterKey, getFileKeyForFile, sealRequestRename, getResidentUserId, isUnlocked, cryptoReady } = keys
   const { reindexFields, unindexFile } = search
   const { unpinFolders } = driveData
   // ─── Search re-index on rename/move (task 0843) ──────
@@ -167,6 +167,7 @@ export function useDriveActions(params: DriveActionsParams) {
         getFileKey,
         getFileKeyForFile: (f) => getFileKeyForFile(f, { plaintextChunk: true }),
         readName: readFileMetadata,
+        sealRequestRename,
       })
       void reindexFields(renameFileId, { name: newName })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })

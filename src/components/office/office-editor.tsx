@@ -24,7 +24,7 @@ import type { DriveFile } from '../../lib/api'
 import { abandonUpload, listVersions } from '../../lib/api'
 import { discardInFlightUpload } from '../../lib/upload-discard'
 import { encryptedUpload } from '../../lib/encrypted-upload'
-import { isRequestUpload } from '../../lib/file-request-crypto'
+import { contentKeyBytes, isRequestUpload } from '../../lib/request-row'
 import { saveTargetFor } from '../../lib/owner-save-target'
 import { useKeys } from '../../lib/key-context'
 import { useTheme } from '../../lib/theme-context'
@@ -597,7 +597,7 @@ export function OfficeEditor({
     // A same-row save goes through the RESOLVED key (SF-0002: a binary-convention
     // or repair row opens under its own key, not the plain derivation). A new
     // item's key is the plain derivation of its freshly minted id.
-    const fileKey = target.replaceOf ? await getFileKeyForFile(file) : await getFileKey(uploadFileId)
+    const fileKey = target.replaceOf ? contentKeyBytes(await getFileKeyForFile(file)) : await getFileKey(uploadFileId)
     const name = nameOverride ?? decryptedName
     const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
     const mimeType = EXT_MIME[ext] ?? 'application/octet-stream'
