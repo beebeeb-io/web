@@ -116,9 +116,13 @@ export async function loadRequestLookup(): Promise<Map<string, FileRequest>> {
  * `clear()` on lock/logout to zero them.
  */
 export interface RequestKeyResolver {
-  /** Recover the content key C for a request-uploaded file. */
+  /**
+   * Recover the content key C for a request-uploaded file. F6: this is the same
+   * gated reader as `resolveRow` — the download, zip, share-link, Recent,
+   * Starred, Quick Access and office-editor paths all come through here.
+   */
   resolveFileKey(
-    file: Pick<DriveFile, 'file_request_id' | 'sender_ephemeral_pubkey' | 'wrapped_content_key'>,
+    file: Pick<DriveFile, 'id' | 'name_encrypted' | 'file_request_id' | 'sender_ephemeral_pubkey' | 'wrapped_content_key'>,
     masterKey: Uint8Array,
   ): Promise<Uint8Array>
   /**
@@ -230,22 +234,20 @@ export function createRequestKeyResolver(): RequestKeyResolver {
     }
   }
 
-  return {
-    async resolveFileKey(file, masterKey) {
-      if (!isRequestUpload(file)) {
-        throw new Error('resolveFileKey called on a non-request file')
-      }
-      const rPriv = await privateFor(file.file_request_id!, masterKey)
-      const ePub = fromBase64(file.sender_ephemeral_pubkey!)
-      const wrappedKey = fromBase64(file.wrapped_content_key!)
-      return openRequestUpload(rPriv, ePub, wrappedKey)
-    },
-
-    async resolveRow(file, masterKey) {
-      if (!isRequestUpload(file)) {
-        throw new Error('resolveRow called on a non-request file')
-      }
-      const req = await requestFor(file.file_request_id!)
+  /**
+   * F6: the ONE gated reader for a request row. Every key path goes through it:
+   * core's bound resolver, then — only behind the owner-class id gate and the
+   * encrypted-name gate — the R5 legacy reader. A member's F row the server
+   * marks as a request row is refused here, never opened by an empty-id seal.
+   */
+  const resolveGatedRow = async (
+    file: Pick<DriveFile, 'id' | 'name_encrypted' | 'file_request_id' | 'sender_ephemeral_pubkey' | 'wrapped_content_key'>,
+    masterKey: Uint8Array,
+  ): Promise<ResolvedRowKeys> => {
+    if (!isRequestUpload(file)) {
+      throw new Error('resolveRow called on a non-request file')
+    }
+    const req = await requestFor(file.file_request_id!)
       try {
         const row = await resolveRequestRowWorker({
           masterKey,
@@ -281,7 +283,15 @@ export function createRequestKeyResolver(): RequestKeyResolver {
         if (!file.name_encrypted.startsWith('{')) throw err
         return legacyRowKeys(file, masterKey)
       }
+  }
+
+  return {
+    async resolveFileKey(file, masterKey) {
+      // F6: the content key comes from the same gated reader as the dual-key
+      // path; there is no unchecked empty-id opening.
+      return (await resolveGatedRow(file, masterKey)).contentKey
     },
+    resolveRow: resolveGatedRow,
 
     clear() {
       for (const k of rPrivCache.values()) zeroize(k)

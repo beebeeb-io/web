@@ -254,6 +254,16 @@ describe('A9c: a request row resolves its name key and its content key separatel
     await expect(createRequestKeyResolver().resolveRow(row, MASTER)).rejects.toThrow()
   })
 
+  test('a member F id the server marks as a request row is not opened by the download/zip path', async () => {
+    // F6: resolveFileKey is what download, zip, share links, Recent, Starred,
+    // Quick Access and the office editor use. It must pass the same owner-class
+    // gate as resolveRow: an empty-id seal opens for any row, so without the
+    // gate a member's F row would be decrypted and shown as the owner's.
+    const foreignId = (wasm.newForeignItemId(MASTER) as { idText: string }).idText
+    const row = { ...requestRow(NAME_UNDER_C), id: foreignId }
+    await expect(createRequestKeyResolver().resolveFileKey(row, MASTER)).rejects.toThrow()
+  })
+
   test('a plaintext name is refused', async () => {
     // A plaintext name authenticates nothing, so it never reaches the R5
     // reader: core refuses it and the encrypted-name gate refuses it too.
