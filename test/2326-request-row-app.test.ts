@@ -244,3 +244,48 @@ describe('§15 resolver: a pin-2 row renames with pin 2', () => {
     resolver.clear()
   })
 })
+
+/**
+ * 2326 review2 P3-2: a row's decrypt-only reader lives exactly as long as the
+ * resolver's cache entry. `sealRename` drops that entry, so it must free the
+ * reader first — otherwise the reader (and core's copy of the row key) outlives
+ * even `clear()`.
+ */
+describe('2326 review2 P3-2: a rename frees the cached row reader', () => {
+  test('sealRename closes the cached content before rows.delete', async () => {
+    const namePin2 = wasm.encrypt_name_for(CONTENT, 'clip.mp4', 'video/mp4', 2) as string
+    const fileRow = row(sealContent(EMPTY), namePin2)
+    const base = createLocalRequestRowEngine(wasm, async () => [requestRow()])
+    let closes = 0
+    const resolver = createRequestRowResolverWith({
+      ...base,
+      async resolve(args) {
+        const resolved = await base.resolve(args)
+        return {
+          ...resolved,
+          content: {
+            ...resolved.content,
+            close: async () => {
+              closes++
+              await resolved.content.close()
+            },
+          },
+        }
+      },
+    })
+
+    await resolver.resolveRow(fileRow, MASTER)
+    expect(closes).toBe(0)
+
+    await resolver.sealRename(fileRow, 'renamed.mp4', MASTER)
+    // The cached row is gone, and its reader with it.
+    expect(closes).toBe(1)
+
+    // A later read re-resolves the row and opens a fresh reader; clear() frees
+    // that one (the cache is the reader's lifetime).
+    await resolver.resolveRow(fileRow, MASTER)
+    expect(closes).toBe(1)
+    resolver.clear()
+    expect(closes).toBe(2)
+  })
+})

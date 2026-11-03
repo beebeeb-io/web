@@ -75,7 +75,14 @@ export interface RequestRowResolver {
   resolveRow(file: RequestFile, masterKey: Uint8Array): Promise<ResolvedRequestRow>
   /** L13/A9: the sealed new name; refuses a read-only (upper-repair) row. */
   sealRename(file: RequestFile, newName: string, masterKey: Uint8Array): Promise<string>
-  /** Drop the memoised request list, the resolved rows and their readers. */
+  /**
+   * Drop the memoised request list, the resolved rows and their readers.
+   *
+   * A resolved row's decrypt-only reader lives exactly as long as its cache
+   * entry: `clear()` frees every one (lock/logout), and `sealRename` frees the
+   * row it drops. Nothing else owns a reader, so a per-play lifetime means
+   * `clear()` at that boundary, not a second owner.
+   */
   clear(): void
 }
 
@@ -225,7 +232,11 @@ export function createRequestRowResolverWith(engine: RequestRowEngine): RequestR
         filename: newName,
         mimeType: row.mimeType,
       })
-      // The cached row's name is now stale; re-resolve on next read.
+      // The cached row's name is now stale; re-resolve on next read. Free its
+      // decrypt-only reader first: a reader's lifetime is the resolver cache
+      // entry that holds it (freed here, by `clear()` on lock/logout, and by
+      // any caller that wants a per-play lifetime), never the cache beyond.
+      await row.content.close()
       rows.delete(file.id)
       return sealed
     },
