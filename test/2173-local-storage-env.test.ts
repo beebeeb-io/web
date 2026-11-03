@@ -4,15 +4,19 @@ const script = 'e2e/scripts/direct-storage-env.sh'
 
 /**
  * The harness reads its settings from the environment, and accepts most of them
- * with a default. Running inside an e2e harness (or after any test that exports
- * one of these) must not change what this test proves, so every storage key is
- * dropped before the overrides are applied: the test is about the script's own
- * choices, not the machine's.
+ * with a default. The test is about the script's own choices, not the machine's,
+ * so the child gets ONLY the ambient keys the shell and python need and the
+ * overrides below — never a copy of `process.env`. That also drops `BASH_ENV`
+ * (and `ENV`), which a container may point at a file that exports its own
+ * storage settings into the sourced script.
  */
+const PASS_THROUGH = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL'] as const
+
 function harnessEnv(overrides: Record<string, string>): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env }
-  for (const key of Object.keys(env)) {
-    if (/^(BB_E2E_|E2E_MINIO_|BB_DIRECT_|S3_|VITE_DEV_STORAGE_PAIR$)/.test(key)) delete env[key]
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of PASS_THROUGH) {
+    const value = process.env[key]
+    if (value !== undefined) env[key] = value
   }
   return { ...env, ...overrides }
 }
