@@ -31,7 +31,7 @@ Modules 50–93, sorted by path.
 | `export-intent.ts` | Remembers a pending data-export intent across the checkout redirect. | — |
 | `file-colors.ts` | Badge color styles for file type indicators in the file list. | — |
 | `file-note.ts` | ─── File notes (core 1908 round 5, task 1943) ────────────────────────────── A note is stored in `files.note_encrypted` as the canonical Enc | — |
-| `file-request-crypto.ts` | ─── File-request owner decrypt path ──────────────────────────────────────── Files that arrive through a file request are NOT encrypted with | — |
+| `request-row.ts` / `request-row-resolver.ts` | §15 (2326): core's ONE resolver for a request row (both seals); decrypt-only content reader; renames only via `sealRequestRename`. | — |
 | `flags.ts` | Build-time feature flags (set via VITE_* env vars at build). | — |
 | `folder-bundle.ts` | Task 2238 — a folder "Share link" is an interim SNAPSHOT BUNDLE. | — |
 | `folder-colors.ts` | ─── Folder color labels ───────────────────────────────────────────────────── Colors are stored in localStorage per folder ID. | — |

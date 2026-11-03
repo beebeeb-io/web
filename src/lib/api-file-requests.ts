@@ -7,7 +7,7 @@ import { request, ApiError, getApiUrl } from '@beebeeb/shared'
 
 // Per-request sealed-keypair model (spec 2026-05-29-file-requests-design).
 // R_pub rides in the link fragment and is NEVER sent to the server; the server
-// stores only the wrapped private key (opaque). See `src/lib/file-request-crypto.ts`.
+// stores only the wrapped private key (opaque). See `src/lib/request-row.ts` (§15: core resolves the row).
 
 /** One of the owner's file requests, as returned by GET /api/v1/file-requests. */
 export interface FileRequest {

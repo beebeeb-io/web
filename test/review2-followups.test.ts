@@ -17,8 +17,16 @@ describe('review-2 follow-ups', () => {
     expect(src).toContain('Only you can open this until you share it.')
   })
 
-  test('the unused unchecked request-key opener is deleted', () => {
-    const src = read('../src/lib/file-request-crypto.ts')
-    expect(src).not.toContain('resolveRequestFileKey')
+  test('the local request-row reader is gone; core resolves the row', () => {
+    // §15 (2326): web holds no request-row reader and no content key. Every
+    // request row goes through core's resolver, and its content stays behind a
+    // decrypt-only reader.
+    const src = read('../src/lib/request-row.ts')
+    expect(src).toContain('resolveRequestRowWith')
+    expect(src).toContain('sealRequestRenameWith')
+    expect(src).not.toContain('openRequestUpload')
+    const resolver = read('../src/lib/request-row-resolver.ts')
+    expect(resolver).not.toContain('unwrapRequestPrivate')
+    expect(resolver).not.toContain('openRequestUpload')
   })
 })

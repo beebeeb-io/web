@@ -239,4 +239,5 @@ export function createRequestRowResolver(): RequestRowResolver {
   return createRequestRowResolverWith(workerEngine)
 }
 
+export { RENAME_KEY_UNAVAILABLE } from './request-row'
 export type { RequestContentSource, RequestSeal, RequestRenameTarget }

@@ -4,7 +4,7 @@
  *
  * Such a row (file_request_id / sender_ephemeral_pubkey / wrapped_content_key
  * set) is sealed under a RANDOM content key, not `deriveFileKey(master, id)`
- * (see src/lib/file-request-crypto.ts). Wrapping the derived key would publish
+ * (§15: core resolves the row; see src/lib/request-row.ts). Wrapping the derived key would publish
  * an item the recipient can never decrypt — the folder link would list it and
  * then fail on download. The fix has two halves, each pinned here:
  *

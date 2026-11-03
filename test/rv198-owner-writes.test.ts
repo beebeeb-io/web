@@ -278,24 +278,25 @@ describe("P2-4: renaming a guest's or member's row seals under ITS key or not at
     ).rejects.toThrow(RENAME_KEY_UNAVAILABLE)
   })
 
-  test('A9: a request row is renamed under the string-derived key, never under its content key', async () => {
-    // L13: a request row's content stays sealed under the request content key C
-    // (reached through the request keypair); only its NAME moves to the string
-    // convention derived from its id. getFileKeyForFile would return C, which
-    // would seal the name under C and mix the conventions.
+  test('A9: a request row has no key here — its rename goes only through sealRequestRename', async () => {
+    // §15 (2326 = A): core no longer hands web a request row's content key C,
+    // so no local "derived or C" choice exists. renameOwnerRow routes a request
+    // row to `sealRequestRename` (core derives the string convention) and never
+    // asks getFileKeyForFile for a key — asking here would be the C fallback.
     const requestRow = {
       id: MOVED_FILE, name_encrypted: 'NAME', acted_via_share_id: null, uploaded_by: null,
       file_request_id: 'req-1', sender_ephemeral_pubkey: 'ePub', wrapped_content_key: 'wrapped',
     } as never
-    const key = await renameKeyFor({
-      fileId: MOVED_FILE, file: requestRow, viewerId: VIEWER,
-      getFileKey: async () => new Uint8Array(derived),
-      getFileKeyForFile: async () => {
-        throw new Error('the request content key C is not used for the name')
-      },
-      readName: async () => undefined,
-    })
-    expect(Array.from(key)).toEqual(Array.from(derived))
+    await expect(
+      renameKeyFor({
+        fileId: MOVED_FILE, file: requestRow, viewerId: VIEWER,
+        getFileKey: async () => new Uint8Array(derived),
+        getFileKeyForFile: async () => {
+          throw new Error('the request content key C is not used for the name')
+        },
+        readName: async () => undefined,
+      }),
+    ).rejects.toThrow('the request content key C is not used for the name')
   })
 })
 
