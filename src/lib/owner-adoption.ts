@@ -599,9 +599,6 @@ export async function adoptForeignTreeBeforeMove(args: {
   items?: ReadonlyArray<{ id: string; is_folder: boolean }>
 }): Promise<{ adopted: number }> {
   const { masterKey, rootId, itemIds } = args
-  // L12 bound: a move that would adopt more than the cap is refused outright,
-  // before a single key is written.
-  if (itemIds.length > ADOPTION_MAX_ITEMS) throw new AdoptionTooLargeError(itemIds.length)
   const index = await keysUnderRoot(rootId)
   const kinds = new Map((args.items ?? []).map((item) => [item.id, item.is_folder]))
   const queue: { id: string; isFolder: boolean }[] = []
@@ -612,9 +609,16 @@ export async function adoptForeignTreeBeforeMove(args: {
     const isFolder = known ?? !!(await getFile(id).catch(() => null))?.is_folder
     queue.push({ id, isFolder })
   }
+
+  // Pass 1 — enumerate the tree and classify it. This pass writes nothing, so
+  // the cap is decided on the whole tree before the first adoption lands.
   const seen = new Set<string>()
-  const failed: string[] = []
-  let adopted = 0
+  const targets: {
+    id: string
+    isFolder: boolean
+    row: Awaited<ReturnType<typeof getFile>> | null
+  }[] = []
+  let foreign = 0
   while (queue.length) {
     const item = queue.shift()!
     if (seen.has(item.id)) continue
@@ -623,11 +627,12 @@ export async function adoptForeignTreeBeforeMove(args: {
       for (const child of await collectAllChildItems(item.id)) {
         queue.push({ id: child.id, isFolder: child.isFolder })
       }
-      if (seen.size + queue.length > ADOPTION_MAX_ITEMS) {
-        throw new AdoptionTooLargeError(seen.size + queue.length)
-      }
     }
     if (!(await itemIsForeign(item.id))) continue
+    // L12 bound: only F items count, and the count is complete before any
+    // write. A tree with more F items is refused whole.
+    foreign += 1
+    if (foreign > ADOPTION_MAX_ITEMS) throw new AdoptionTooLargeError(foreign)
     const row = await getFile(item.id).catch(() => null)
     if (row?.owner_wrapped_file_key) {
       const opened = await unwrapOwnerFileKey(masterKey, item.id, row.owner_wrapped_file_key)
@@ -636,6 +641,14 @@ export async function adoptForeignTreeBeforeMove(args: {
         continue
       }
     }
+    targets.push({ id: item.id, isFolder: item.isFolder, row })
+  }
+
+  // Pass 2 — every F item is known and under the cap, so adopt.
+  const failed: string[] = []
+  let adopted = 0
+  for (const item of targets) {
+    const { row } = item
     const wrapped = index.get(item.id)
     if (!wrapped) {
       failed.push(item.id)

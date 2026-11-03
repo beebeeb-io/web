@@ -81,10 +81,15 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
       wrapped_folder_key: null,
     }
   },
-  listFilesPage: async ({ parentId }: { parentId?: string | null }) => ({
-    files: [...files.values()].filter((row) => row.parent_id === parentId),
-    next_cursor: null,
-  }),
+  listFilesPage: async ({ parentId, limit, cursor }: { parentId?: string | null; limit?: number; cursor?: string }) => {
+    const rows = [...files.values()].filter((row) => row.parent_id === parentId)
+    const start = cursor ? Number(cursor) : 0
+    const size = limit ?? rows.length
+    return {
+      files: rows.slice(start, start + size),
+      next_cursor: start + size < rows.length ? String(start + size) : null,
+    }
+  },
   adoptOwnerFileKey: async (fileId: string, wrapped: string) => {
     adoptCalls.push({ fileId, wrapped })
     const row = files.get(fileId)
@@ -458,6 +463,35 @@ describe('A19: F descendants are adopted before a move out of the root (L12)', (
     await expect(
       adoptForeignTreeBeforeMove({ masterKey: MASTER, rootId: FOLDER_ID, itemIds: [file.id] }),
     ).rejects.toBeInstanceOf(MoveNeedsAdoptionError)
+  })
+
+  test('F13: the cap counts only F items and is checked before any adoption write', async () => {
+    seedCustody()
+    adoptResult = { adopted: true }
+    // The moved folder holds one F file and one owner folder whose own children
+    // are all owner items. Counting every item trips the cap mid-walk, after
+    // the F file was already adopted; only F items may count, and the check
+    // must happen before the first write.
+    const moved = { id: '33333333-3333-4333-8333-333333333333', parent_id: FOLDER_ID, is_folder: true }
+    const nested = { id: '44444444-4444-4444-8444-444444444444', parent_id: moved.id, is_folder: true }
+    files.set(moved.id, moved)
+    files.set(nested.id, nested)
+    const file = seedFile()
+    files.set(file.id, { id: file.id, parent_id: moved.id, name_encrypted: file.name_encrypted })
+    keyIndex.set(file.id, l7(file.id))
+    for (let i = 0; i < 10_001; i += 1) {
+      const id = `55555555-5555-4555-8555-${String(i).padStart(12, '0')}`
+      files.set(id, { id, parent_id: nested.id })
+    }
+    const { adoptForeignTreeBeforeMove } = await import('../src/lib/owner-adoption')
+    const res = await adoptForeignTreeBeforeMove({
+      masterKey: MASTER,
+      rootId: FOLDER_ID,
+      itemIds: [moved.id],
+      items: [{ id: moved.id, is_folder: true }],
+    })
+    expect(res.adopted).toBe(1)
+    expect(adoptCalls.map((c) => c.fileId)).toEqual([file.id])
   })
 
   test('more than 10,000 F items refuses the move before adopting anything', async () => {
