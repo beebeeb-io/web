@@ -57,7 +57,7 @@ import { sharedFoldersEnabledForWrite, useFeatureFlag } from '../lib/use-feature
 import { FOLDER_NEEDS_UPGRADE } from '../lib/folder-upgrade'
 import { FolderSharePanel } from './folder-share/folder-share-panel'
 import { FolderSnapshotNotes } from './share/folder-snapshot-notes'
-import { shareFileKey, FileCannotBeSharedError } from '../lib/share-file-key'
+import { assertShareableRow, shareFileKey, FileCannotBeSharedError } from '../lib/share-file-key'
 import { folderSkipReason } from '../lib/share-missing-items'
 import { EXPIRY_OPTIONS, MAX_OPENS_OPTIONS } from '../lib/share-options'
 
@@ -317,7 +317,11 @@ function InviteForm({
           zeroize(folderKey)
         }
       } else {
-        // Single file sharing flow
+        // Single file sharing flow. 2326 review2 P3-3: a request row has no key
+        // a recipient could ever open, so refuse with the L15 copy BEFORE an
+        // invite exists (the key lookup below only runs for a claimed invite,
+        // and its refusal used to be swallowed by the approval catch).
+        assertShareableRow(file)
         const result = await createInvite(fileId, recipientEmail)
 
         if (result.recipient_public_key && result.status === 'claimed') {
@@ -353,7 +357,7 @@ function InviteForm({
       if (rateLimit) {
         setRateLimitInfo(rateLimit)
       } else {
-        setError(userFriendlyError(e))
+        setError(e instanceof FileCannotBeSharedError ? e.message : userFriendlyError(e))
       }
     } finally {
       setLoading(false)

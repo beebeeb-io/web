@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { readFileSync } from 'node:fs'
 import type { DriveFile } from '@beebeeb/shared'
 import { collectFolderBundle } from '../src/lib/folder-bundle'
-import { FileCannotBeSharedError, shareFileKey } from '../src/lib/share-file-key'
+import { assertShareableRow, FileCannotBeSharedError, shareFileKey } from '../src/lib/share-file-key'
 import { cannotShareReason, folderSkipReason } from '../src/lib/share-missing-items'
 
 const REQUEST_COPY = "can't be shared (received through a file request)"
@@ -168,5 +168,44 @@ describe('2326 P2-2: a request row is skipped, never fatal', () => {
     const notes = read('../src/components/share/folder-snapshot-notes.tsx')
     expect(notes).toContain('data-testid="folder-skipped"')
     expect(notes).toContain('skip.reason')
+  })
+})
+
+/**
+ * 2326 review2 P3-3: the email invite path created the invite FIRST and only
+ * then asked for the key, so a request row's FileCannotBeSharedError was
+ * swallowed by the "approval failed" catch and the sender was told the invite
+ * went out. A request row is refused with the L15 copy before any invite is
+ * minted.
+ */
+describe('2326 review2 P3-3: an invite for a request row is refused before createInvite', () => {
+  const read = (rel: string) =>
+    readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
+
+  test('assertShareableRow refuses a request row with the L15 copy', () => {
+    const err = (() => {
+      try {
+        assertShareableRow(requestRow('request-1'))
+        return null
+      } catch (e) {
+        return e
+      }
+    })()
+    expect(err).toBeInstanceOf(FileCannotBeSharedError)
+    expect((err as Error).message).toBe(REQUEST_COPY)
+    // An ordinary row and the row-less (forwarded share) path still invite.
+    expect(() => assertShareableRow(plainRow('plain-1'))).not.toThrow()
+    expect(() => assertShareableRow(undefined)).not.toThrow()
+  })
+
+  test('the dialog checks the row BEFORE it creates the invite', () => {
+    const dialog = read('../src/components/share-dialog.tsx')
+    const guard = dialog.indexOf('assertShareableRow(file)')
+    const invite = dialog.indexOf('await createInvite(fileId, recipientEmail)')
+    expect(guard).toBeGreaterThan(0)
+    expect(invite).toBeGreaterThan(0)
+    expect(guard).toBeLessThan(invite)
+    // The refusal must reach the sender as the L15 sentence, not "approval failed".
+    expect(dialog).toContain('e instanceof FileCannotBeSharedError ? e.message : userFriendlyError(e)')
   })
 })

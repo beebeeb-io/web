@@ -29,6 +29,18 @@ export class FileCannotBeSharedError extends Error {
   }
 }
 
+/**
+ * Refuse a row that cannot be shared at all (L15): a row received through a
+ * file request has no key to wrap. Callers check this BEFORE minting anything
+ * (2326 review2 P3-3: an invite minted first is a silent false success). A
+ * row-less share (the Shared page forwarding someone else's file) passes.
+ */
+export function assertShareableRow(file: DriveFile | undefined): void {
+  if (file && isRequestUpload(file)) {
+    throw new FileCannotBeSharedError(cannotShareReason('request_row')!)
+  }
+}
+
 export async function shareFileKey(
   fileId: string,
   deps: {
@@ -38,9 +50,7 @@ export async function shareFileKey(
   },
 ): Promise<Uint8Array> {
   if (deps.file && deps.file.id === fileId) {
-    if (isRequestUpload(deps.file)) {
-      throw new FileCannotBeSharedError(cannotShareReason('request_row')!)
-    }
+    assertShareableRow(deps.file)
     return contentKeyBytes(await deps.getFileKeyForFile(deps.file))
   }
   return deps.getFileKey(fileId)
