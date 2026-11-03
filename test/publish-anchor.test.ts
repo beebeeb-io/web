@@ -105,6 +105,36 @@ describe('anchored publishes (L15/§14)', () => {
     expect(canPublishAnchored(ELSEWHERE, ROOT)).toBe(true)
   })
 
+  test('84a3127a: an ancestor click mid-navigation starts a new path, not a truncation', () => {
+    // The user clicked R then D, then clicked E while the URL still showed D:
+    // the navigation is in flight and the path is [R, D, E].
+    noteFolderClick(ROOT)
+    noteUrlFolder(ROOT)
+    noteFolderClick(FOLDER)
+    noteUrlFolder(FOLDER)
+    noteFolderClick(ELSEWHERE)
+    // Clicking the ancestor D now is not a breadcrumb back to a folder the
+    // path still leads to: it starts a NEW path at D, with no R behind it.
+    noteFolderClick(FOLDER)
+    expect(canPublishAnchored(FOLDER, ROOT)).toBe(false)
+    expect(canPublishAnchored(ELSEWHERE, ROOT)).toBe(false)
+  })
+
+  test('review-3 F3(i): a URL-reached folder starts a new path; an earlier R->D cannot revive', () => {
+    // The user clicked R then D: the path is [R, D] and D is anchored.
+    noteFolderClick(ROOT)
+    noteFolderClick(FOLDER)
+    noteUrlFolder(FOLDER)
+    expect(canPublishAnchored(FOLDER, ROOT)).toBe(true)
+    // They leave by URL only (a deep link, Back/forward): no click in this tab.
+    // Clicking D now is not a breadcrumb back to a folder the path reached —
+    // the attempt starts a NEW path at D, with no R behind it.
+    noteUrlFolder(ELSEWHERE)
+    noteFolderClick(FOLDER)
+    noteUrlFolder(FOLDER)
+    expect(canPublishAnchored(FOLDER, ROOT)).toBe(false)
+  })
+
   test('A15/A16: a create for a server-reported parent never anchors by itself', () => {
     // A remote move or an existing-row save names the root as its parent, but
     // this tab never clicked it, so there is no anchor.
