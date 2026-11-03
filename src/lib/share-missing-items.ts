@@ -54,7 +54,7 @@ export interface ShareCandidatesResult {
 }
 
 /** Origins whose key the resolver proved against the row's own name. */
-const PROVEN_ORIGINS: ReadonlySet<KeyOrigin> = new Set(['derived', 'owner_wrap', 'folder_wrap'])
+const PROVEN_ORIGINS: ReadonlySet<KeyOrigin> = new Set(['derived', 'derived_binary', 'owner_wrap', 'folder_wrap'])
 
 const EMPTY_NAME = '(no name)'
 const PLAINTEXT_REASON = "can't be shared"

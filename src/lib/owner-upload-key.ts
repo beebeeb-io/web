@@ -404,7 +404,7 @@ async function destinationProven(
 }
 
 /** Origins whose key the resolver proved against the row's own name. */
-const PROVEN_ORIGINS: ReadonlySet<KeyOrigin> = new Set(['derived', 'owner_wrap', 'folder_wrap'])
+const PROVEN_ORIGINS: ReadonlySet<KeyOrigin> = new Set(['derived', 'derived_binary', 'owner_wrap', 'folder_wrap'])
 
 async function publishMovedItems(args: {
   masterKey: Uint8Array
