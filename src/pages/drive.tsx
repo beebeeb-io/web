@@ -47,6 +47,7 @@ import {useWsEvent} from '../lib/ws-context'
 import {useSelfHealRefetch} from '../hooks/use-self-heal-refetch'
 import {useSync} from '../lib/sync-context'
 import {useKeys} from '../lib/key-context'
+import {noteDriveUrlFolder} from '../lib/drive-anchors'
 import {useKeyboardShortcuts} from '../hooks/use-keyboard-shortcuts'
 import {useFrozen} from '../hooks/use-frozen'
 import {useAuth} from '../lib/auth-context'
@@ -428,6 +429,11 @@ export function Drive() {
     if (!isUnlocked) return
     const params = new URLSearchParams(location.search)
     const folderId = params.get('folder')
+    // L15 (b)3: this effect renders what the URL says (a deep link, ?folder=, a
+    // reload, Back/forward, the Quick Access jump). It NEVER anchors — it only
+    // tells the trail where the URL is, so a navigation still in flight blocks
+    // a publish until the user clicks again.
+    noteDriveUrlFolder(folderId)
 
     // Palette/recent file results deep-link as ?folder=<parent>&highlight=<id>
     // (command-palette.tsx). Selecting the file opens the detail panel; for a

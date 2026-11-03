@@ -15,7 +15,13 @@ import { fromBase64, zeroize } from './crypto'
 import { ownedItem, type KeyOrigin } from './owned-item'
 import { sharedFoldersEnabled } from './use-feature-flag'
 import { withNetworkRetry } from './net-retry'
-import { canPublishAnchored, deferPublish, localStorageQueue } from './publish-anchor'
+import {
+  canPublishAnchored,
+  deferPublish,
+  dropDeferredForItems,
+  localStorageQueue,
+  readDeferredPublishes,
+} from './publish-anchor'
 
 /**
  * Publish the wrap of an item the owner just added under its shared root: a
@@ -193,6 +199,11 @@ export async function moveOwnerItems(args: {
   // FIRST, and a failed adoption refuses the move entirely (before any update).
   if (args.masterKey) await adoptBeforeLeavingRoot(args)
   await Promise.all(args.ids.map((id) => updateFile(id, { parent_id: args.destinationId })))
+  // L15: a deferred publish belongs to a site, and an item the owner just moved
+  // on this client is not that site any more. Drop it here, for every move
+  // caller, before any publish decision below.
+  const queue = localStorageQueue()
+  if (queue) dropDeferredForItems(queue, args.ids)
   if (!args.destinationId || !args.masterKey) return
   try {
     await publishMovedItems({
@@ -276,6 +287,64 @@ export async function publishOrDeferOwnerUpload(args: {
   } finally {
     zeroize(folderKey)
   }
+}
+
+/**
+ * L15 (b) / A14: send the wraps that were deferred, for every row whose pinned
+ * (parent, root) the tab's trail now anchors. Runs from the drive's own wiring
+ * (src/lib/drive-anchors.ts) after a folder click lands.
+ *
+ * At fire time the three checks are re-run: the destination must still walk to
+ * the PINNED root, still hold an L7 format, and still prove by L14. The key is
+ * re-resolved through core (the queue stores ids only). A row whose item is
+ * gone is dropped; any other failure keeps the deferral for a later site.
+ */
+export async function flushDeferredOwnerPublishes(masterKey: Uint8Array): Promise<number> {
+  const store = localStorageQueue()
+  if (!store) return 0
+  if (!(await sharedFoldersEnabled())) return 0
+  const rows = readDeferredPublishes(store)
+  if (rows.length === 0) return 0
+  const done: string[] = []
+  for (const row of rows) {
+    if (!canPublishAnchored(row.parentId, row.rootId)) continue
+    try {
+      const root = await sharedRootFor(row.parentId, row.parentId)
+      if (root !== row.rootId) continue
+      if ((await folderWrapFormat(root, row.parentId)) !== 'l7') continue
+      const folderKey = await folderKeyForRoot(masterKey, root)
+      if (!folderKey) continue
+      let proven = false
+      try {
+        proven = await destinationProven(masterKey, row.parentId, root, folderKey)
+      } finally {
+        zeroize(folderKey)
+      }
+      if (!proven) continue
+      const file = await getFile(row.id).catch(() => null)
+      if (!file) {
+        done.push(row.id)
+        continue
+      }
+      const resolved = await ownedItem.resolve({
+        masterKey,
+        itemId: row.id,
+        kind: file.is_folder ? 2 : 1,
+        nameEncrypted: file.name_encrypted,
+      })
+      try {
+        await publishOwnerUploadKey(masterKey, row.parentId, row.id, resolved.key, !!file.is_folder)
+      } finally {
+        zeroize(resolved.key)
+        if (resolved.contentKey) zeroize(resolved.contentKey)
+      }
+      done.push(row.id)
+    } catch (e) {
+      console.error('[flush debug]', String(e))
+    }
+  }
+  if (done.length > 0) dropDeferredForItems(store, done)
+  return done.length
 }
 
 /** Pin a deferral for (item, parent, root); 7 days, dropped with the item. */

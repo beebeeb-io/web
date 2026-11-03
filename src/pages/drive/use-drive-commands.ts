@@ -24,6 +24,8 @@ import { isBackupsRoot as isBackupsRootPure } from '../../lib/backups-root'
 import { decryptFileMetadata, encryptFileMetadata, serializeEncryptedBlob } from '../../lib/crypto'
 import { encryptedUpload } from '../../lib/encrypted-upload'
 import { deleteFile, getSharesForFile, listAllFiles, listVersions, toggleStar } from '../../lib/api'
+import { noteDriveFolderClick, publishDeferredOnAnchoredSite } from '../../lib/drive-anchors'
+import { dropDeferredForItems, localStorageQueue } from '../../lib/publish-anchor'
 
 export interface DriveCommandsParams {
   keys: ReturnType<typeof useKeys>
@@ -339,6 +341,9 @@ export function useDriveCommands(params: DriveCommandsParams) {
     setTimeout(async () => {
       try {
         await deleteFile(file.id)
+        // L15: a trashed item loses its deferred publish on this client.
+        const queue = localStorageQueue()
+        if (queue) dropDeferredForItems(queue, [file.id])
         showToast({ icon: 'trash', title: 'Moved to trash', description: trashName })
         unindexFile(file.id)
         // A trashed folder must not linger in Quick Access (task 0837).
@@ -363,6 +368,13 @@ export function useDriveCommands(params: DriveCommandsParams) {
     // treats this as already-resolved and keeps the optimistic breadcrumb below
     // instead of re-walking the chain.
     lastResolvedFolderRef.current = folder.id
+    // L15 (b)3: this is the user's own click in this tab — the one thing that
+    // anchors a shared root, so a create here may publish (and anything
+    // deferred for a site now anchored is sent).
+    noteDriveFolderClick(folder.id)
+    if (isUnlocked && cryptoReady) {
+      publishDeferredOnAnchoredSite(getMasterKey()).catch(() => {})
+    }
     setBreadcrumbs((prev) =>
       prev[prev.length - 1]?.id === folder.id
         ? prev
@@ -375,6 +387,13 @@ export function useDriveCommands(params: DriveCommandsParams) {
     const next = breadcrumbs.slice(0, index + 1)
     const target = next[next.length - 1]
     lastResolvedFolderRef.current = target.id
+    // A breadcrumb is a click by the user in this tab, like the folder row.
+    if (target.id) {
+      noteDriveFolderClick(target.id)
+      if (isUnlocked && cryptoReady) {
+        publishDeferredOnAnchoredSite(getMasterKey()).catch(() => {})
+      }
+    }
     setBreadcrumbs(next)
     navigate(target.id ? `/?folder=${target.id}` : '/')
   }

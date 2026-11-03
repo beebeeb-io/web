@@ -4,6 +4,7 @@ import type { DriveFile } from '../../lib/api'
 import type { BackupsDeleteRequest } from './drive-creation-overlays'
 import { decryptFileMetadata, readFileMetadata } from '../../lib/crypto'
 import { moveOwnerItems } from '../../lib/owner-upload-key'
+import { dropDeferredForItems, localStorageQueue, navigationSettled } from '../../lib/publish-anchor'
 import { renameOwnerRow } from '../../lib/owner-rename'
 import { bulkTrashFiles, getFile } from '../../lib/api'
 import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../../lib/bulk-download'
@@ -244,6 +245,9 @@ export function useDriveActions(params: DriveActionsParams) {
   // ─── Drop to folder handler ────────────────────────
 
   async function handleDropToFolder(ids: string[], targetFolder: DriveFile, knownFolderName?: string) {
+    // L15 (b)3: drops are disabled while a navigation is in flight — the site
+    // the user dropped onto is not settled, so nothing may be anchored from it.
+    if (!navigationSettled()) return
     // Use the pre-decrypted name from the event if available (covers pinned
     // folders that may not be in the current `files` list / decryptedNames map).
     const targetName = knownFolderName || displayName(targetFolder) || 'folder'
@@ -312,6 +316,9 @@ export function useDriveActions(params: DriveActionsParams) {
       setTimeout(async () => {
         try {
           await bulkTrashFiles(ids)
+          // L15: trashed items lose their deferred publish on this client.
+          const queue = localStorageQueue()
+          if (queue) dropDeferredForItems(queue, ids)
           for (const id of ids) unindexFile(id)
           // Drop any trashed folders from Quick Access (no-op for unpinned ids).
           unpinFolders(ids)
