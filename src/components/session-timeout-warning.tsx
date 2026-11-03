@@ -1,3 +1,4 @@
+// The countdown warning shown before an idle session expires.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'

@@ -1,3 +1,4 @@
+// Loads and tracks the onboarding document that drives the signup flow.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchOnboardingDocument, type FetchOutcome } from './client'
 

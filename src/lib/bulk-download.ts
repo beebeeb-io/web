@@ -22,6 +22,8 @@ import { Zip, ZipPassThrough, ZipDeflate, strToU8 } from 'fflate'
 import { decryptToBlob } from './encrypted-download'
 import { listFiles, type DriveFile } from './api'
 import { decryptFileMetadata } from './crypto'
+import { ensureArchiveNameWasm, safeArchiveName } from './archive-name'
+import { contentKeyBytes, type ContentKey } from './request-row'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -52,10 +54,10 @@ export interface BulkDownloadOptions {
  */
 export interface BulkDownloadPorts {
   listChildren(folderId: string): Promise<DriveFile[]>
-  getFileKey(file: DriveFile): Promise<Uint8Array>
+  getFileKey(file: DriveFile): Promise<ContentKey>
   decryptToBlob(
     file: DriveFile,
-    fileKey: Uint8Array,
+    fileKey: ContentKey,
   ): Promise<{ plaintext: Blob; filename: string }>
 }
 
@@ -88,6 +90,9 @@ async function expandToFiles(
   prefix = '',
   onListError?: (prefix: string, err: unknown) => void,
 ): Promise<QueueEntry[]> {
+  // Names are rewritten by core's path-safety rule, which needs the module in
+  // memory before the first folder name is turned into a path.
+  await ensureArchiveNameWasm()
   const queue: QueueEntry[] = []
 
   for (const item of items) {
@@ -100,15 +105,16 @@ async function expandToFiles(
     // but ports.getFileKey handles that branch transparently).
     let folderName = `folder-${item.id.slice(0, 8)}`
     try {
-      const key = await ports.getFileKey(item)
+      const key = contentKeyBytes(await ports.getFileKey(item))
       const { name } = await decryptFileMetadata(key, item.name_encrypted)
       folderName = name
     } catch {
       // Use fallback name — continue rather than failing the whole zip
     }
 
-    // Sanitise for zip path (no slashes inside segment names)
-    const safeName = folderName.replace(/[/\\]/g, '_')
+    // One segment per folder: core's archive rule, with the id-based name as
+    // the fallback when the decrypted name is structurally unsafe.
+    const safeName = safeArchiveName(folderName, `folder-${item.id.slice(0, 8)}`)
     const childPrefix = `${prefix}${safeName}/`
 
     let children: DriveFile[] = []
@@ -384,6 +390,9 @@ export async function packageZip(
     return { errorCount: 0, sizeWarning: false }
   }
 
+  // Every entry name below goes through core's archive rule.
+  await ensureArchiveNameWasm()
+
   const sizeWarning = totalEstimatedBytes > ZIP_SIZE_WARNING_BYTES
 
   // ── Choose sink: SW streaming preferred, Blob fallback otherwise ─────────
@@ -602,11 +611,23 @@ export async function packageZip(
 
 /** The owner drive's sources: the vault's own list and decrypt routes. */
 export function ownerDownloadPorts(
-  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>,
+  getFileKeyForFile: (file: DriveFile) => Promise<ContentKey>,
+  masterKey?: Uint8Array,
 ): BulkDownloadPorts {
+  if (!masterKey) return { ...OWNER_DOWNLOAD_PORTS, getFileKey: getFileKeyForFile }
   return {
     ...OWNER_DOWNLOAD_PORTS,
     getFileKey: getFileKeyForFile,
+    decryptToBlob: (file, fileKey) =>
+      decryptToBlob(
+        file.id,
+        fileKey,
+        file.name_encrypted,
+        file.mime_type ?? undefined,
+        file.chunk_count,
+        file.size_bytes,
+        { masterKey },
+      ),
   }
 }
 
@@ -649,7 +670,10 @@ export async function downloadAsZipWith(
 
   return packageZip(
     entries.map(({ file, prefix }) => ({
-      pathFor: (filename: string) => `${prefix}${filename}`,
+      // The resolved name is one component of the path; a refused name keeps
+      // its own last segment or the file's id name, never a `..` entry.
+      pathFor: (filename: string) =>
+        `${prefix}${safeArchiveName(filename, `file-${file.id.slice(0, 8)}`)}`,
       fallbackName: `file-${file.id.slice(0, 8)}`,
       load: async () => {
         const key = await ports.getFileKey(file)
@@ -675,8 +699,9 @@ export async function downloadAsZipWith(
  */
 export async function downloadAsZip(
   items: DriveFile[],
-  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>,
+  getFileKeyForFile: (file: DriveFile) => Promise<ContentKey>,
   options: BulkDownloadOptions = {},
+  masterKey?: Uint8Array,
 ): Promise<BulkDownloadResult> {
-  return downloadAsZipWith(ownerDownloadPorts(getFileKeyForFile), items, options)
+  return downloadAsZipWith(ownerDownloadPorts(getFileKeyForFile, masterKey), items, options)
 }

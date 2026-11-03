@@ -125,7 +125,7 @@ describe('item 4: a live region that exists before its text changes', () => {
 })
 
 describe('item 4: markup rules on the held card (source pins)', () => {
-  const src = fs.readFileSync(`${import.meta.dir}/../src/pages/billing.tsx`, 'utf8')
+  const src = fs.readFileSync(`${import.meta.dir}/../src/pages/billing/BillingNotices.tsx`, 'utf8')
   const card = src.slice(src.indexOf('data-testid="billing-trial-confirm"') - 200, src.indexOf('data-testid="billing-trial-confirm"') + 200)
   test('the held card Cancel button has type="button"', () => {
     const i = src.indexOf('data-testid="billing-trial-cancel"')

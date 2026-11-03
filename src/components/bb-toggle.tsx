@@ -1,3 +1,4 @@
+// The web switch primitive used by settings toggles.
 interface BBToggleProps {
   on?: boolean
   onChange?: (on: boolean) => void

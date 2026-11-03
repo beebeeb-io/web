@@ -21,6 +21,7 @@ import type * as Wasm from 'beebeeb-wasm'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import type { UploadState } from '../src/lib/upload-resume'
+import { ServerChangedItemIdError, assertEchoedItemId } from '../src/lib/item-id-echo'
 
 const wasm = loadWasm()
 const MK = new Uint8Array(32).fill(5)
@@ -74,7 +75,6 @@ function coreBackedEncryptor() {
 }
 
 await mockModuleScoped('../src/lib/crypto', import.meta.dir, {
-  CHUNK_SIZE: 4,
   planChunks: async () => ({ chunk_size_bytes: 4, chunk_count: 1 }),
   startEncryptedStream: async () => coreBackedEncryptor(),
   startEncryptedStreamWithChunkSize: async () => coreBackedEncryptor(),
@@ -101,6 +101,9 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
     }
     current = { session: 'fresh-session', live: true }
     const fileId = remapTo ?? metadata.file_id
+    // L13: the real initUpload (api.ts) checks the answer against the id it
+    // proposed; this mock answers like the server and checks like the primitive.
+    assertEchoedItemId(metadata.file_id, fileId)
     return {
       protocol: 'v2', file_id: fileId, tenant_id: 't', object_version_id: 'ov-fresh',
       upload_session_id: 'fresh-session', chunk_size_bytes: 4, chunk_count: 1,
@@ -150,6 +153,9 @@ function staleRecord(): UploadState {
     fingerprint: 'fp', fileId: FILE_ID, fileName: 'report.bin', fileSize: 4, totalChunks: 1,
     upload_session_id: 'old-session', object_version_id: 'ov-old', chunk_size_bytes: 4, chunk_count: 1,
     region: 'Europe', parentId: null, createdAt: 1,
+    // L13 (SF-0001): a record THIS client wrote (marked), so these tests are
+    // about core's resume rule; an unmarked record restarts (l13-r2.test.ts E3).
+    selfMinted: true,
   }
 }
 
@@ -165,7 +171,7 @@ beforeEach(() => {
 function upload(fileKey = new Uint8Array(32).fill(3)) {
   return encryptedUpload(
     new File([new Uint8Array([1, 2, 3, 4])], 'report.bin'),
-    FILE_ID, fileKey, MK, undefined, undefined, FILE_ID, undefined, undefined, async () => fileKey,
+    FILE_ID, fileKey, MK, undefined, undefined, FILE_ID, undefined, undefined,
   )
 }
 
@@ -216,10 +222,11 @@ describe('the old resume record is kept until a fresh session exists (Codex P2)'
     expect(idb.size).toBe(0)
   })
 
-  test('a fresh init answered under another id drops the old id’s record once the new one is written', async () => {
+  test('L13: a fresh init answered under another id aborts; the old record survives untouched', async () => {
     remapTo = NEW_ID
-    await upload()
-    expect(cap.idbAtPut).toEqual([{ [NEW_ID]: 'fresh-session' }])
-    expect(idb.size).toBe(0)
+    await expect(upload()).rejects.toBeInstanceOf(ServerChangedItemIdError)
+    expect(cap.idbAtPut).toEqual([])
+    expect(idb.get(FILE_ID)).toEqual(staleRecord())
+    expect(cap.puts).toEqual([])
   })
 })

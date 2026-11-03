@@ -1,3 +1,4 @@
+// The preview fixture matrix and outcome classifier used by preview E2E specs.
 import { type Page, type Locator } from '@playwright/test'
 import path from 'path'
 import { scrollUntilRowAttached } from './thumb-fixtures'

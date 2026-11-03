@@ -1,3 +1,4 @@
+// Design-sync preview of PhotoGroupSkeleton for the Claude Design project.
 import { PhotoGroupSkeleton } from '@beebeeb/shared'
 
 export const Group = () => (

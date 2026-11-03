@@ -1,3 +1,4 @@
+// The blocking onboarding screens: update required, unsupported schema, unavailable.
 import { useState } from 'react'
 import { BBButton, Icon } from '@beebeeb/shared'
 import type { Fallback } from '../../lib/onboarding/types'

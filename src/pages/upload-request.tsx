@@ -178,7 +178,7 @@ export function UploadRequestPage() {
         // 2. Encrypt the filename + MIME as canonical metadata under C.
         const metadataPlain = JSON.stringify({ name: file.name, mime_type: file.type || null })
         const encName = await encryptFilename(contentKey, metadataPlain)
-        const nameEncrypted = serializeEncryptedBlob(encName.nonce, encName.ciphertext)
+        const nameEncrypted = await serializeEncryptedBlob(encName.nonce, encName.ciphertext)
 
         // 3. Plan + encrypt chunks under C (nonce ‖ ciphertext per chunk).
         let plan: { chunk_size_bytes: number; chunk_count: number }

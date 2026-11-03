@@ -17,6 +17,8 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - run: bun install
       - run: bunx tsc --noEmit
+      - name: Generated wire types match the vendored OpenAPI document
+        run: ./scripts/openapi-types.sh --check
       - run: bun test # unit tests (test/, scoped via bunfig.toml) — 0740b: was never in CI
       - run: bun run test:order # 1590: reversed + shuffled (seed in the log) + each file alone, and no raw mock.module
       - run: bun run build

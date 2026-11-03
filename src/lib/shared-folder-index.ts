@@ -23,6 +23,11 @@ import {
 } from './crypto'
 import type { IndexTransport, ShardCoord, ShardRef } from './shared-folder-index-shards'
 import { IndexVersionConflictError } from './shared-folder-index-shards'
+import {
+  filterIndexRowsForSharing,
+  type IndexCandidateRow,
+  type IndexRowSkipCounts,
+} from './shared-index-writer'
 
 export const SEARCH_INDEX_MAX_ENTRIES = 20_000
 
@@ -41,13 +46,37 @@ export interface IndexFileEntry {
 export class SharedSearchIndex {
   readonly numShards: number
   #proxy: SearchIndexProxy
+  #l14Entries: readonly IndexFileEntry[] | null
 
-  constructor(proxy: SearchIndexProxy, numShards: number) {
+  /**
+   * `l14Entries` is the proof that every entry came through the L14 filter
+   * (`filterIndexRowsForSharing`): only `assembleVerifiedSharedIndex` passes
+   * it. An index loaded from the server's shards carries no proof, so it can
+   * be searched but never written.
+   */
+  constructor(proxy: SearchIndexProxy, numShards: number, l14Entries: readonly IndexFileEntry[] | null = null) {
     this.#proxy = proxy
     this.numShards = numShards
+    this.#l14Entries = l14Entries
   }
 
+  /** The L14-verified entries behind this index, or null when unproven. */
+  get l14Entries(): readonly IndexFileEntry[] | null {
+    return this.#l14Entries
+  }
+
+  /**
+   * Add or update an entry. Writes carry the same L14 duty as a push: an index
+   * with no proof refuses every upsert, and a proven index accepts only an
+   * entry the filter itself produced (same id and same name). A caller that
+   * needs a new name rebuilds from the listing instead of upserting it in.
+   */
   async upsert(fileId: string, name: string): Promise<number[]> {
+    const proof = this.#l14Entries
+    if (!proof) throw new UnverifiedSharedIndexError()
+    if (!proof.some((entry) => entry.fileId === fileId && entry.name === name)) {
+      throw new UnverifiedSharedIndexError()
+    }
     return this.#proxy.upsert(fileId, name)
   }
 
@@ -149,6 +178,8 @@ export async function loadSharedIndex(
         : await createSharedSearchIndex([], numShards)
   }
 
+  // No `l14Entries` proof: these pages came from the server, not from this
+  // client's L14 filter, so the index may be searched but not pushed.
   const index = new SharedSearchIndex(proxy, numShards)
   const fileCount = await index.fileCount()
   return {
@@ -160,9 +191,24 @@ export async function loadSharedIndex(
   }
 }
 
+/** A write refused because its index, or the entry, has no L14 proof. */
+export class UnverifiedSharedIndexError extends Error {
+  constructor() {
+    super('shared index writes require entries built by the L14 filter (rebuildSharedIndexFromListing)')
+    this.name = 'UnverifiedSharedIndexError'
+  }
+}
+
+/** The only index shape a push accepts: one carrying its L14 proof. */
+type PushableIndex = Pick<SharedSearchIndex, 'encryptBuckets' | 'encryptAll' | 'l14Entries'>
+
+function assertL14Verified(index: PushableIndex): void {
+  if (!index.l14Entries) throw new UnverifiedSharedIndexError()
+}
+
 export interface PushSharedIndexDeltaArgs {
   transport: IndexTransport
-  index: Pick<SharedSearchIndex, 'encryptBuckets'>
+  index: PushableIndex
   folderKey: Uint8Array
   dirtyBuckets: number[]
 }
@@ -171,10 +217,16 @@ export interface PushSharedIndexDeltaArgs {
  * Encrypt and PUT the dirty buckets. A 409 re-reads the server's current
  * version and retries (at most `INDEX_CONFLICT_RETRIES` attempts per page);
  * a bucket that never lands is returned in `dirtyBuckets`.
+ *
+ * L14/T5.6: an index built through `rebuildSharedIndexFromListing` (its filter
+ * is the only way an entry enters a written index) carries its proof; a push
+ * of any other index — notably one loaded from the server, whose pages this
+ * client never verified — throws `UnverifiedSharedIndexError`.
  */
 export async function pushSharedIndexDelta(
   args: PushSharedIndexDeltaArgs,
 ): Promise<{ written: number; conflicts: number; dirtyBuckets: number[] }> {
+  assertL14Verified(args.index)
   const versions = new Map<string, number>()
   const failed = new Set<number>()
   let written = 0
@@ -211,32 +263,67 @@ export async function pushSharedIndexDelta(
 }
 
 export interface RebuildSharedIndexArgs {
-  entries: IndexFileEntry[]
+  /** The listing rows to consider; the L14 filter decides which are indexed. */
+  rows: readonly IndexCandidateRow[]
+  rootId: string
+  folderKey: Uint8Array
+  masterKey: Uint8Array
+  /** R's inventory wraps (item id -> L7 wrap). */
+  wraps: ReadonlyMap<string, Uint8Array>
   numShards?: number
 }
 
+export interface RebuildSharedIndexResult {
+  index: SharedSearchIndex
+  truncated: boolean
+  fileCount: number
+  /** What the L14 filter dropped, by reason. */
+  skipped: IndexRowSkipCounts
+  /** The verified entries that were indexed. */
+  entries: IndexFileEntry[]
+}
+
 /**
- * Build a fresh index from decrypted listing entries. Entries past
- * `SEARCH_INDEX_MAX_ENTRIES` are dropped and reported as `truncated`, so a
- * hostile or enormous listing can never grow the index without bound.
+ * T5.6 / L14: build the shared index from a listing, keeping ONLY rows that
+ * pass every L14 check (`filterIndexRowsForSharing`). Request rows and
+ * plaintext names are never indexed; a failing row is skipped and counted.
+ * Entries past `SEARCH_INDEX_MAX_ENTRIES` are dropped and reported.
  */
 export async function rebuildSharedIndexFromListing(
   args: RebuildSharedIndexArgs,
-): Promise<{ index: SharedSearchIndex; truncated: boolean; fileCount: number }> {
+): Promise<RebuildSharedIndexResult> {
+  const { entries, skipped } = await filterIndexRowsForSharing(args)
+  const built = await assembleVerifiedSharedIndex({ entries, numShards: args.numShards })
+  return { ...built, skipped, entries }
+}
+
+/**
+ * Assemble an index from entries the L14 filter already verified. Not a
+ * listing writer: callers must go through `rebuildSharedIndexFromListing`.
+ * Entries past `SEARCH_INDEX_MAX_ENTRIES` are dropped and reported as
+ * `truncated`, so a hostile or enormous listing can never grow the index
+ * without bound.
+ */
+export async function assembleVerifiedSharedIndex(args: {
+  entries: IndexFileEntry[]
+  numShards?: number
+}): Promise<{ index: SharedSearchIndex; truncated: boolean; fileCount: number }> {
   const numShards = args.numShards ?? SHARED_INDEX_NUM_SHARDS
   const kept = args.entries.slice(0, SEARCH_INDEX_MAX_ENTRIES)
   const truncated = args.entries.length > SEARCH_INDEX_MAX_ENTRIES
   const proxy = await createSharedSearchIndex(kept, numShards)
-  const index = new SharedSearchIndex(proxy, numShards)
+  // The proof travels with the index so a push can prove its provenance.
+  const index = new SharedSearchIndex(proxy, numShards, kept)
   return { index, truncated, fileCount: kept.length }
 }
 
 /** Every page the index currently holds, for a full first push. */
 export async function pushSharedIndexFull(args: {
   transport: IndexTransport
-  index: SharedSearchIndex
+  index: PushableIndex
   folderKey: Uint8Array
 }): Promise<{ written: number }> {
+  assertL14Verified(args.index)
   const shards = await args.index.encryptAll(args.folderKey)
   for (const shard of shards) {
     await args.transport.putShard(shard, 0)

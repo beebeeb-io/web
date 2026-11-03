@@ -1,3 +1,4 @@
+// The per-invite share activity drawer.
 import { useEffect, useState } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'

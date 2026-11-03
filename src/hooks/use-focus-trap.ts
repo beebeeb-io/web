@@ -1,3 +1,4 @@
+// Traps focus inside an open dialog and restores it on close.
 import { useEffect, useRef } from 'react'
 
 const FOCUSABLE =

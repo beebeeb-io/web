@@ -18,11 +18,15 @@ bunx playwright test 2>&1 | tee /tmp/bb-web-e2e.log  # e2e (bun run test:e2e:iso
 make wasm-sync                                       # from the workspace root: regenerate packages/beebeeb-wasm from core
 ```
 
+Quiet runs: `make test-quiet REPO=web` · `make check-quiet REPO=web` · `make e2e-quiet REPO=web` — one PASS line per target, at most 25 printed lines; the full log path is the last line.
+
 Truth lines: `bun test` → `N pass, 0 fail`; Playwright → `N passed`; `tsc` exit 0. Assert N, not the absence of "failed";
 a Playwright filter that matched 0 tests is a RED. UI tasks are verified in a browser (screenshots in the task's evidence path),
 never by curl. A new spec is trusted only after it has been seen to fail against a deliberate mutation.
 
 ## Module map
+
+Module map: MAP.md is the index of the generated directory maps — start here for "where does X live"; read the directory `MAP.md` for the modules.
 
 ```
 src/main.tsx, app.tsx      entry; routes (ProtectedRoute; pages render inside DriveLayout); WasmGuard blocks until crypto is ready
@@ -75,7 +79,7 @@ The rules whose breakage costs data, a key, a credential or a user. One line eac
 
 Workspace `CLAUDE.md` → "How we work" is the rule set. Here: the truth lines above; design before code (`../../design/hifi/*.jsx` wins over
 the code, deviations go in `DEVIATIONS.md`/the task file before the code changes); UI verified with Playwright screenshots.
-Recipes (new page, new API function) and route list: `docs/agent-notes.md`.
+Task recipes: docs/agents/recipes.md — the path for a recurring task; each is ≤ 30 lines and the checker proves its files and items exist. Route list: `docs/agent-notes.md`.
 
 ## Graphify and shared docs
 
@@ -84,3 +88,5 @@ Knowledge graph at `graphify-out/`. Architecture question: `graphify query "<que
 Run `graphify update .` for your own navigation; never commit `graphify-out/` on a feature branch (the lead regenerates it on main).
 When you add/change/remove endpoints, types, build commands or dependencies, update the matching skill in the workspace
 `.claude/skills/` (beebeeb-api.md, beebeeb-designs.md, beebeeb-stack.md, beebeeb-dev.md).
+
+- **Design files** live in the workspace root `../../design/hifi/` — never copy them into this public repo (a snapshot once published a false external-audit claim).

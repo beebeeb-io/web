@@ -1,3 +1,4 @@
+// Constants and copy for the two-factor login challenge.
 import { ApiError } from '@beebeeb/shared'
 
 /**

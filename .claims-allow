@@ -33,6 +33,14 @@ src/lib/google-import.ts|www.googleapis.com|Google Drive import: user-initiated 
 src/pages/settings/import.tsx|www.googleapis.com|same Google import flow, settings entry point (OAuth scope string)
 src/pages/settings/import.tsx|accounts.google.com|Google OAuth consent screen redirect, user-initiated
 
+# Direct-download storage origins — exact production pool hosts from the W5
+# read-only export; used only for browser connect-src and direct object reads.
+index.html|hel1.your-objectstorage.com|Task 2173 direct-download storage origin from the lead-supplied W5 pool export
+index.html|nbg1.your-objectstorage.com|Task 2173 direct-download storage origin from the lead-supplied W5 pool export
+index.html|your-objectstorage.com|Task 2173 storage-origin suffix in the CSP for the lead-supplied W5 pool export
+nginx.conf|hel1.your-objectstorage.com|Task 2173 direct-download storage origin from the lead-supplied W5 pool export
+nginx.conf|nbg1.your-objectstorage.com|Task 2173 direct-download storage origin from the lead-supplied W5 pool export
+
 # Our own docs subdomain.
 src/pages/forgot-password.tsx|docs.beebeeb.io|link to our own recovery docs page
 src/pages/onboarding.tsx|docs.beebeeb.io|link to our own docs, onboarding welcome copy
@@ -69,3 +77,4 @@ src/pages/settings/data-residency.tsx| ede:|same lookup map, Ede entry
 src/lib/timezones.ts|Helsinki|NOT a region claim — "Europe/Helsinki" is a standard IANA tz-database zone name in a generic timezone picker, unrelated to Beebeeb storage regions
 src/components/office/office-engine-host.tsx|github.com|OFFICE_SOURCE_URL: href-only link in the Office Licenses panel (office-about.tsx) to the public MPL-2.0 source of the office engine; opened by the user in a new tab, never fetched by the app, not in the data path (task 1585, lead review 2026-09-28)
 src/contracts/onboarding/schema.v1.json|json-schema.org|JSON Schema meta-schema identifier in "$schema"/"$id" (draft 2020-12); an identifier string in the vendored contract, never fetched at runtime, not in the data path (task 1745)
+src/pages/settings/import/dropbox-model.ts|api.dropboxapi.com|same Dropbox import flow, folder listing moved out of settings/import.tsx

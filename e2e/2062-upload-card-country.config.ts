@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 2062 upload card country spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

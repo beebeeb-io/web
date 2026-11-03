@@ -1,3 +1,4 @@
+// The login branch that provisions vault keys for an account without them.
 import { useState } from 'react'
 import { DeviceProvision } from './device-provision'
 import { VaultLockedNoKey } from './vault-locked-no-key'

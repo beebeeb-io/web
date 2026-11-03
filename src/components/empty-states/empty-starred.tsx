@@ -1,3 +1,4 @@
+// The empty state for the starred view.
 import { EmptyState } from './empty-state'
 
 interface EmptyStarredProps {

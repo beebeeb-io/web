@@ -1,3 +1,4 @@
+// The plain-text preview with size guarding.
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { Icon } from '@beebeeb/shared'
 import type {

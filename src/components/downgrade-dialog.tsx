@@ -1,3 +1,4 @@
+// The plan-downgrade dialog with the storage/feature consequences.
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useFocusTrap } from '../hooks/use-focus-trap'

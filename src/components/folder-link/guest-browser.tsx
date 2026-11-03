@@ -1,3 +1,4 @@
+// The guest folder-link browser: breadcrumb plus grid/list of entries.
 import { useEffect, useMemo, useState } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { Breadcrumb } from '../breadcrumb'

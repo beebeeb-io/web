@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 2050 location by country spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

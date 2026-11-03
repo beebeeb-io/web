@@ -1,3 +1,4 @@
+// The new-folder dialog with name validation.
 import { useState, useRef, useEffect } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'

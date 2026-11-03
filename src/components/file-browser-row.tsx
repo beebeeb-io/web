@@ -1,3 +1,4 @@
+// The shared file-row container plus the header/status bar class constants.
 import type { HTMLAttributes } from 'react'
 
 /**

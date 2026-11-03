@@ -1,3 +1,4 @@
+// The dev-only onboarding fixture picker for local flows.
 import { useMemo } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { OnboardingRenderer } from '../components/onboarding/renderer'

@@ -18,7 +18,8 @@ import { preserveGlobals, setGlobal } from './helpers/scoped-global'
 preserveGlobals('fetch', 'localStorage')
 
 const ROOT = '11111111-1111-4111-8111-111111111111'
-const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+/** L12: an F id is RFC 9562 UUID v8, canonical lowercase. */
+const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const owned = ownedFolderCrypto()
 
 const subtle = crypto.subtle
@@ -89,6 +90,17 @@ await mockModuleScoped('../src/lib/crypto', import.meta.dir, {
   fromBase64: unb64,
   wrapFolderChild: owned.wrapFolderChild,
   unwrapFolderChild: owned.unwrapFolderChild,
+  // L16 (2275 T5.7): actor names and link labels, core in process.
+  sealActorName: async (folderKey: Uint8Array, sharedFolderId: string, name: string) =>
+    loadWasm().sealFolderActorName(folderKey, sharedFolderId, name) as string,
+  openActorName: async (folderKey: Uint8Array, sharedFolderId: string, envelope: string) =>
+    loadWasm().openFolderActorName(folderKey, sharedFolderId, envelope) as string,
+  wrapLinkLabel: async (masterKey: Uint8Array, shareId: string, label: string) =>
+    loadWasm().wrapLinkLabel(masterKey, shareId, label) as Uint8Array,
+  unwrapLinkLabel: async (masterKey: Uint8Array, shareId: string, wrapped: Uint8Array) =>
+    loadWasm().unwrapLinkLabel(masterKey, shareId, wrapped) as string,
+  // L12 (F5): the guest id minter is core's, never a local v4.
+  mintGuestItemIdWorker: async () => loadWasm().mintGuestItemId() as string,
 })
 
 const {
@@ -263,7 +275,7 @@ describe('uploadGuestFiles', () => {
     expect('actor_name_encrypted' in metadata).toBe(false)
     // L7a: the metadata part comes first and names the file's id.
     expect([...calls[0].form.keys()][0]).toBe('metadata')
-    expect(String(metadata.id)).toMatch(UUID_V4)
+    expect(String(metadata.id)).toMatch(UUID_V8)
   })
 
   test('maps server rejections to reasons', async () => {
@@ -360,8 +372,8 @@ describe('uploadGuestFiles', () => {
     const metadata = await metadataOf(calls[0].form)
     // Each folder carried its own proposed id; the file lands in the second.
     expect(folderBodies.map((body) => String(body.id))).toEqual([
-      expect.stringMatching(UUID_V4),
-      expect.stringMatching(UUID_V4),
+      expect.stringMatching(UUID_V8),
+      expect.stringMatching(UUID_V8),
     ])
     expect(folderBodies[1].parent_id).toBe(folderBodies[0].id)
     expect(metadata.parent_id).toBe(folderBodies[1].id)
@@ -378,35 +390,41 @@ describe('uploadGuestFiles', () => {
 describe('actor name', () => {
   test('round-trips and never stores plaintext', async () => {
     const name = 'Anouk de Vries'
-    const encrypted = await storeActorName('folder-1', FOLDER_KEY, name)
-    expect(localStorage.getItem(ACTOR_NAME_STORAGE_PREFIX + 'folder-1')).toBe(encrypted)
+    const encrypted = await storeActorName('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', FOLDER_KEY, name)
+    expect(localStorage.getItem(ACTOR_NAME_STORAGE_PREFIX + 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1')).toBe(encrypted)
     expect(encrypted.indexOf(name)).toBe(-1)
-    expect(await readActorName('folder-1', FOLDER_KEY)).toBe(name)
+    expect(await readActorName('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', FOLDER_KEY)).toBe(name)
   })
 
   test('a different folder key reads null instead of throwing', async () => {
-    const encrypted = await encryptActorName(FOLDER_KEY, 'Anouk')
-    expect(await decryptActorName(new Uint8Array(32).fill(8), encrypted)).toBeNull()
+    const encrypted = await encryptActorName(FOLDER_KEY, ROOT, 'Anouk')
+    expect(await decryptActorName(new Uint8Array(32).fill(8), ROOT, encrypted)).toBeNull()
+  })
+
+  test('L16: a name sealed for one shared root is refused under another', async () => {
+    const encrypted = await encryptActorName(FOLDER_KEY, ROOT, 'Anouk')
+    expect(await decryptActorName(FOLDER_KEY, '22222222-2222-4222-8222-222222222222', encrypted)).toBeNull()
+    expect(await decryptActorName(FOLDER_KEY, ROOT, encrypted)).toBe('Anouk')
   })
 
   test('readActorName is null when nothing was stored', async () => {
-    expect(await readActorName('folder-2', FOLDER_KEY)).toBeNull()
+    expect(await readActorName('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', FOLDER_KEY)).toBeNull()
   })
 
   test('a skipped prompt stays remembered as empty, not as never asked', async () => {
-    storeActorNameSkipped('folder-3')
-    expect(await readActorName('folder-3', FOLDER_KEY)).toBe('')
-    expect(localStorage.getItem(ACTOR_NAME_STORAGE_PREFIX + 'folder-3')).toBe('')
+    storeActorNameSkipped('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3')
+    expect(await readActorName('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', FOLDER_KEY)).toBe('')
+    expect(localStorage.getItem(ACTOR_NAME_STORAGE_PREFIX + 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3')).toBe('')
   })
 
   test('the sealed name for a later batch is the stored ciphertext, null when skipped or foreign', async () => {
-    const encrypted = await storeActorName('folder-4', FOLDER_KEY, 'Mum')
-    expect(await readActorNameCiphertext('folder-4', FOLDER_KEY)).toBe(encrypted)
-    storeActorNameSkipped('folder-5')
-    expect(await readActorNameCiphertext('folder-5', FOLDER_KEY)).toBeNull()
-    expect(await readActorNameCiphertext('folder-6', FOLDER_KEY)).toBeNull()
+    const encrypted = await storeActorName('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', FOLDER_KEY, 'Mum')
+    expect(await readActorNameCiphertext('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', FOLDER_KEY)).toBe(encrypted)
+    storeActorNameSkipped('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5')
+    expect(await readActorNameCiphertext('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5', FOLDER_KEY)).toBeNull()
+    expect(await readActorNameCiphertext('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6', FOLDER_KEY)).toBeNull()
     // Sealed under another folder key: never sent as this folder's name.
-    expect(await readActorNameCiphertext('folder-4', new Uint8Array(32).fill(8))).toBeNull()
+    expect(await readActorNameCiphertext('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', new Uint8Array(32).fill(8))).toBeNull()
   })
 })
 
@@ -458,6 +476,38 @@ describe('L7 and L7a: every guest write is bound to the id it proposes', () => {
     expect(() => loadWasm().unwrapFolderChild(FOLDER_KEY, ROOT, crypto.randomUUID(), 1, wrap)).toThrow(/decryption failed/)
     expect(() => loadWasm().unwrapFolderChild(FOLDER_KEY, ROOT, id, 2, wrap)).toThrow(/decryption failed/)
     expect(() => loadWasm().unwrapFolderChild(FOLDER_KEY, crypto.randomUUID(), id, 1, wrap)).toThrow(/decryption failed/)
+  })
+
+  test('F5: the guest proposes a core F id (UUID v8), and the owner opens the row', async () => {
+    // L12 amends L7a: a guest upload may not mint a v4 locally. Core's
+    // `mintGuestItemId` gives an F-class id (UUID v8), which the core class
+    // check and the server's T2 accept, and the row still opens for the owner.
+    await uploadGuestFiles({
+      token: 'tok',
+      rootId: ROOT,
+      folderKey: FOLDER_KEY,
+      proof: null,
+      parentId: null,
+      tasks: [{ file: fileOf('f5.txt', 1024), relativePath: null }],
+      siblingNames: new Map(),
+      actorNameEncrypted: null,
+      onEvent: () => undefined,
+    })
+
+    const metadata = await metadataOf(calls[0].form)
+    const id = String(metadata.id)
+    expect(id).toMatch(UUID_V8)
+    expect(loadWasm().isForeignItemId(id)).toBe(true)
+
+    // The owner's L7 unwrap opens the row's content key, the name opens under
+    // it, and chunk 0 decrypts — the row is as readable as a v4 one.
+    const wrap = String(metadata.wrapped_key)
+    const fileKey = await owned.unwrapFolderChild(FOLDER_KEY, ROOT, id, 1, unb64(wrap))
+    const name = await decryptName(String(metadata.name_encrypted), wrap, FOLDER_KEY, id)
+    expect(name.name).toBe('f5.txt')
+    const frame = new Uint8Array(await (calls[0].form.get('chunk_0') as Blob).arrayBuffer())
+    const plaintext = await open(fileKey, frame.slice(0, 12), frame.slice(12))
+    expect(plaintext.length).toBe(1024)
   })
 
   test('409 id_taken: the write is re-sealed under a fresh id, and the stored id is the new one', async () => {

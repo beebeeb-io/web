@@ -1,3 +1,4 @@
+// The encryption-proof panel that explains and verifies client-side encryption.
 import { useEffect, useState } from 'react'
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'

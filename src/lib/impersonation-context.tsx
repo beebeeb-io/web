@@ -1,3 +1,4 @@
+// Admin impersonation state: session detection, lock reconciliation, and useImpersonation.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { clearToken, getMe } from './api'

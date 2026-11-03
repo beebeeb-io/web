@@ -1,3 +1,4 @@
+// The small locked/unlocked/error encryption indicator.
 import { Icon } from '@beebeeb/shared'
 
 export function EncryptionStatus({ unlocked = true, error = false }: { unlocked?: boolean; error?: boolean }) {

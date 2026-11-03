@@ -1,3 +1,4 @@
+// Touch gesture recognition (swipe/long-press) for list rows.
 import { useEffect, useRef } from 'react'
 
 interface TouchGesturesOptions {

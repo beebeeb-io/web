@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import {
   parseShareKey,
   extractShareKeyToken,
@@ -6,6 +6,14 @@ import {
   ShareKeyParseError,
   SHARE_KEY_BYTES,
 } from '../src/lib/share-key'
+import { ensureShareLinkWasm } from '../src/lib/share-links-wasm'
+
+// Every case below decodes through core's synchronous base64 grammar, so the
+// wasm module must be loaded before the first test. This file initialises it
+// itself instead of relying on another file in a full run having done so.
+beforeAll(async () => {
+  await ensureShareLinkWasm()
+})
 
 /**
  * Task 1531 — share link: "Invalid key format" on a complete link.

@@ -1,3 +1,4 @@
+// The /migration route: storage migration status and controls.
 import { useState, useCallback } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'

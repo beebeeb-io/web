@@ -1,3 +1,4 @@
+// Shared E2E auth: anonymous context, login-and-provision, and test-account env access.
 import type { Browser, BrowserContext, Page } from '@playwright/test'
 
 /**

@@ -1,3 +1,4 @@
+// Standalone Playwright config for the flow money signup plan intent spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

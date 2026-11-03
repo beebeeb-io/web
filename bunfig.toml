@@ -12,4 +12,4 @@ root = "test"
 # Final review P3-2 (web #199): no unit test may reach a production host. The
 # preload refuses fetch to beebeeb.io / *.beebeeb.io and fails the test that
 # tried it (test/helpers/no-prod-network.ts; its own test proves it goes red).
-preload = ["./test/helpers/no-prod-network.ts"]
+preload = ["./test/helpers/module-slots-preload.ts", "./test/helpers/no-prod-network.ts"]

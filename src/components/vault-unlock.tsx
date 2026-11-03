@@ -1,3 +1,4 @@
+// The vault-unlock screen: password or recovery phrase.
 import { type FormEvent, useState, useCallback } from 'react'
 import { AuthShell } from './auth-shell'
 import { BBButton } from '@beebeeb/shared'

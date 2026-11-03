@@ -284,9 +284,9 @@ describe('the end of a free coupon period is never called a trial', () => {
   test('the billing page and the banner pass the kind through', () => {
     const banner = readFileSync(new URL('../src/components/billing-banner.tsx', import.meta.url), 'utf8')
     expect(banner).toContain('lapsedBannerCopy(sub?.data_deletion_at, sub?.lapse_kind)')
-    const billing = readFileSync(new URL('../src/pages/billing.tsx', import.meta.url), 'utf8')
-    expect(billing).toContain('lapsedHeading(sub?.lapse_kind)')
-    expect(billing).toContain('lapsedBannerCopy(sub?.data_deletion_at, sub?.lapse_kind)')
+    const notices = readFileSync(new URL('../src/pages/billing/BillingNotices.tsx', import.meta.url), 'utf8')
+    expect(notices).toContain('lapsedHeading(sub?.lapse_kind)')
+    expect(notices).toContain('lapsedBannerCopy(sub?.data_deletion_at, sub?.lapse_kind)')
     const block = readFileSync(new URL('../src/hooks/use-plan-block.ts', import.meta.url), 'utf8')
     expect(block).toContain('uploadBlockedNotice(accountState, lapseKind)')
   })

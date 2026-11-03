@@ -1,3 +1,4 @@
+// Freezes a value for the lifetime of a component, giving effects stable deps.
 import { useAuth } from '../lib/auth-context'
 
 export function useFrozen() {

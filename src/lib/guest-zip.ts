@@ -6,6 +6,7 @@
  * drive packager (`packageZip`) so there is one streaming implementation.
  */
 import type { DriveFile } from './api'
+import { contentKeyBytes } from './request-row'
 import {
   expandDownloadEntries,
   packageZip,
@@ -118,8 +119,9 @@ export async function collectGuestZipEntries(
     decryptToBlob: async (file, fileKey) => {
       const item = itemsById.get(file.id)
       if (!item) throw new Error('This file is no longer in the listing.')
-      const plaintext = await fetchGuestDownloadBlob({ token, item, fileKey, proof, signal })
-      const meta = await decryptFileMetadata(fileKey, item.name_encrypted)
+      const bytes = contentKeyBytes(fileKey)
+      const plaintext = await fetchGuestDownloadBlob({ token, item, fileKey: bytes, proof, signal })
+      const meta = await decryptFileMetadata(bytes, item.name_encrypted)
       return { plaintext, filename: meta.name }
     },
   }
@@ -142,7 +144,7 @@ export async function collectGuestZipEntries(
     if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError')
     let key: Uint8Array | null = null
     try {
-      key = await ports.getFileKey(entry.file)
+      key = contentKeyBytes(await ports.getFileKey(entry.file))
       const { name } = await decryptFileMetadata(key, entry.file.name_encrypted)
       const path = uniqueZipPath(zipPathFor(entry.prefix, name), used)
       files.push({
@@ -155,7 +157,7 @@ export async function collectGuestZipEntries(
         // now a failed file contributes nothing but its error line.
         load: async () => {
           if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError')
-          const fileKey = await ports.getFileKey(entry.file)
+          const fileKey = contentKeyBytes(await ports.getFileKey(entry.file))
           try { return await ports.decryptToBlob(entry.file, fileKey) }
           finally { fileKey.fill(0) }
         },

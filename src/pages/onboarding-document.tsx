@@ -1,3 +1,4 @@
+// The routes that drive onboarding from a server document.
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { OnboardingRenderer } from '../components/onboarding/renderer'

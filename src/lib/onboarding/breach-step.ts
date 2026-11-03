@@ -1,3 +1,4 @@
+// Runs the onboarding breach check against the ceremony proxy.
 import type { BreachCheckProxy, BreachVerdict } from '../crypto'
 import type { OnboardingPorts } from './ports'
 

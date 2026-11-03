@@ -1,36 +1,57 @@
+// The preview overlay that picks and hosts the right renderer for a file.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { listVersions, restoreVersion, type DriveFile, type FileVersion } from '../../lib/api'
-import { decryptToBlob, decryptVersionToBlob } from '../../lib/encrypted-download'
+import { listVersions, type DriveFile, type FileVersion } from '../../lib/api'
+import { decryptToBlob, decryptVersionToBlob, streamOverCapDownload, type TransferProgress } from '../../lib/encrypted-download'
+import { OWNER_REPAIR_READ_ONLY, isOwnerRepairReadOnly } from '../../lib/owner-repair'
+import { ownerWriteRefusal, restoreOwnerVersion } from '../../lib/owner-write-guard'
+import {
+  TooLargeToPreviewError,
+  WHOLE_FILE_MEDIA_CAP_BYTES,
+  chooseDownloadAction,
+  getExtension,
+} from '../../lib/preview-load-policy'
+import { formatSize } from '../../lib/format-size'
+import {
+  HEIC_IMAGE_EXTS,
+  IMAGE_EXTENSIONS_SET,
+  RAW_IMAGE_EXTS,
+  RAW_IMAGE_MIMES,
+  getKindLabel,
+  resolveEditableKind,
+} from './file-kinds'
+import {
+  DownloadPromptCard,
+  OverCapCard,
+  PreviewErrorCard,
+  PreviewProgress,
+  ReadOnlyEditorNotice,
+  StreamErrorCard,
+  UNSUPPORTED_TYPE_COPY,
+} from './file-preview-cards'
+import { createTransferThrottle } from '../../lib/progress-throttle'
 import { fetchAndDecryptLargeThumbnail, fetchAndDecryptThumbnail } from '../../lib/thumbnail'
 import { PreviewChrome } from './preview-chrome'
 import { InfoRail, CONTENT_CIPHER_LABEL } from './info-rail'
 import { VersionScrubber } from './version-scrubber'
-import { ImagePreview } from './image-preview'
-import { PdfPreview } from './pdf-preview'
 import { VideoPreview } from './video-preview'
 import { AudioPreview } from './audio-preview'
-import { MarkdownPreview } from './markdown-preview'
-import { TextPreview } from './text-preview'
-import { DocxPreview } from './docx-preview'
-import { XlsxPreview } from './xlsx-preview'
-import { UnsupportedPreview } from './unsupported-preview'
-import { RawPreview } from './raw-preview'
+import { useMediaStream } from '../../lib/media-stream/use-media-stream'
+import { DOWNLOAD_CARD_COPY, mediaKindFor } from '../../lib/media-stream/path'
+import { MAX_ZOOM, MIN_ZOOM, ZOOM_STEP, pickRenderer, type ImageControlProps } from './pick-renderer'
 import type { RawExifInfo } from '../../lib/raw-embedded-jpeg'
-import { HeicPreview } from './heic-preview'
-import { TiffPreview } from './tiff-preview'
-import { ZipListingPreview } from './zip-listing-preview'
-import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
+import { contentKeyBytes, isRequestUpload, type ContentKey } from '../../lib/request-row'
 import { needsOwnership, sharedRootFor } from '../../lib/owner-adoption'
 import { sharedFoldersEnabled } from '../../lib/use-feature-flag'
 import { useAuth } from '../../lib/auth-context'
 import { decryptFileMetadata } from '../../lib/crypto'
-import { checkEditability, editabilityNotice, type EditabilityResult } from '../../lib/text-editability'
+import { checkEditability, type EditabilityResult } from '../../lib/text-editability'
 import { FileEditor, type FileEditorHandle } from '../editor/file-editor'
 import { UnsavedChangesDialog } from '../editor/unsaved-changes-dialog'
 import { resolveOfficeFileKind } from '../../lib/office/office-file-kind'
 import { isOfficeLabsEnabled } from '../../lib/office/office-labs'
+import { rawInfoRowsOf } from '../../lib/raw-info-rows'
 
 interface FilePreviewProps {
   file: DriveFile
@@ -53,405 +74,12 @@ interface FilePreviewProps {
   onDelete?: (file: DriveFile) => void | Promise<void>
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-}
-
-/** Map file extensions to language names for syntax coloring */
-const EXT_LANGUAGE: Record<string, string> = {
-  // JavaScript / TypeScript
-  js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
-  mjs: 'javascript', cjs: 'javascript',
-  // Systems
-  rs: 'rust', go: 'go', c: 'c', h: 'c', cpp: 'cpp', hpp: 'cpp',
-  // JVM
-  java: 'java', kt: 'kotlin', scala: 'scala',
-  // Scripting
-  py: 'python', rb: 'ruby', php: 'php', lua: 'lua', pl: 'perl', sh: 'shell',
-  bash: 'shell', zsh: 'shell', fish: 'shell',
-  // Web
-  html: 'html', htm: 'html', css: 'css', scss: 'css', less: 'css', svg: 'xml',
-  // Data / config
-  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml', xml: 'xml',
-  sql: 'sql', graphql: 'graphql', gql: 'graphql',
-  // DevOps / config
-  dockerfile: 'docker', makefile: 'make', cmake: 'cmake',
-  tf: 'terraform', hcl: 'terraform',
-  // Other
-  swift: 'swift', dart: 'dart', r: 'r', ex: 'elixir', exs: 'elixir',
-  erl: 'erlang', hs: 'haskell', ml: 'ocaml', zig: 'zig', nim: 'nim',
-  v: 'v', vue: 'vue', svelte: 'svelte', astro: 'astro',
-  // .NET — cs was missing entirely (task 1565 preview matrix finding): a
-  // C# file fell through every branch in pickRenderer (not text/*, not in
-  // TEXT_EXTENSIONS either) straight to the generic "Preview not available"
-  // card, unlike every other ~20 code languages this map covers.
-  cs: 'csharp',
-}
-
-/** Image/video extension sets used when mime_type is null (ZK-uploaded files) */
-const IMAGE_EXTENSIONS_SET = new Set([
-  'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'tiff', 'tif', 'svg', 'ico',
-])
-const VIDEO_EXTENSIONS_SET = new Set([
-  'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'ogv', 'hevc',
-])
-const AUDIO_EXTENSIONS_SET = new Set([
-  'mp3', 'flac', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'aiff', 'aif', 'wma', 'alac',
-])
-
-/** Extensions that should render as plain text (no syntax coloring) */
-const TEXT_EXTENSIONS = new Set([
-  'txt', 'log', 'csv', 'tsv', 'env', 'conf', 'ini', 'cfg', 'properties',
-  'editorconfig', 'gitignore', 'gitattributes', 'dockerignore', 'npmrc',
-  'nvmrc', 'prettierrc', 'eslintrc', 'babelrc',
-])
-
-/** MIME types that should render as text */
-const TEXT_MIME_TYPES = new Set([
-  'text/plain',
-  'text/csv',
-  'text/tab-separated-values',
-  'text/x-log',
-])
-
-/** MIME types that should render as code */
-const CODE_MIME_TYPES: Record<string, string> = {
-  'text/javascript': 'javascript',
-  'application/javascript': 'javascript',
-  'text/typescript': 'typescript',
-  'application/typescript': 'typescript',
-  'text/html': 'html',
-  'text/css': 'css',
-  'text/xml': 'xml',
-  'application/xml': 'xml',
-  'application/json': 'json',
-  'application/x-yaml': 'yaml',
-  'text/yaml': 'yaml',
-  'text/x-python': 'python',
-  'text/x-java-source': 'java',
-  'text/x-c': 'c',
-  'text/x-c++': 'cpp',
-  'text/x-rust': 'rust',
-  'text/x-go': 'go',
-  'text/x-shellscript': 'shell',
-  'application/sql': 'sql',
-  'application/toml': 'toml',
-}
-
-function getExtension(filename: string): string {
-  const dot = filename.lastIndexOf('.')
-  // Bare filenames with no dot at all (Dockerfile, Makefile, ...) previously
-  // returned '' here, which matches nothing in any extension set/map below —
-  // task 1565's preview matrix caught this: a real `Dockerfile` fixture fell
-  // through pickRenderer entirely (EXT_LANGUAGE already had a `dockerfile:
-  // 'docker'` entry that could never be reached) straight to the generic
-  // "Preview not available" card. Falling back to the whole lowercased
-  // filename lets bare-filename entries already present in EXT_LANGUAGE /
-  // TEXT_EXTENSIONS (dockerfile, makefile, gitignore, ...) actually match.
-  if (dot === -1) return filename.toLowerCase()
-  return filename.slice(dot + 1).toLowerCase()
-}
-
-function getKindLabel(mimeType: string | null | undefined, filename: string): string {
-  const ext = getExtension(filename)
-  if (mimeType?.startsWith('image/')) {
-    const sub = mimeType.split('/')[1]?.toUpperCase() ?? 'Image'
-    return sub === 'JPEG' ? 'JPEG Image' : `${sub} Image`
-  }
-  if (mimeType === 'application/pdf') return 'PDF Document'
-  if (mimeType?.startsWith('audio/')) {
-    const sub = mimeType.split('/')[1]?.toUpperCase() ?? 'Audio'
-    return sub === 'MPEG' ? 'MP3' : sub === 'X-FLAC' ? 'FLAC' : sub
-  }
-  if (AUDIO_EXTENSIONS_SET.has(ext)) return ext.toUpperCase()
-  if (mimeType?.startsWith('video/')) {
-    const sub = mimeType.split('/')[1]?.toUpperCase() ?? 'Video'
-    return `${sub} Video`
-  }
-  if (mimeType === 'text/markdown') return 'Markdown'
-
-  if ((mimeType && TEXT_MIME_TYPES.has(mimeType)) || TEXT_EXTENSIONS.has(ext)) {
-    if (ext === 'csv') return 'CSV File'
-    if (ext === 'tsv') return 'TSV File'
-    if (ext === 'log') return 'Log File'
-    if (ext === 'env') return 'Environment File'
-    if (ext === 'conf' || ext === 'ini' || ext === 'cfg') return 'Config File'
-    return 'Plain Text'
-  }
-
-  const lang = (mimeType ? CODE_MIME_TYPES[mimeType] : undefined) ?? EXT_LANGUAGE[ext]
-  if (lang) {
-    return `${lang.charAt(0).toUpperCase() + lang.slice(1)} Source`
-  }
-
-  return mimeType ?? (ext.toUpperCase() || 'File')
-}
-
-// HEIC/HEIF — decoded client-side via a WASM HEIC decoder inside HeicPreview.
-// These are routed away from the native <img> tag because browsers do not
-// consistently support this container.
-const HEIC_IMAGE_MIMES = new Set([
-  'image/heic',
-  'image/heif',
-  'image/heic-sequence',
-  'image/heif-sequence',
-])
-const HEIC_IMAGE_EXTS = new Set(['heic', 'heif'])
-
-// Camera RAW formats — no in-browser decoder exists.
-// Show the "unsupported preview" card with download button.
-const RAW_IMAGE_EXTS = new Set(['dng', 'cr2', 'cr3', 'nef', 'arw', 'orf', 'rw2', 'raf'])
-const RAW_IMAGE_MIMES = new Set([
-  'image/x-adobe-dng',
-  'image/x-canon-cr2',
-  'image/x-canon-cr3',
-  'image/x-nikon-nef',
-  'image/x-sony-arw',
-  'image/x-olympus-orf',
-  'image/x-panasonic-rw2',
-  'image/x-fuji-raf',
-])
-
-// PPTX — no reliable in-browser renderer exists. Task 1574 evaluated reusing
-// the LibreOffice-WASM office editor (task 1567) for a read-only preview
-// here; as of this task, 1567 is an unmerged, still-in-spike-phase effort
-// (its own Notes: "Phase 1 spike done… STOP the native-macOS-host attempt
-// here" — no working WASM build yet, let alone a mergeable editor). A small
-// pure-JS PPTX slide renderer was also considered and rejected: PPTX slide
-// XML (themes, layouts, placeholders, shape/text positioning) has no small
-// maintained renderer that produces a faithful thumbnail — every option
-// found was either a generator (pptxgenjs/officegen, write-only) or would
-// have meant hand-building a slide layout engine, exactly the "throwaway
-// renderer" this task's own brief says not to build. Legacy .doc/.xls/.ppt
-// are binary OLE2 formats with no pure-JS reader in this repo's dependency
-// tree at all. All four stay on the honest download card.
-const PPTX_MIMES = new Set([
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'application/vnd.ms-powerpoint',
-])
-const PPTX_EXTS = new Set(['pptx', 'ppt', 'odp', 'key'])
-
-// TIFF — Chromium has no native TIFF codec (task 1565 finding). Decoded in
-// a Web Worker via utif2, see tiff-preview.tsx.
-const TIFF_MIMES = new Set(['image/tiff'])
-const TIFF_EXTS = new Set(['tiff', 'tif'])
-
-// ZIP — a honest file LISTING (names/sizes/folders) from the Central
-// Directory, never extraction. See zip-listing-preview.tsx.
-const ZIP_EXTS = new Set(['zip'])
-
-interface ImageControlProps {
-  zoom: number
-  rotation: number
-  onZoomChange: (zoom: number) => void
-  onClose?: () => void
-  onPrev?: () => void
-  onNext?: () => void
-  hasPrev?: boolean
-  hasNext?: boolean
-  /** RAW only (task 1574) — reports the extracted EXIF summary so the Info
-   *  rail can show camera/lens/exposure, mirroring mobile's Info sheet. */
-  onRawInfo?: (info: RawExifInfo | null) => void
-}
-
-const MIN_ZOOM = 0.5
-const MAX_ZOOM = 4.0
-const ZOOM_STEP = 0.2
-
-function pickRenderer(
-  mimeType: string | null | undefined,
-  blob: Blob,
-  filename: string,
-  imageControls?: ImageControlProps,
-  /** True once `blob` is confirmed to be the full downloaded original —
-   *  false while it's still a server-generated thumbnail (task 1574 gate,
-   *  Codex review round 2, 2026-09-27; see the TIFF branch below and the
-   *  doc comment at this function's TIFF check for why this matters). */
-  blobIsOriginal = true,
-): React.ReactNode {
-  const ext = getExtension(filename)
-
-  // Office formats — client-side via lazy-loaded mammoth / SheetJS
-  if (
-    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    ext === 'docx'
-  ) {
-    return <DocxPreview blob={blob} filename={filename} />
-  }
-  if (
-    mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    ext === 'xlsx'
-  ) {
-    return <XlsxPreview blob={blob} filename={filename} />
-  }
-  // Presentation formats + legacy .doc/.xls — show download card (see the
-  // PPTX_EXTS/PPTX_MIMES doc comment above for why, task 1574).
-  if (PPTX_MIMES.has(mimeType ?? '') || PPTX_EXTS.has(ext) || ext === 'doc' || ext === 'xls') {
-    return <UnsupportedPreview blob={blob} filename={filename} />
-  }
-
-  // ZIP — a listing, not extraction (task 1574).
-  if (ZIP_EXTS.has(ext)) {
-    return <ZipListingPreview blob={blob} filename={filename} />
-  }
-
-  // Camera RAW — extract embedded JPEG preview, fall back to download card
-  if (RAW_IMAGE_MIMES.has(mimeType ?? '') || RAW_IMAGE_EXTS.has(ext)) {
-    return (
-      <RawPreview
-        blob={blob}
-        filename={filename}
-        zoom={imageControls?.zoom ?? 1}
-        rotation={imageControls?.rotation ?? 0}
-        onZoomChange={imageControls?.onZoomChange ?? (() => {})}
-        onClose={imageControls?.onClose}
-        onPrev={imageControls?.onPrev}
-        onNext={imageControls?.onNext}
-        hasPrev={imageControls?.hasPrev}
-        hasNext={imageControls?.hasNext}
-        onInfo={imageControls?.onRawInfo}
-      />
-    )
-  }
-
-  // HEIC/HEIF — convert the decrypted blob to JPEG client-side for preview.
-  if (HEIC_IMAGE_MIMES.has(mimeType ?? '') || HEIC_IMAGE_EXTS.has(ext)) {
-    return (
-      <HeicPreview
-        blob={blob}
-        filename={filename}
-        zoom={imageControls?.zoom ?? 1}
-        rotation={imageControls?.rotation ?? 0}
-        onZoomChange={imageControls?.onZoomChange ?? (() => {})}
-        onClose={imageControls?.onClose}
-        onPrev={imageControls?.onPrev}
-        onNext={imageControls?.onNext}
-        hasPrev={imageControls?.hasPrev}
-        hasNext={imageControls?.hasNext}
-      />
-    )
-  }
-
-  // TIFF — decoded off the main thread via utif2 (task 1574), see
-  // TIFF_MIMES/TIFF_EXTS doc comment above. Checked before the generic
-  // image branch below, which otherwise fed TIFF bytes straight to a plain
-  // `<img>` that Chromium can never decode (task 1565 finding).
-  //
-  // Gated on `blobIsOriginal` (Codex review round 2, task 1574 gate,
-  // 2026-09-27): a current-version TIFF CAN already have a server-side WebP
-  // thumbnail (CLI/desktop/mobile decode TIFF via native/rust image
-  // libraries the browser doesn't have and generate one on upload, same as
-  // any other image — see repos/cli/src/thumbnail.rs). While `blob` is
-  // still that thumbnail (`blobIsOriginal` false — the fast thumbnail-first
-  // path below hasn't been superseded by the full download yet), routing
-  // here would feed WebP bytes to utif2, which rejects them outright. Round
-  // 1 of this review "fixed" that by excluding TIFF from thumbnail-first
-  // entirely — which traded one bug for a worse one Codex caught in round
-  // 2: a TIFF WITH a thumbnail now had to fully download+decrypt the
-  // ORIGINAL (however large) before ever getting a chance to render
-  // anything, even though a perfectly good thumbnail was sitting right
-  // there. This is the actual fix: thumbnail-first stays ENABLED for TIFF
-  // (see the `isImageFile` check above), and a still-thumbnail blob falls
-  // through to the generic image branch below instead (a plain `<img>`
-  // decodes WebP natively, exactly like every other image type) —
-  // TiffPreview's real utif2 decode only ever runs once `blobIsOriginal` is
-  // true, i.e. against the confirmed real original.
-  if (blobIsOriginal && (TIFF_MIMES.has(mimeType ?? '') || TIFF_EXTS.has(ext))) {
-    return (
-      <TiffPreview
-        blob={blob}
-        filename={filename}
-        zoom={imageControls?.zoom ?? 1}
-        rotation={imageControls?.rotation ?? 0}
-        onZoomChange={imageControls?.onZoomChange ?? (() => {})}
-        onClose={imageControls?.onClose}
-        onPrev={imageControls?.onPrev}
-        onNext={imageControls?.onNext}
-        hasPrev={imageControls?.hasPrev}
-        hasNext={imageControls?.hasNext}
-      />
-    )
-  }
-
-  if (mimeType?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(ext)) {
-    return (
-      <ImagePreview
-        blob={blob}
-        filename={filename}
-        zoom={imageControls?.zoom ?? 1}
-        rotation={imageControls?.rotation ?? 0}
-        onZoomChange={imageControls?.onZoomChange ?? (() => {})}
-        onClose={imageControls?.onClose}
-        onPrev={imageControls?.onPrev}
-        onNext={imageControls?.onNext}
-        hasPrev={imageControls?.hasPrev}
-        hasNext={imageControls?.hasNext}
-      />
-    )
-  }
-  if (mimeType === 'application/pdf' || ext === 'pdf') {
-    return <PdfPreview blob={blob} />
-  }
-  if (mimeType?.startsWith('video/') || VIDEO_EXTENSIONS_SET.has(ext)) {
-    return <VideoPreview blob={blob} />
-  }
-  if (mimeType?.startsWith('audio/') || AUDIO_EXTENSIONS_SET.has(ext)) {
-    return <AudioPreview blob={blob} filename={filename} />
-  }
-  if (mimeType === 'text/markdown' || ext === 'md' || ext === 'mdx') {
-    return <MarkdownPreview blob={blob} />
-  }
-
-  // Code files — text preview with syntax coloring
-  const lang = (mimeType ? CODE_MIME_TYPES[mimeType] : undefined) ?? EXT_LANGUAGE[ext]
-  if (lang) {
-    return <TextPreview blob={blob} language={lang} filename={filename} />
-  }
-
-  // Plain text files
-  if ((mimeType ? TEXT_MIME_TYPES.has(mimeType) : false) || TEXT_EXTENSIONS.has(ext)) {
-    return <TextPreview blob={blob} filename={filename} />
-  }
-
-  return null
-}
-
-/**
- * Decides whether a file is a candidate for the task-1563 editor at all
- * (markdown, a recognized code language, or plain text) and what
- * CodeMirror language id / markdown-ness applies. This runs BEFORE the
- * byte-level editability gate (checkEditability) — a candidate can still
- * end up read-only if it's over 2 MB, binary, or not valid UTF-8.
- */
-interface EditableKind {
-  isMarkdown: boolean
-  language: string | undefined
-}
-
-function resolveEditableKind(
-  mimeType: string | null | undefined,
-  filename: string,
-): EditableKind | null {
-  const ext = getExtension(filename)
-  if (mimeType === 'text/markdown' || ext === 'md' || ext === 'mdx') {
-    return { isMarkdown: true, language: 'markdown' }
-  }
-  const lang = (mimeType ? CODE_MIME_TYPES[mimeType] : undefined) ?? EXT_LANGUAGE[ext]
-  if (lang) {
-    return { isMarkdown: false, language: lang }
-  }
-  if ((mimeType ? TEXT_MIME_TYPES.has(mimeType) : false) || TEXT_EXTENSIONS.has(ext)) {
-    return { isMarkdown: false, language: undefined }
-  }
-  return null
-}
 
 export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext, startInEditMode, folderId, onDelete }: FilePreviewProps) {
-  const { getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, isUnlocked } = useKeys()
+  const { getFileKeyForFile, getRequestRow, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
+  // SF-0002: the row's name or a version was sealed under the iOS Files-app
+  // convention, so it is openable/downloadable but not writable in place.
+  const ownerReadOnly = isOwnerRepairReadOnly(file.id)
   const [blob, setBlob] = useState<Blob | null>(null)
   /** True when `blob` holds the full original (non-image / fallback / version
    *  paths). False when `blob` is only a thumbnail (the thumbnail-first image
@@ -459,7 +87,22 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
    *  downscaled thumbnail — so it fetches the original when this is false. */
   const [blobIsOriginal, setBlobIsOriginal] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  /** Bytes saved so far by the over-cap card's stream-to-disk (C4). */
+  const [savedProgress, setSavedProgress] = useState<{ written: number; total: number | null } | null>(null)
+  /** The over-cap download in flight: closing the preview aborts it (C4). */
+  const overCapAbortRef = useRef<AbortController | null>(null)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   const [error, setError] = useState<string | null>(null)
+  /** Live whole-file transfer progress (LD-0001 PR-C); null before the first event. */
+  const [transfer, setTransfer] = useState<TransferProgress | null>(null)
+  /** Set when this load was skipped because the media is over the 2 GiB cap. */
+  const [capCopy, setCapCopy] = useState<string | null>(null)
   const [localDecryptedName, setLocalDecryptedName] = useState<string | null>(null)
   /** MIME type extracted from encrypted metadata (null for legacy files) */
   const [localMimeType, setLocalMimeType] = useState<string | null>(null)
@@ -551,18 +194,41 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
   /** Every load path asks here: an ordinary file derives from the master key,
    *  a guest- or member-added row goes through the shared-folder resolver. */
-  const resolveFileKey = useCallback(async (): Promise<Uint8Array> => {
-    if (!sharedFile) return getFileKeyForFile(file)
+  // `ownerDerived` says whether the key came from the owner's own derivation.
+  // Only then may a content read ask core for the read-only repair key: a
+  // shared-folder or foreign key is never switched to an owner key (SF-0002
+  // review).
+  const resolveFileKey = useCallback(async (): Promise<{
+    key: ContentKey
+    nameKey: Uint8Array | null
+    name: string | null
+    mimeType: string | null
+    ownerDerived: boolean
+  }> => {
+    // 2275 §15: a request row comes back from core as metadata plus a
+    // decrypt-only content source — there is no key. Checked before the shared
+    // walk: a request uploader's row is not a guest/member-added row.
+    if (isRequestUpload(file)) {
+      const row = await getRequestRow(file)
+      return { key: row.content, nameKey: null, name: row.name, mimeType: row.mimeType, ownerDerived: false }
+    }
+    if (!sharedFile) {
+      const key = await getFileKeyForFile(file, { plaintextChunk: true })
+      return { key, nameKey: contentKeyBytes(key), name: null, mimeType: null, ownerDerived: true }
+    }
     // rv-web198d R1: with the flag off there is no shared-folder walk for the
     // owner (no invites read, no link route asked); the key is derived, as on main.
-    if (!(await sharedFoldersEnabled())) return getFileKeyForFile(file)
+    if (!(await sharedFoldersEnabled())) {
+      const key = await getFileKeyForFile(file, { plaintextChunk: true })
+      return { key, nameKey: contentKeyBytes(key), name: null, mimeType: null, ownerDerived: true }
+    }
     const root = await sharedRootFor(folderId ?? null, file.id)
     const key = root ? await getFileKeyForSharedFile(file, root) : null
-    if (key) return key
+    if (key) return { key, nameKey: key, name: null, mimeType: null, ownerDerived: false }
     const label = root ? await getSharedFileOrigin(file, root) : null
     setShareOrigin(label)
     throw new Error(label ? `Can't open this file (added via ${label})` : "Can't open this file")
-  }, [sharedFile, getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, file, folderId])
+  }, [sharedFile, getFileKeyForFile, getRequestRow, getFileKeyForSharedFile, getSharedFileOrigin, file, folderId])
 
   // Display name: use prop, then locally decrypted, then raw
   const name = decryptedNameProp ?? localDecryptedName ?? file.name_encrypted
@@ -577,8 +243,10 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     let cancelled = false
     async function decrypt() {
       try {
-        const fileKey = await resolveFileKey()
-        const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted)
+        const { nameKey, name: resolvedName, mimeType: resolvedMime } = await resolveFileKey()
+        const { name, mimeType } = resolvedName !== null
+          ? { name: resolvedName, mimeType: resolvedMime }
+          : await decryptFileMetadata(nameKey as Uint8Array, file.name_encrypted)
         if (!cancelled) {
           setLocalDecryptedName(name)
           setLocalMimeType(mimeType)
@@ -614,15 +282,60 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // Effective MIME: prefer server value (legacy), then encrypted metadata, then null
   const effectiveMime = file.mime_type ?? localMimeType
 
+  // C6 (round 3): the load below is keyed on the content identity only (file
+  // id, version, unlock state, chunk count, size). The name, the MIME, the
+  // file object and the key resolver are read at the start of each load
+  // through this ref, so the name resolving, or a parent re-render with a new
+  // file object, never restarts a download (progress used to jump back to 0).
+  const loadInputsRef = useRef({ file, name, effectiveMime, resolveFileKey })
+  loadInputsRef.current = { file, name, effectiveMime, resolveFileKey }
+
+  /** The streaming reader's key resolver: the same lookup, key only. A request
+   *  row has no raw key: its content source reaches the worker as-is and every
+   *  frame opens through the reader's `openFrame`. */
+  const resolveStreamKey = useCallback(async () => (await resolveFileKey()).key, [resolveFileKey])
+
+  // LD-0001 PR-B: the streaming session (contract §4). The path is decided
+  // synchronously on this render, so the whole-file effect below can never
+  // start a download for a file that will stream. Keyed by (file.id,
+  // selectedVersionId) inside the hook — a parent re-render with a new `file`
+  // object does not restart playback.
+  const mediaKind = mediaKindFor(effectiveMime, getExtension(name))
+  const stream = useMediaStream({
+    file,
+    mediaKind,
+    selectedVersionId,
+    isUnlocked,
+    mime: effectiveMime,
+    // The stream reader takes the bare key: SF-0002's repair is not applied on
+    // the streaming path, so a repaired row shows the stream error card.
+    resolveFileKey: resolveStreamKey,
+  })
+
   // Load + decrypt content for the current selection (null = live version).
   // For images viewing the current version, try large thumbnail first to avoid
   // downloading the full original (spec 031 — thumbnail-first viewing).
   useEffect(() => {
+    const { file, name, effectiveMime, resolveFileKey } = loadInputsRef.current
     let cancelled = false
     setBlob(null)
     setBlobIsOriginal(false)
     setError(null)
+    setTransfer(null)
+    setCapCopy(null)
+    // Every run starts (and every cleanup ends) with the version spinner off:
+    // an aborted version load used to leave it spinning forever (item 7).
+    setVersionLoading(false)
     if (!isUnlocked) return
+    // LD-0001 PR-B: a file on the streaming path must NEVER load whole-file,
+    // nor a video whose stream errored after metadata (round 3 B8: the
+    // unsupported card stays; a whole-file reload would hit the same codec).
+    if (stream.streaming || stream.blockWholeFile) {
+      setVersionLoading(false)
+      return
+    }
+
+    const abort = new AbortController()
 
     const imageExt = getExtension(name)
     // TIFF stays IN the thumbnail-first fast-path eligibility (task 1574
@@ -641,9 +354,19 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     const isImageFile =
       effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt)
 
+    // One React update per 150 ms at most, plus every phase change and the
+    // final event (item 12): a fast transfer used to re-render the preview on
+    // every network read.
+    const throttle = createTransferThrottle((p) => {
+      if (!cancelled) setTransfer(p)
+    })
+    const onTransfer = (p: TransferProgress) => {
+      if (!cancelled) throttle.push(p)
+    }
+
     async function loadAndDecrypt() {
       try {
-        const fileKey = await resolveFileKey()
+        const { key: fileKey, nameKey, ownerDerived } = await resolveFileKey()
 
         // Thumbnail-first path for images (current version only)
         if (isImageFile && selectedVersionId === null) {
@@ -652,7 +375,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           // unconditional /thumbnail/large request would waste a guaranteed-404.
           // The medium fallback below is a reachable sibling: it runs whenever
           // the large fetch is skipped (no large variant) OR fails.
-          if (file.has_large_thumbnail) {
+          if (fileKey instanceof Uint8Array && file.has_large_thumbnail) {
             const largeThumbnailUrl = await fetchAndDecryptLargeThumbnail(file.id, fileKey)
             if (largeThumbnailUrl && !cancelled) {
               const thumbRes = await fetch(largeThumbnailUrl)
@@ -667,7 +390,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             }
           }
           // Large skipped or failed — try medium thumbnail
-          if (!cancelled) {
+          if (!cancelled && fileKey instanceof Uint8Array) {
             const mediumThumbnailUrl = await fetchAndDecryptThumbnail(file.id, fileKey)
             if (mediumThumbnailUrl && !cancelled) {
               const thumbRes = await fetch(mediumThumbnailUrl)
@@ -700,6 +423,17 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             effectiveMime ?? undefined,
             file.chunk_count,
             file.size_bytes,
+            {
+              onProgress: onTransfer,
+              signal: abort.signal,
+              mediaCapBytes: WHOLE_FILE_MEDIA_CAP_BYTES,
+              // C5: the renderer's rule (row MIME first) decides "is media".
+              rowMimeType: file.mime_type ?? null,
+              // SF-0002: only an OWNER key may fall back to a repaired key.
+              masterKey: ownerDerived ? getMasterKey() : undefined,
+              // A9c: a request row's name lives under its own key, its content under C.
+              nameKey,
+            },
           )
           plaintext = res.plaintext
         } else {
@@ -711,9 +445,20 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             v.id,
             fileKey,
             file.name_encrypted,
-            file.mime_type ?? undefined,
+            effectiveMime ?? undefined,
             v.chunk_count,
             v.size_bytes,
+            {
+              onProgress: onTransfer,
+              signal: abort.signal,
+              mediaCapBytes: WHOLE_FILE_MEDIA_CAP_BYTES,
+              // C5: the renderer's rule (row MIME first) decides "is media".
+              rowMimeType: file.mime_type ?? null,
+              // SF-0002: only an OWNER key may fall back to a repaired key.
+              masterKey: ownerDerived ? getMasterKey() : undefined,
+              // A9c: a request row's name lives under its own key, its content under C.
+              nameKey,
+            },
           )
         }
         if (!cancelled) {
@@ -738,11 +483,24 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     async function loadWithRetry() {
       const maxAttempts = 3
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (attempt > 1) {
+          // Each attempt starts from a clean transfer state (item 10): a retry
+          // must not show the previous attempt's bytes/parts. C7: the throttle
+          // starts fresh too, so the new attempt's first event is not held
+          // behind the previous attempt's 150 ms window.
+          throttle.reset()
+          if (!cancelled) setTransfer(null)
+        }
         try {
           await loadAndDecrypt()
           return
         } catch (err: unknown) {
           if (cancelled) return
+          // An over-cap card is a decision, not a failure: show the card.
+          if (err instanceof TooLargeToPreviewError) {
+            setCapCopy(err.message)
+            return
+          }
           if (isTransientNetworkError(err) && attempt < maxAttempts) {
             await new Promise((r) => setTimeout(r, 400 * attempt))
             if (cancelled) return
@@ -757,25 +515,39 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
     return () => {
       cancelled = true
+      throttle.cancel()
+      // A cleanup always clears the version spinner too (item 7).
+      setVersionLoading(false)
+      abort.abort()
     }
     // `versions` is intentionally NOT a dependency — see versionsRef above.
-  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, resolveFileKey, file, selectedVersionId, effectiveMime, name])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- C6: keyed on content identity; inputs via loadInputsRef
+  }, [file.id, selectedVersionId, isUnlocked, file.chunk_count, file.size_bytes, stream.streaming, stream.blockWholeFile])
 
   const handleRestore = useCallback(async () => {
     if (selectedVersionId === null) return
+    const version = versions?.find((v) => v.id === selectedVersionId)
+    if (!version) return
     if (!confirm('Restore this version? The current version becomes a previous one.')) return
     try {
-      await restoreVersion(file.id, selectedVersionId)
+      // SF-0002 round 2 (W4): refused when the row is read-only, and when the
+      // version being restored is upper_repair-sealed; nothing is POSTed then.
+      await restoreOwnerVersion({
+        file,
+        version,
+        masterKey: isUnlocked ? getMasterKey() : undefined,
+        residentUserId: getResidentUserId(),
+      })
       // After restore: refetch versions, snap back to live.
       const res = await listVersions(file.id)
       setVersions(res.versions)
       setCurrentVersionNumber(res.current_version)
       setSelectedVersionId(null)
       onVersionRestored?.()
-    } catch {
-      setError('Restore failed. The version may have been deleted.')
+    } catch (err) {
+      setError(ownerWriteRefusal(err) ?? 'Restore failed. The version may have been deleted.')
     }
-  }, [file.id, selectedVersionId, onVersionRestored])
+  }, [file, versions, selectedVersionId, isUnlocked, getMasterKey, getResidentUserId, onVersionRestored])
 
   // ── Text/markdown/code editor (task 1563) ─────────────────────────────────
   // Editing is only offered for the LIVE version — editing a historical
@@ -942,7 +714,17 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     ? { zoom, rotation, onZoomChange: setZoom, onClose, onPrev, onNext, hasPrev, hasNext, onRawInfo: setRawExifInfo }
     : undefined
 
-  const renderer = blob ? pickRenderer(effectiveMime, blob, name, imageControls, blobIsOriginal) : null
+  // LD-0001 PR-B: a streaming session renders the media element against
+  // /sw-stream/<id> — no blob exists on that path.
+  const streamRenderer =
+    stream.src && mediaKind === 'video' ? (
+      <VideoPreview src={stream.src} onElement={stream.setElement} overlay={stream.overlay} />
+    ) : stream.src && mediaKind === 'audio' ? (
+      <AudioPreview src={stream.src} filename={name} onElement={stream.setElement} />
+    ) : null
+  const renderer = blob
+    ? pickRenderer(effectiveMime, blob, name, imageControls, blobIsOriginal)
+    : streamRenderer
   const canPreview = renderer !== null
 
   function saveBlob(data: Blob) {
@@ -963,15 +745,58 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // rather than silently saving a downscaled WebP.
   async function handleDownload() {
     if (downloading) return
-    if (blob && blobIsOriginal) {
-      saveBlob(blob)
+    // The decision is pure (preview-load-policy.ts): the branch taken here is
+    // the branch under test.
+    const action = chooseDownloadAction({
+      hasOriginalBlob: !!blob && blobIsOriginal,
+      overCap: capCopy !== null,
+      selectedVersionId,
+      file,
+      version:
+        selectedVersionId === null
+          ? null
+          : versions?.find((x) => x.id === selectedVersionId) ?? null,
+    })
+    if (action.kind === 'save-blob') {
+      if (blob) saveBlob(blob)
       return
     }
     try {
       setDownloading(true)
-      const fileKey = await resolveFileKey()
+      const { key: fileKey, nameKey, ownerDerived } = await resolveFileKey()
+      if (action.kind === 'stream-to-disk') {
+        // The over-cap card has no Blob and must NEVER load the whole file into
+        // memory: stream the plaintext to disk through the service worker, the
+        // same path the toolbar Download uses (item 2). `downloading` disables
+        // the button for the duration. C4: closing the preview (or switching
+        // file or version) aborts it, and nothing updates state afterwards.
+        const abort = new AbortController()
+        overCapAbortRef.current?.abort()
+        overCapAbortRef.current = abort
+        await streamOverCapDownload(
+          {
+            fileId: file.id,
+            fileKey,
+            nameEncrypted: file.name_encrypted,
+            mimeType: effectiveMime ?? undefined,
+            versionId: action.versionId,
+            chunkCount: action.chunkCount,
+            sizeBytes: action.sizeBytes,
+            // A9c: a request row's name lives under its own key, its content under C.
+            nameKey,
+          },
+          {
+            signal: abort.signal,
+            onProgress: (written, total) => {
+              if (mountedRef.current && !abort.signal.aborted) setSavedProgress({ written, total })
+            },
+          },
+        )
+        return
+      }
+      if (action.kind === 'version-not-found') throw new Error('Version not found')
       let original: Blob
-      if (selectedVersionId === null) {
+      if (action.kind === 'decrypt-live') {
         const res = await decryptToBlob(
           file.id,
           fileKey,
@@ -979,28 +804,51 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           effectiveMime ?? undefined,
           file.chunk_count,
           file.size_bytes,
+          {
+            masterKey: ownerDerived ? getMasterKey() : undefined,
+            // A9c: a request row's name lives under its own key, its content under C.
+            nameKey,
+          },
         )
         original = res.plaintext
       } else {
-        const v = versions?.find((x) => x.id === selectedVersionId)
-        if (!v) throw new Error('Version not found')
         original = await decryptVersionToBlob(
           file.id,
-          v.id,
+          action.versionId,
           fileKey,
           file.name_encrypted,
-          file.mime_type ?? undefined,
-          v.chunk_count,
-          v.size_bytes,
+          effectiveMime ?? undefined,
+          action.chunkCount,
+          action.sizeBytes,
+          {
+            masterKey: ownerDerived ? getMasterKey() : undefined,
+            // A9c: a request row's name lives under its own key, its content under C.
+            nameKey,
+          },
         )
       }
       saveBlob(original)
     } catch (err: unknown) {
+      // An abandoned (aborted) download is not an error, and an unmounted
+      // preview takes no state update (C4).
+      if (!mountedRef.current || (err as { name?: unknown } | null)?.name === 'AbortError') return
       setError(err instanceof Error ? err.message : 'Download failed')
     } finally {
-      setDownloading(false)
+      if (mountedRef.current) {
+        setDownloading(false)
+        setSavedProgress(null)
+      }
     }
   }
+
+  // C4: a different file or version, or closing the preview, abandons an
+  // over-cap download in flight.
+  useEffect(() => {
+    return () => {
+      overCapAbortRef.current?.abort()
+      overCapAbortRef.current = null
+    }
+  }, [file.id, selectedVersionId])
 
   // Keyboard navigation for prev/next (arrow keys) + ⌘E to enter the editor.
   useEffect(() => {
@@ -1045,30 +893,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   const suppressRendererForNotice =
     showReadOnlyNotice && editability!.reason !== 'too-large'
 
-  // RAW camera details (task 1574) — camera/lens/exposure rows appended to
-  // the Info rail whenever RawPreview successfully extracted them, mirroring
-  // mobile's Info sheet (task 1569). Absent for every non-RAW file, and for
-  // a RAW file with no EXIF this reader could resolve (e.g. CR3's embedded
-  // preview, which carries none — an honest gap, not a bug).
-  const rawInfoRows: [string, string][] = rawExifInfo
-    ? [
-        ...(rawExifInfo.cameraModel ? ([['Camera', rawExifInfo.cameraModel]] as [string, string][]) : []),
-        ...(rawExifInfo.lensModel ? ([['Lens', rawExifInfo.lensModel]] as [string, string][]) : []),
-        // `rawExifInfo.iso` is `mapExifToRawInfo`'s own self-labeled string
-        // ("ISO 200") — its tested contract (test/1574-raw-embedded-jpeg.test.ts),
-        // left as-is there. This row's own "ISO" label column would repeat
-        // it verbatim ("ISO  ISO 200", Codex review round 2, task 1574
-        // gate, 2026-09-27) — every sibling row's value is bare (Shutter:
-        // "1/125s", not "Shutter 1/125s"), so strip the redundant prefix
-        // here, at the one place that adds the label, not in the mapper.
-        ...(rawExifInfo.iso
-          ? ([['ISO', rawExifInfo.iso.replace(/^ISO\s*/i, '')]] as [string, string][])
-          : []),
-        ...(rawExifInfo.shutterSpeed ? ([['Shutter', rawExifInfo.shutterSpeed]] as [string, string][]) : []),
-        ...(rawExifInfo.aperture ? ([['Aperture', rawExifInfo.aperture]] as [string, string][]) : []),
-        ...(rawExifInfo.focalLength ? ([['Focal length', rawExifInfo.focalLength]] as [string, string][]) : []),
-      ]
-    : []
+  // RAW camera details (task 1574) — the Info rail's camera/lens/exposure rows.
+  const rawInfoRows = rawInfoRowsOf(rawExifInfo)
 
   return (
     <PreviewChrome
@@ -1090,7 +916,9 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       onZoomOut={isImage && blob ? handleZoomOut : undefined}
       onRotate={isImage && blob ? handleRotate : undefined}
       onEdit={
-        canEditOffice && !editing
+        ownerReadOnly
+          ? undefined
+          : canEditOffice && !editing
           ? openOfficeEditorTab
           : canEdit && !editing
             ? () => setEditing(true)
@@ -1127,54 +955,56 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
                 ? file.chunk_count
                 : versions?.find((v) => v.id === selectedVersionId)?.chunk_count
             }
-            tagsVerified={!!blob && blobIsOriginal && !error}
+            // LD-0001 PR-B: a stream verifies tags only, per distinct part.
+            tagsVerified={stream.tagsVerified || (!!blob && blobIsOriginal && !error)}
+            streamLine={stream.infoLine ?? undefined}
           />
         )
       }
     >
-      {/* Loading state */}
-      {!blob && !error && (
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-amber" />
-          <span className="text-sm text-ink-3">Decrypting...</span>
-        </div>
+      {/* Loading state — honest whole-file progress (LD-0001 PR-C) */}
+      {!blob && !error && !capCopy && !streamRenderer && !stream.errorCopy && stream.path !== 'download-card' && stream.path !== 'unsupported' && (
+        <PreviewProgress transfer={transfer} />
+      )}
+
+      {/* Over the 2 GiB whole-file media cap (contract §4 row 5) */}
+      {!blob && !error && capCopy && (
+        <OverCapCard
+          copy={capCopy}
+          downloading={downloading}
+          savedProgress={savedProgress}
+          onDownload={handleDownload}
+        />
+      )}
+
+      {/* Streaming-only states (LD-0001 PR-B, contract §4 rows 5-9). */}
+      {!blob && !error && stream.errorCopy && (
+        <StreamErrorCard
+          copy={stream.errorCopy}
+          retryable={stream.path !== 'changed'}
+          onRetry={stream.retry}
+        />
+      )}
+      {!blob && !error && stream.path === 'download-card' && (
+        <DownloadPromptCard copy={DOWNLOAD_CARD_COPY} onDownload={handleDownload} />
+      )}
+      {!blob && !error && stream.path === 'unsupported' && (
+        <DownloadPromptCard copy={UNSUPPORTED_TYPE_COPY} onDownload={handleDownload} />
       )}
 
       {/* Error state */}
       {error && (
-        <div className="flex flex-col items-center gap-3 text-center">
-          <Icon name={shareOrigin !== undefined ? 'lock' : 'shield'} size={32} className="text-red" />
-          <p className="text-sm font-medium text-ink">{error}</p>
-          {shareOrigin !== undefined && onDelete && (
-            <p className="max-w-[320px] text-xs text-ink-3">
-              You can remove the item from this folder, or ask the person who added it for a copy.
-            </p>
-          )}
-          <div className="flex items-center gap-2">
-            <BBButton variant="default" size="sm" onClick={requestClose}>
-              Close
-            </BBButton>
-            {shareOrigin !== undefined && onDelete && (
-              <BBButton variant="danger" size="sm" onClick={() => void onDelete(file)}>
-                Delete
-              </BBButton>
-            )}
-          </div>
-        </div>
+        <PreviewErrorCard
+          message={error}
+          shareSourced={shareOrigin !== undefined}
+          onClose={requestClose}
+          onDelete={onDelete && shareOrigin !== undefined ? () => void onDelete(file) : undefined}
+        />
       )}
 
       {/* Unsupported type */}
       {blob && !canPreview && (
-        <div className="flex flex-col items-center gap-4 text-center">
-          <Icon name="file" size={40} className="text-ink-3" />
-          <p className="text-sm text-ink-2">
-            Preview not available for this file type
-          </p>
-          <BBButton variant="amber" size="md" onClick={handleDownload}>
-            <Icon name="download" size={14} className="mr-2" />
-            Download
-          </BBButton>
-        </div>
+        <DownloadPromptCard copy={UNSUPPORTED_TYPE_COPY} onDownload={handleDownload} />
       )}
 
       {/* Editor (task 1563) — replaces the read-mode renderer entirely
@@ -1200,23 +1030,21 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         </div>
       )}
 
+      {/* SF-0002: repaired-from-iOS file — readable, not writable. */}
+      {!editing && ownerReadOnly && (
+        <div
+          className="mx-auto flex w-full max-w-[560px] items-start gap-2.5 rounded-md border border-line bg-paper px-4 py-3 text-left shadow-1"
+          data-testid="owner-repair-readonly-notice"
+        >
+          <Icon name="lock" size={16} className="mt-0.5 shrink-0 text-ink-3" />
+          <p className="text-[12.5px] leading-relaxed text-ink-2">{OWNER_REPAIR_READ_ONLY}</p>
+        </div>
+      )}
+
       {/* Read-only editor notice (design screen 06) — shown for a
           markdown/code/text file that fails the editability gate. */}
       {!editing && showReadOnlyNotice && editability && (
-        <div
-          className="flex w-full max-w-[520px] flex-col items-center gap-3 rounded-md border border-line bg-paper p-6 text-center shadow-1"
-          data-testid="editor-readonly-notice"
-        >
-          <Icon name={editability.reason === 'binary' ? 'file' : 'shield'} size={26} className="text-ink-3" />
-          <p className="text-sm font-semibold text-ink">{editabilityNotice(editability.reason).title}</p>
-          <p className="text-[12.5px] leading-relaxed text-ink-3">
-            {editabilityNotice(editability.reason).body}
-          </p>
-          <BBButton variant="amber" size="sm" onClick={handleDownload}>
-            <Icon name="download" size={13} className="mr-1.5" />
-            Download
-          </BBButton>
-        </div>
+        <ReadOnlyEditorNotice editability={editability} onDownload={handleDownload} />
       )}
 
       {/* Actual preview — keyed on renderKey so each blob swap (initial

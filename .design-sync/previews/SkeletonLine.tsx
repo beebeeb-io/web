@@ -1,3 +1,4 @@
+// Design-sync preview of SkeletonLine for the Claude Design project.
 import { SkeletonLine } from '@beebeeb/shared'
 
 export const Widths = () => (

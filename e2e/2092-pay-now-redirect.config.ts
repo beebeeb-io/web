@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 2092 pay now redirect spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

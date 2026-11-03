@@ -1,3 +1,4 @@
+// The two-column auth screen: marketing context plus the form.
 import type { ReactNode } from 'react'
 
 interface SplitAuthScreenProps {

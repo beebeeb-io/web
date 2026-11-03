@@ -1,3 +1,4 @@
+// Design-sync preview of BBInput for the Claude Design project.
 import { BBInput, Icon } from '@beebeeb/shared'
 
 export const Default = () => (

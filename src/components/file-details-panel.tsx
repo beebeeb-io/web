@@ -1,15 +1,17 @@
+// The file details side panel: metadata, access, and activity.
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { formatBytes } from '../lib/format'
-import { listVersions, updateFile, type VersionListItem } from '../lib/api'
+import { listVersions, type VersionListItem } from '../lib/api'
 import { canDeleteVersion, versionContentBytes, versionDeleteCopy } from '../lib/version-delete-copy'
 import { useVersionDelete, VersionDeleteConfirm } from './version-delete'
 import { useKeys } from '../lib/key-context'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
-import { openFileNote, sealFileNote, UNVERIFIED_NOTE_OWNER_COPY } from '../lib/file-note'
+import { openFileNote, writeFileNote, UNVERIFIED_NOTE_OWNER_COPY } from '../lib/file-note'
+import { ownerWriteRefusal, type WriteTarget } from '../lib/owner-write-guard'
 import { UnverifiedFileMetadataError } from '../lib/crypto'
 
 // ─── Versions tab (inline, inside the detail panel) ─────────────────────────
@@ -195,6 +197,7 @@ function EncryptedNoteSection({
   fileId,
   nameEncrypted,
   noteEncrypted,
+  writeTarget,
   getFileKey,
   onNoteUpdated,
 }: {
@@ -202,13 +205,18 @@ function EncryptedNoteSection({
   /** The file's current `name_encrypted`: its pin decides how the note is sealed (task 1943). */
   nameEncrypted: string
   noteEncrypted: string | null | undefined
+  /** The row the note belongs to, for the write-time read-only check (SF-0002). */
+  writeTarget: WriteTarget
   getFileKey: (id: string) => Promise<Uint8Array>
   onNoteUpdated?: (fileId: string, noteEncrypted: string | null) => void
 }) {
+  const { getMasterKey, getResidentUserId, isUnlocked } = useKeys()
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [refused, setRefused] = useState(false)
+  // SF-0002: the honest copy when the row is read-only or could not be checked.
+  const [writeRefusal, setWriteRefusal] = useState<string | null>(null)
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Decrypt the note on mount / when the file changes
@@ -216,6 +224,7 @@ function EncryptedNoteSection({
     setText('')
     setSaved(false)
     setRefused(false)
+    setWriteRefusal(null)
     if (!noteEncrypted) return
     let cancelled = false
     getFileKey(fileId)
@@ -244,33 +253,32 @@ function EncryptedNoteSection({
     if (saving) return
     setSaving(true)
     setRefused(false)
+    setWriteRefusal(null)
     try {
-      if (text.trim() === '') {
-        // Send empty string to clear — JSON null is deserialized as "absent"
-        // by the server's serde (Option<String>), so it would be a no-op.
-        await updateFile(fileId, { note_encrypted: '' })
-        onNoteUpdated?.(fileId, null)
-      } else {
-        const fileKey = await getFileKey(fileId)
-        // Sealed by core under the rule of THIS item's recorded pin, read from
-        // its authenticated metadata (files and folders alike: the server's
-        // folder flag never picks the key); an unreadable pin throws and
-        // nothing is written (task 1943, core 1908 round 5).
-        const stored = await sealFileNote(fileKey, text, { nameEncrypted })
-        await updateFile(fileId, { note_encrypted: stored })
-        onNoteUpdated?.(fileId, stored)
-      }
+      // SF-0002 round 2 (W4): the write-time read-only check runs before the
+      // note is sealed or cleared (lib/file-note.ts writeFileNote).
+      const stored = await writeFileNote({
+        target: writeTarget,
+        text,
+        owner: { nameEncrypted },
+        masterKey: isUnlocked ? getMasterKey() : undefined,
+        residentUserId: getResidentUserId(),
+        getFileKey,
+      })
+      onNoteUpdated?.(fileId, stored)
       setSaved(true)
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
       savedTimerRef.current = setTimeout(() => setSaved(false), 1500)
     } catch (err) {
-      // A refused owner is permanent: say so. Anything else (network) fails
-      // silently and the user can retry by blurring again.
+      // A refused owner is permanent: say so. A read-only or unchecked row
+      // says so too. Anything else (network) fails silently and the user can
+      // retry by blurring again.
       if (err instanceof UnverifiedFileMetadataError) setRefused(true)
+      else setWriteRefusal(ownerWriteRefusal(err))
     } finally {
       setSaving(false)
     }
-  }, [fileId, nameEncrypted, text, saving, getFileKey, onNoteUpdated])
+  }, [fileId, nameEncrypted, text, saving, writeTarget, isUnlocked, getMasterKey, getResidentUserId, getFileKey, onNoteUpdated])
 
   return (
     <div className="px-xl pt-lg pb-lg border-b border-line">
@@ -305,6 +313,11 @@ function EncryptedNoteSection({
           {UNVERIFIED_NOTE_OWNER_COPY}
         </div>
       )}
+      {writeRefusal && (
+        <div role="alert" className="mt-1.5 text-[10px] text-red" data-testid="note-write-refused">
+          {writeRefusal}
+        </div>
+      )}
     </div>
   )
 }
@@ -327,6 +340,8 @@ export interface FileDetailsMeta {
   /** The file's (or folder's) current `name_encrypted`; the note writer reads its pin from it. */
   nameEncrypted: string
   noteEncrypted?: string | null
+  /** The listed row: a note write runs the SF-0002 write-time read-only check on it. */
+  writeTarget: WriteTarget
 }
 
 export interface FileAccessEntry {
@@ -777,6 +792,7 @@ export function FileDetailsPanel({
                 fileId={file.id}
                 nameEncrypted={file.nameEncrypted}
                 noteEncrypted={file.noteEncrypted}
+                writeTarget={file.writeTarget}
                 getFileKey={getFileKey}
                 onNoteUpdated={onNoteUpdated}
               />

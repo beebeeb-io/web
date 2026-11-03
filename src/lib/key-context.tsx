@@ -19,6 +19,12 @@ import {
   computeRecoveryCheck,
   toBase64,
 } from './crypto'
+import {
+  clearOwnerRepairReadOnly,
+  rememberOwnerRepairKey,
+  type OwnerRepairConvention,
+} from './owner-repair'
+import { ownedItem } from './owned-item'
 import { registerLogoutCallback, registerLoginBroadcastCallback } from './auth-context'
 import {
   wrapAndStore,
@@ -50,13 +56,20 @@ import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
 import { ApiError, getFolderKeys, getSentInvites, listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
 import { sharedFoldersEnabled } from './use-feature-flag'
-import { forgetSharedFolderSession, foreignRowKey, folderKeyForRoot, openOwnerFile } from './owner-adoption'
+import { forgetSharedFolderSession, foreignRowKey, folderKeyForRoot, needsOwnership, openOwnerFile } from './owner-adoption'
 import { createSharedFolderKeyCache } from './shared-folder-key-cache'
 import { activeFolderInvites } from './folder-share-crypto'
-import { decryptActorName } from './guest-actor-name'
+import { isSealedName } from './sealed-name'
+import { decryptLinkLabel } from './link-label'
 import { useAuth } from './auth-context'
 import { isImpersonationSessionActive, shouldReconcileLock } from './impersonation-context'
-import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver } from './file-request-crypto'
+import { isRequestUpload, type ContentKey } from './request-row'
+import {
+  createRequestRowResolver,
+  type ResolvedRequestRow,
+  type RequestRowResolver,
+} from './request-row-resolver'
+import { fetchOwnerFirstChunkFrames } from './owner-write-guard'
 import { backfillRecoveryCheckIfAbsent, recoveredKeyMatchesAccount } from './recovery-validation'
 import { getAuthStamp, setExpectedUserProvider, registerAccountMismatchHandler } from '@beebeeb/shared'
 
@@ -89,6 +102,18 @@ export function isKeyBoundToUser(
   targetUserId: string | null,
 ): boolean {
   return hasKey && residentUserId === targetUserId
+}
+
+export interface FileKeyOptions {
+  /** See `getFileKey`. */
+  expectedUserId?: string
+  /**
+   * L12 read path: a plaintext-named owner FILE picks its key convention from
+   * chunk 0, so the resolver fetches that frame and passes it to core. Only
+   * reads (download, zip, preview, rename) opt in; share-link creation must
+   * not, or a link would wrap a key it could not authenticate from the name.
+   */
+  plaintextChunk?: boolean
 }
 
 interface KeyState {
@@ -147,7 +172,14 @@ interface KeyState {
    *  files use the normal derive_file_key(master, id) path. Prefer this over
    *  getFileKey wherever the full file object is available (naming, preview,
    *  download). `expectedUserId` — see `getFileKey`. */
-  getFileKeyForFile: (file: DriveFile, expectedUserId?: string) => Promise<Uint8Array>
+  getFileKeyForFile: (file: DriveFile, options?: FileKeyOptions) => Promise<ContentKey>
+  /** 2275 §15: a request row, resolved by core: the name core decrypted, the
+   *  seal it opened, and a decrypt-only content source (never a key). Every
+   *  other row is not a request row and must use `getFileKeyForFile`. */
+  getRequestRow: (file: DriveFile, expectedUserId?: string) => Promise<ResolvedRequestRow>
+  /** §15: the ONLY request-row rename path — the new name sealed under the
+   *  string-convention key, never under C. Refuses a read-only row. */
+  sealRequestRename: (file: DriveFile, newName: string) => Promise<string>
   /** Task 2237b: the key for a file the owner did not upload (a guest- or
    *  member-added row in a shared folder). Resolves the owner wrap or the
    *  folder key's copy of the file key, adopting the file on first sight.
@@ -591,7 +623,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
 
   // Lazily-created resolver for files received through a file request. Caches the
   // request list + unwrapped R_priv per request for the drive session.
-  const requestResolverRef = useRef<RequestKeyResolver | null>(null)
+  const requestResolverRef = useRef<RequestRowResolver | null>(null)
 
   // Successful key indexes are reused; misses refresh once, rejected fetches are evicted.
   const sharedFolderCacheRef = useRef(createSharedFolderKeyCache(async (folderId) => {
@@ -625,7 +657,11 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     const key = await folderKeyForRoot(masterKeyRef.current as Uint8Array, folderId)
     try {
       for (const link of links) {
-        labels.set(link.id, key && link.label_encrypted ? await decryptActorName(key, link.label_encrypted) : null)
+        // L16: a label opens under the OWNER's master key, bound to the share id.
+        labels.set(
+          link.id,
+          await decryptLinkLabel(masterKeyRef.current as Uint8Array, link.id, link.label_encrypted),
+        )
       }
     } finally {
       if (key) zeroize(key)
@@ -633,29 +669,59 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     return labels
   }))
 
-  const getFileKeyForFile = useCallback(async (file: DriveFile, expectedUserId?: string): Promise<Uint8Array> => {
-    if (!isBoundTo(expectedUserId)) {
+  const getFileKeyForFile = useCallback(async (file: DriveFile, options: FileKeyOptions = {}): Promise<ContentKey> => {
+    if (!isBoundTo(options.expectedUserId)) {
       throw new Error('Vault is locked — unlock first')
     }
     const key = masterKeyRef.current as Uint8Array
-    if (isRequestUpload(file)) {
-      if (!requestResolverRef.current) requestResolverRef.current = createRequestKeyResolver()
-      return requestResolverRef.current.resolveFileKey(file, key)
-    }
-    // Task 2237b: a row a link guest or another member added to a shared
-    // folder is not sealed under a key we derive. Every caller (download, zip,
-    // rename, versions, thumbnails), not only the listing, must take the
-    // shared-folder path for it; a row that does not open there falls through
-    // to the derived key and fails its own integrity check honestly. Only with
-    // the flag on (rv-web198d R1): with it off this asks nothing, as on main.
-    const shared = await foreignRowKey({
-      masterKey: key,
+    return fileKeyForFileWith({
       file,
-      viewerId: residentKeyUserIdRef.current,
-      keyIndexFor: (root, fileId) => sharedFolderCacheRef.current.forFile(root, fileId),
+      requestContent: async () => {
+        // §15: only core holds the row's content key, and the reader is the way
+        // to it. An id-derived key would never open the row's name or content.
+        if (!requestResolverRef.current) requestResolverRef.current = createRequestRowResolver()
+        return (await requestResolverRef.current.resolveRow(file, key)).content
+      },
+      ownerKey: async () => {
+        // Task 2237b: a row a link guest or another member added to a shared
+        // folder is not sealed under a key we derive. Every caller (download,
+        // zip, rename, versions, thumbnails), not only the listing, must take
+        // the shared-folder path for it. SF-0002 review: a foreign row the
+        // shared path cannot open is UNAVAILABLE — it never falls through to an
+        // owner key. Only with the flag on (rv-web198d R1): off, this asks
+        // nothing.
+        const shared = await foreignRowKey({
+          masterKey: key,
+          file,
+          viewerId: residentKeyUserIdRef.current,
+          keyIndexFor: (root, fileId) => sharedFolderCacheRef.current.forFile(root, fileId),
+        })
+        if (options.plaintextChunk) {
+          return resolveOwnerKeyForRead(key, file, residentKeyUserIdRef.current, shared)
+        }
+        return resolveOwnerKeyForFile(key, file, residentKeyUserIdRef.current, shared)
+      },
     })
-    if (shared) return shared
-    return deriveFileKey(key, file.id)
+  }, [isBoundTo])
+
+  /**
+   * 2275 §15 — a request row as core resolved it: name, seal, rename target and
+   * a decrypt-only content source. Never a key: only core holds the row's
+   * content key and the reader is the way to it.
+   */
+  const getRequestRow = useCallback(async (file: DriveFile, expectedUserId?: string): Promise<ResolvedRequestRow> => {
+    if (!isBoundTo(expectedUserId)) {
+      throw new Error('Vault is locked — unlock first')
+    }
+    if (!isRequestUpload(file)) throw new Error('getRequestRow called on a non-request file')
+    if (!requestResolverRef.current) requestResolverRef.current = createRequestRowResolver()
+    return requestResolverRef.current.resolveRow(file, masterKeyRef.current as Uint8Array)
+  }, [isBoundTo])
+
+  const sealRequestRename = useCallback(async (file: DriveFile, newName: string): Promise<string> => {
+    if (!isBoundTo()) throw new Error('Vault is locked — unlock first')
+    if (!requestResolverRef.current) requestResolverRef.current = createRequestRowResolver()
+    return requestResolverRef.current.sealRename(file, newName, masterKeyRef.current as Uint8Array)
   }, [isBoundTo])
 
   const getSharedFileOrigin = useCallback(async (file: DriveFile, folderId: string): Promise<string | null> => {
@@ -735,6 +801,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     // custody memory: that belongs to the device (L7d).
     forgetSharedFolderSession()
     clearCachedKey()
+    clearOwnerRepairReadOnly()
     void clearOfflineCaches()
     void clearThumbnailCache()
     setKeyPresent(false)
@@ -924,6 +991,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       getResidentUserId,
       getFileKey,
       getFileKeyForFile,
+      getRequestRow,
+      sealRequestRename,
       getFileKeyForSharedFile,
       getSharedFileOrigin,
       getMasterKey,
@@ -931,10 +1000,142 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       lock,
       fullLogout,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, discardStalePasswordVault, lock, fullLogout],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getRequestRow, sealRequestRename, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, discardStalePasswordVault, lock, fullLogout],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>
+}
+
+
+/**
+ * 2275 §15 / 2326 review P3-3 — where ONE row's file key comes from.
+ *
+ * A row received through a file request has no key to hand out: core's resolver
+ * returns a decrypt-only content source, and an id-derived key would never open
+ * its name or content (an F-class row is refused outright). Every other row
+ * takes the owner / shared-folder path. The fork lives here so the refusal is
+ * testable without a React tree — download, zip, share links, the preview and
+ * the list all reach it through `getFileKeyForFile`.
+ */
+export function fileKeyForFileWith(deps: {
+  file: DriveFile
+  /** Core's decrypt-only content source for a request row. */
+  requestContent: () => Promise<ContentKey>
+  /** Owner / shared-folder key. Never taken for a request row. */
+  ownerKey: () => Promise<Uint8Array>
+}): Promise<ContentKey> {
+  return isRequestUpload(deps.file) ? deps.requestContent() : deps.ownerKey()
+}
+
+
+/**
+ * SF-0002 review: the key an OWNER row is read and written under.
+ *
+ * - a key the shared-folder path resolved wins (the row is not ours to re-key);
+ * - with the shared-folders flag ON, a FOREIGN row the shared path could not
+ *   open is unavailable: it never falls through to the owner's derived or
+ *   repair key;
+ * - with the flag OFF there is no shared-folder path at all, so a foreign row
+ *   gets the derived key exactly as on main (rv-web198d R1: "with it off this
+ *   asks nothing") and fails its own integrity check honestly; it is never
+ *   offered the owner repair key;
+ * - otherwise core's `resolveOwnedKey` decides the key: it tries the string
+ *   derivation, then the binary one, then the read-only upper repair, and
+ *   returns a key only when the served name authenticates under it. A
+ *   plaintext name authenticates nothing for a FILE (core needs chunk 0 to
+ *   pick the convention), so such a row is unavailable — never a guessed
+ *   derivation handed to a share link. Core also marks an upper-repair row
+ *   read-only, which this function records.
+ *
+ * `sharedFoldersOn` is read only for a foreign row (injected by tests).
+ */
+export async function resolveOwnerKeyForFile(
+  masterKey: Uint8Array,
+  file: DriveFile,
+  viewerId: string | null,
+  sharedKey: Uint8Array | null,
+  sharedFoldersOn: () => Promise<boolean> = sharedFoldersEnabled,
+  firstChunkFrame?: Uint8Array | null,
+): Promise<Uint8Array> {
+  if (sharedKey) return sharedKey
+  if (needsOwnership(file, viewerId)) {
+    // SF-0002 round 2 (W3): the refusal is the flag-on rule only.
+    if (await sharedFoldersOn()) throw new Error("Can't open this file")
+    return deriveFileKey(masterKey, file.id)
+  }
+  let resolved
+  try {
+    resolved = await ownedItem.resolve({
+      masterKey,
+      itemId: file.id,
+      kind: file.is_folder ? 2 : 1,
+      nameEncrypted: file.name_encrypted,
+      firstChunkFrame,
+    })
+  } catch {
+    // Core could not authenticate the served name under any key it may use.
+    // Unavailable, never a key the client guessed for the link to wrap.
+    throw new Error("Can't open this file")
+  }
+  // Core's origin names the convention; a repair key is remembered so the
+  // content fallback knows which key this row's name resolved to (and an
+  // upper-repair row is marked read-only).
+  const convention: OwnerRepairConvention | null =
+    resolved.origin === 'derived_binary'
+      ? 'binary'
+      : resolved.origin === 'derived_upper_repair'
+        ? 'upper_repair'
+        : null
+  if (convention) rememberOwnerRepairKey(file.id, { fileKey: resolved.key, convention })
+  return resolved.key
+}
+
+/**
+ * L12 read path (review-2 N3): an owner FILE with a plaintext name has no
+ * authenticated name, so core picks its key convention from the content's
+ * first chunk and refuses to resolve the row without that frame. The read
+ * paths fetch chunk 0 and try each candidate length; the first that core
+ * authenticates is the row's key. Folders, shared-folder rows, request uploads
+ * and rows needing ownership take the ordinary path unchanged, and a failed
+ * fetch or no authenticating frame stays unavailable — never a guessed key.
+ */
+export async function resolveOwnerKeyForRead(
+  masterKey: Uint8Array,
+  file: DriveFile,
+  viewerId: string | null,
+  sharedKey: Uint8Array | null,
+  deps: {
+    sharedFoldersOn?: () => Promise<boolean>
+    fetchFrames?: (file: DriveFile) => Promise<Uint8Array[]>
+  } = {},
+): Promise<Uint8Array> {
+  const plaintextName = !isSealedName(file.name_encrypted)
+  if (sharedKey || file.is_folder || !plaintextName || needsOwnership(file, viewerId)) {
+    return resolveOwnerKeyForFile(masterKey, file, viewerId, sharedKey, deps.sharedFoldersOn)
+  }
+  let frames: Uint8Array[] = []
+  try {
+    frames = await (deps.fetchFrames ?? fetchOwnerFirstChunkFrames)(file)
+  } catch {
+    frames = []
+  }
+  for (const frame of frames) {
+    try {
+      return await resolveOwnerKeyForFile(
+        masterKey,
+        file,
+        viewerId,
+        sharedKey,
+        deps.sharedFoldersOn,
+        frame,
+      )
+    } catch {
+      // This length was not frame 0's; the next candidate may be.
+    }
+  }
+  // Nothing authenticated: the ordinary resolver reports the row unavailable
+  // (or opens it through a wrap that needs no content frame).
+  return resolveOwnerKeyForFile(masterKey, file, viewerId, sharedKey, deps.sharedFoldersOn)
 }
 
 export function useKeys(): KeyState {

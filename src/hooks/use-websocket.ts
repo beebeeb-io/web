@@ -1,3 +1,4 @@
+// The low-level WebSocket connect/reconnect loop behind WsProvider.
 import { useCallback, useEffect, useRef } from 'react'
 import { getApiUrl, getStreamToken } from '../lib/api'
 

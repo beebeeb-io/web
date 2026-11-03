@@ -1,7 +1,9 @@
+// The app entry point: mounts the provider tree and router.
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { initTelemetry } from '@beebeeb/shared'
 import { App } from './app'
+import { ensureShareLinkWasm } from './lib/share-links-wasm'
 import './lib/i18n'
 import './index.css'
 
@@ -20,8 +22,17 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {})
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+// The share-link builder reads core's grammar (`beebeeb-wasm`)
+// synchronously during render, so the module has to be in memory before the
+// first render. The share dialog is the only synchronous consumer; everything
+// else awaits on demand. A load failure is not fatal: the app renders, and the
+// crypto and formatting modules retry the same module on their own.
+ensureShareLinkWasm()
+  .catch(() => {})
+  .then(() => {
+    createRoot(document.getElementById('root')!).render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    )
+  })

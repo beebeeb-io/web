@@ -1,3 +1,4 @@
+// Decrypts activity-event file names and renders raw events as human-readable descriptions.
 import type {
   AccountActivityEvent,
   ActivityEncryptedNameSnapshot,

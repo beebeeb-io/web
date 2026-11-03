@@ -1,3 +1,4 @@
+// The toast queue, provider, and hook.
 import { useState, useCallback, useRef, useEffect, createContext, useContext } from 'react'
 import type { ReactNode } from 'react'
 import { Icon } from '@beebeeb/shared'

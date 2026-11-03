@@ -1,3 +1,4 @@
+// The recovery-phrase verification step: ordered word selection.
 import { useState, useMemo } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'

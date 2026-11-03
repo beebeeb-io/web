@@ -1,3 +1,4 @@
+// Groups IANA timezones for the settings picker.
 export interface TimezoneEntry {
   value: string
   label: string

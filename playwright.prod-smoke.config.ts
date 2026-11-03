@@ -1,3 +1,4 @@
+// Playwright config for the prod smoke run against a deployed web origin.
 import { defineConfig } from '@playwright/test'
 
 /**

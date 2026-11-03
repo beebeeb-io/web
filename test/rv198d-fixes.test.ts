@@ -20,6 +20,7 @@ import { preserveGlobals, setGlobal } from './helpers/scoped-global'
 import { legacyOwnerCopy, ownedFolderCrypto } from './helpers/owned-folder-wasm'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import { createContentOps } from '../src/lib/content-crypto'
+import { encodeEnvelope } from '../src/lib/metadata-envelope'
 
 const wasm = loadWasm()
 const ops = createContentOps(wasm)
@@ -28,7 +29,8 @@ const MEMBER = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 const MASTER = new Uint8Array(32).fill(7)
 const ROOT = '11111111-1111-4111-8111-111111111111'
 const SUB = '33333333-3333-4333-8333-333333333333'
-const FILE_ID = '22222222-2222-4222-8222-222222222222'
+// A member-created row carries an F id (L12); adoption and owner wraps are F-only.
+const FILE_ID = '22222222-2222-8222-8222-222222222222'
 const LEGACY_KEY = new Uint8Array(32).fill(0x5a)
 const CUSTODY_KEY = new Uint8Array(32).fill(0x77)
 const CHILD_KEY = new Uint8Array(32).fill(0x11)
@@ -75,6 +77,12 @@ const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) =>
   deriveFileKey: async (m: Uint8Array, id: string) => wasm.derive_file_key(m, encoder.encode(id)),
   readFileMetadata: async (k: Uint8Array, n: string) => ops.readFileMetadata(k, n),
 }))
+// The id class and resolver are core's (L12), run in process here.
+const { createOwnedItemOps } = await import('../src/lib/owned-item')
+await mockModuleScoped('../src/lib/owned-item', import.meta.dir, {
+  ownedItem: createOwnedItemOps(wasm),
+})
+
 const api = await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => {
   const ApiErrorClass = r.ApiError as unknown as new (m: string, s: number, code?: string) => Error
   return {
@@ -209,20 +217,20 @@ describe('rv198d N1 / contract §2: a folder with legacy rows needs the upgrade,
 describe('rv198d N2: a flag read that says off never skips a publish for a folder seen with custody', () => {
   test('control: flag on, an upload into a custody folder publishes its L7 wrap', async () => {
     custody = 'record'
-    await publishOwnerUploadKey(MASTER, ROOT, FILE_ID, CHILD_KEY)
+    await publishOwnerUploadKey(ROOT, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })
     expect(published).toEqual([FILE_ID])
   })
 
   test('flag read off, folder seen with custody: the publish throws instead of resolving with nothing sent', async () => {
     custody = 'record'; markCustodySeen(ROOT); flagOn = false
-    await expect(publishOwnerUploadKey(MASTER, ROOT, FILE_ID, CHILD_KEY)).rejects.toThrow("This folder's keys are unavailable")
+    await expect(publishOwnerUploadKey(ROOT, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })).rejects.toThrow("This folder's keys are unavailable")
     expect(published).toEqual([])
     expect(custodyCalls).toBe(0)
   })
 
-  test('flag read off, a subfolder of a folder seen with custody: also refused (the walk finds the root)', async () => {
+  test('flag read off, a subfolder of a folder seen with custody: also refused (the check finds the ancestor)', async () => {
     markCustodySeen(ROOT); flagOn = false
-    await expect(publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)).rejects.toThrow("This folder's keys are unavailable")
+    await expect(publishOwnerUploadKey(SUB, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })).rejects.toThrow("This folder's keys are unavailable")
     expect(custodyCalls).toBe(0)
   })
 
@@ -235,7 +243,7 @@ describe('rv198d N2: a flag read that says off never skips a publish for a folde
 
   test('flag off and nothing seen with custody (all of prod today): no request at all, no throw', async () => {
     flagOn = false
-    for (let i = 0; i < 3; i += 1) await publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)
+    for (let i = 0; i < 3; i += 1) await publishOwnerUploadKey(SUB, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })
     expect(custodyCalls).toBe(0)
     expect(parentCalls).toBe(0)
     expect(published).toEqual([])
@@ -252,7 +260,7 @@ describe('rv198d N3 / R1: the owner never opens a row through a legacy owner cop
     // Everything below is computable by the server: the "folder key" is the folder's name JSON.
     const forgedRow = await share.legacyInviteChildWrap(encoder.encode(json), SERVER_FILE_KEY)
     const fn = wasm.encrypt_metadata(SERVER_FILE_KEY, JSON.stringify({ name: 'invoice.pdf', mime_type: 'application/pdf' })) as { nonce: Uint8Array; ciphertext: Uint8Array }
-    const file = { id: FILE_ID, parent_id: ROOT, uploaded_by: MEMBER, name_encrypted: real.serializeEncryptedBlob(fn.nonce, fn.ciphertext) as string }
+    const file = { id: FILE_ID, parent_id: ROOT, uploaded_by: MEMBER, name_encrypted: encodeEnvelope(wasm, fn.nonce, fn.ciphertext) }
     return { file, forgedRow }
   }
 
@@ -279,7 +287,7 @@ describe('rv198d N3 / R1: the owner never opens a row through a legacy owner cop
   test('control: a custody folder still opens and adopts (flag on)', async () => {
     custody = 'record'
     const fn = wasm.encrypt_metadata(CHILD_KEY, JSON.stringify({ name: 'a.txt', mime_type: null })) as { nonce: Uint8Array; ciphertext: Uint8Array }
-    const file = { id: FILE_ID, parent_id: ROOT, uploaded_by: MEMBER, name_encrypted: real.serializeEncryptedBlob(fn.nonce, fn.ciphertext) as string }
+    const file = { id: FILE_ID, parent_id: ROOT, uploaded_by: MEMBER, name_encrypted: encodeEnvelope(wasm, fn.nonce, fn.ciphertext) }
     const row = await share.sealChildKey(CUSTODY_KEY, { rootId: ROOT, itemId: FILE_ID, isFolder: false }, CHILD_KEY)
     const res = await adoption.openOwnerFile({ masterKey: MASTER, folderId: ROOT, file,
       keyIndexPromise: Promise.resolve(new Map([[FILE_ID, row]])), labelFor: async () => null })
@@ -291,7 +299,7 @@ describe('rv198d N3 / R1: the owner never opens a row through a legacy owner cop
     custody = 'record'
     flagOn = false
     const fn = wasm.encrypt_metadata(CHILD_KEY, JSON.stringify({ name: 'a.txt', mime_type: null })) as { nonce: Uint8Array; ciphertext: Uint8Array }
-    const file = { id: FILE_ID, parent_id: ROOT, uploaded_by: MEMBER, name_encrypted: real.serializeEncryptedBlob(fn.nonce, fn.ciphertext) as string }
+    const file = { id: FILE_ID, parent_id: ROOT, uploaded_by: MEMBER, name_encrypted: encodeEnvelope(wasm, fn.nonce, fn.ciphertext) }
     const row = await share.sealChildKey(CUSTODY_KEY, { rootId: ROOT, itemId: FILE_ID, isFolder: false }, CHILD_KEY)
     await adoption.openOwnerFile({ masterKey: MASTER, folderId: ROOT, file,
       keyIndexPromise: Promise.resolve(new Map([[FILE_ID, row]])), labelFor: async () => null })
@@ -322,7 +330,7 @@ describe("R1: getFileKeyForFile's foreign-row branch is flag-gated (foreignRowKe
     custody = 'record'
     const row = await share.sealChildKey(CUSTODY_KEY, { rootId: ROOT, itemId: FILE_ID, isFolder: false }, CHILD_KEY)
     const fn = wasm.encrypt_metadata(CHILD_KEY, JSON.stringify({ name: 'a.txt', mime_type: null })) as { nonce: Uint8Array; ciphertext: Uint8Array }
-    const file = { ...memberRow, parent_id: ROOT, name_encrypted: real.serializeEncryptedBlob(fn.nonce, fn.ciphertext) as string }
+    const file = { ...memberRow, parent_id: ROOT, name_encrypted: encodeEnvelope(wasm, fn.nonce, fn.ciphertext) }
     const key = await adoption.foreignRowKey({ masterKey: MASTER, file, viewerId: 'acct-owner',
       keyIndexFor: async () => new Map([[FILE_ID, row]]) })
     expect(Array.from(key ?? [])).toEqual(Array.from(CHILD_KEY))
@@ -380,7 +388,20 @@ describe('L7d: legacy is refused when ANY ancestor is in the set, not only the r
   test('an owner upload into SUB throws instead of skipping its publish (flag on)', async () => {
     markCustodySeen(ROOT)
     sentInvites = await subInvite()
-    await expect(publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)).rejects.toThrow("This folder's keys are unavailable")
+    // The live path: the format check that walks up past SUB finds ROOT's
+    // custody, and refuses before any proof exists, so nothing can be sealed
+    // under a key this client does not hold.
+    const { publishOrDeferOwnerUpload } = await import('../src/lib/owner-upload-key')
+    const { noteFolderClick, noteUrlFolder, resetAnchorsForTests } = await import('../src/lib/publish-anchor')
+    // The trail is process state and this file does not reset it per test:
+    // start from nothing and let the URL settle on SUB, so the anchor check
+    // is not what stops the call before the format check runs.
+    resetAnchorsForTests()
+    noteFolderClick(SUB)
+    noteUrlFolder(SUB)
+    await expect(
+      publishOrDeferOwnerUpload({ masterKey: MASTER, parentId: SUB, fileId: FILE_ID, fileKey: CHILD_KEY }),
+    ).rejects.toThrow("This folder's keys are unavailable")
     expect(published).toEqual([])
   })
 
@@ -418,7 +439,7 @@ describe('rv-web198e P3: on a write, a failed flag read aborts; it is never "off
   // under one this device has seen with custody (N2), where it fails.
   test('after a commit, an unanswered flag read with nothing seen above skips: no request, no throw', async () => {
     flagReadFails = true
-    await publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)
+    await publishOwnerUploadKey(SUB, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })
     await moveOwnerItems({ ids: [FILE_ID], destinationId: SUB, rows: [{ id: FILE_ID }], masterKey: MASTER, viewerId: null })
     expect(published).toEqual([])
     expect(custodyCalls + parentCalls).toBe(0)
@@ -427,7 +448,7 @@ describe('rv-web198e P3: on a write, a failed flag read aborts; it is never "off
   test('after a commit, an unanswered flag read under a folder seen with custody still fails', async () => {
     flagReadFails = true
     markCustodySeen(ROOT)
-    await expect(publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)).rejects.toThrow("This folder's keys are unavailable")
+    await expect(publishOwnerUploadKey(SUB, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })).rejects.toThrow("This folder's keys are unavailable")
     await expect(moveOwnerItems({ ids: [FILE_ID], destinationId: SUB, rows: [{ id: FILE_ID }], masterKey: MASTER, viewerId: null }))
       .rejects.toThrow(MOVED_BUT_UNPUBLISHED)
     expect(published).toEqual([])
@@ -436,7 +457,7 @@ describe('rv-web198e P3: on a write, a failed flag read aborts; it is never "off
   test('control: a real "off" answer is still off for writes (nothing asked, legacy invite build as on main)', async () => {
     flagOn = false
     expect(await share.custodyFolderKey(MASTER, ROOT)).toBeNull()
-    await publishOwnerUploadKey(MASTER, ROOT, FILE_ID, CHILD_KEY)
+    await publishOwnerUploadKey(ROOT, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })
     expect(custodyCalls).toBe(0)
   })
 

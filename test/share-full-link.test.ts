@@ -1,5 +1,13 @@
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import { buildFullShareLink } from '../src/lib/share-full-link'
+import { ensureShareLinkWasm } from '../src/lib/share-links-wasm'
+
+// buildFullShareLink calls core's synchronous grammar. Importing the module
+// kicks off the wasm load, but a loaded CI runner can win the race to the
+// first test, so wait for it here rather than depending on the runner's speed.
+beforeAll(async () => {
+  await ensureShareLinkWasm()
+})
 
 /**
  * Task 1690 — every produced/copyable share string is ONE full link.

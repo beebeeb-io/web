@@ -20,6 +20,11 @@ const FILE_ID = '22222222-2222-4222-8222-222222222222'
 const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
   ...r,
   unwrapFolderChild: ownedFolderCrypto().unwrapFolderChild,
+  // F9 (L13): memberUploadFiles mints each create's id through core. Without
+  // this mirror the call crosses to the crypto worker, which has no worker
+  // under `bun test`, and every upload hangs until the test times out.
+  mintItemIdWorker: async (masterKey: Uint8Array, foreign: boolean) =>
+    foreign ? wasm.newForeignItemId(masterKey) : wasm.newOwnerItemId(masterKey),
   deriveFileKey: async (masterKey: Uint8Array, fileId: string) =>
     wasm.derive_file_key(masterKey, encoder.encode(fileId)),
   encryptChunk: async (key: Uint8Array, plaintext: Uint8Array) => {
@@ -30,6 +35,10 @@ const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) =>
     wasm.decrypt_chunk(key, nonce, ciphertext),
   // The name writer is a worker crossing too; seal it here so the assertion can
   // open the blob with the item key and prove the folder key cannot.
+  // W-P3-2 moved the envelope writer behind the crypto worker; seal it here in
+  // the same numeric form the assertions open with `decrypt_chunk`.
+  serializeEncryptedBlob: async (nonce: Uint8Array, ciphertext: Uint8Array) =>
+    JSON.stringify({ nonce: Array.from(nonce), ciphertext: Array.from(ciphertext) }),
   encryptFilename: async (key: Uint8Array, filename: string) => {
     const out = wasm.encrypt_chunk(key, encoder.encode(filename))
     return { nonce: out.nonce as Uint8Array, ciphertext: out.ciphertext as Uint8Array }

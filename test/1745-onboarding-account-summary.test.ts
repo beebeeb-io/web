@@ -1,5 +1,13 @@
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import { formatDay, formatSize, summarizeAccount } from '../src/lib/onboarding/account-summary'
+import { ensureWasm } from '../src/lib/format'
+
+// formatSize() falls back to "<n> B" until core's wasm is in memory; the
+// module-load init is async, so a loaded runner can reach the first assertion
+// first. Wait for it instead of depending on the runner's speed.
+beforeAll(async () => {
+  await ensureWasm()
+})
 import { parseOnboardingDocument } from '../src/lib/onboarding/parse'
 import type { OnboardingDocument } from '../src/lib/onboarding/types'
 import { fixtureFiles, fixtureJson } from './helpers/onboarding-fixtures'

@@ -1,3 +1,4 @@
+// WebSocket event provider: one connection, typed event subscriptions.
 import {
   createContext,
   useCallback,

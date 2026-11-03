@@ -1,3 +1,4 @@
+// The /signup route: account creation, referral capture, and onboarding entry.
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'

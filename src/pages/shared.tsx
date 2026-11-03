@@ -1,3 +1,4 @@
+// The /shared route: shares received and sent.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'
@@ -33,39 +34,17 @@ import { userFriendlyError } from '../lib/user-friendly-error'
 import { readNameMetadata, decryptFileMetadata, decryptChunk, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { encryptedUpload } from '../lib/encrypted-upload'
-import { SharedRowSkeleton } from '@beebeeb/shared'
+import { ownedItem } from '../lib/owned-item'
 import { useWsEvent } from '../lib/ws-context'
 import { EmptyShared } from '../components/empty-states/empty-shared'
+import { LoadingSkeleton, SectionHeader } from './shared/sections'
+import { SharedLinkCard } from './shared/share-link-card'
+import { SharedInviteRow } from './shared/shared-invite-row'
+import { sharedItemOf, sharedItemFile } from './shared/shared-item'
 
 // ─── Helpers ───────────────────────────────────────
 
-
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime()
-  const seconds = Math.floor(diff / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
-  const weeks = Math.floor(days / 7)
-  return `${weeks}w ago`
-}
-
-/**
- * Task 1545, finding 4: an owner's "Shared → By me" list rendered a
- * multi-file bundle share as if it were a single file, hiding how many
- * files (and thus how much content) the link actually exposes. Server
- * response (list_my_shares) already carries `share_type` + `item_count`;
- * this reads them. Returns null for a plain file share (no chip shown).
- */
-export function bundleChipLabel(share: Pick<MyShare, 'share_type' | 'item_count'>): string | null {
-  if (share.share_type !== 'bundle') return null
-  const n = share.item_count ?? 0
-  return `bundle · ${n} ${n === 1 ? 'file' : 'files'}`
-}
+export { bundleChipLabel } from './shared/format'
 
 // ─── Tab types ───────────────────────────────────
 
@@ -380,9 +359,11 @@ export function Shared() {
           zeroize(sharedFileKey)
           // Re-encrypt with own key and upload
           const file = new File([plaintext], filename, { type: invite.mime_type ?? 'application/octet-stream' })
-          const newFileId = crypto.randomUUID()
+          // F9: the create's id is core's; its tag travels with the upload.
+          const newItemId = await ownedItem.mint(getMasterKey(), 'owner')
+          const newFileId = newItemId.idText
           const newFileKey = await getFileKey(newFileId)
-          await encryptedUpload(file, newFileId, newFileKey, getMasterKey(), undefined, () => {}, undefined, undefined, undefined, getFileKey)
+          await encryptedUpload(file, newFileId, newFileKey, getMasterKey(), undefined, () => {}, undefined, undefined, undefined, { newItemId })
           zeroize(newFileKey)
           showToast({ icon: 'check', title: 'Copy saved', description: `${filename} saved to your vault.` })
         } catch (e) {
@@ -498,29 +479,6 @@ export function Shared() {
     }
   }
 
-  // ─── Loading skeleton ──────────────────────────
-
-  const LoadingSkeleton = () => (
-    <div>
-      {Array.from({ length: 6 }, (_, i) => (
-        <SharedRowSkeleton key={i} />
-      ))}
-    </div>
-  )
-
-  // ─── Section header (for pending tab) ─────────
-
-  const SectionHeader = ({ title, count }: { title: string; count: number }) => (
-    <div className="px-5 py-2.5 border-b border-line bg-paper-2 flex items-center gap-2">
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">{title}</span>
-      {count > 0 && (
-        <span className="text-[10px] font-mono font-medium text-amber-deep bg-amber-bg px-1.5 py-0.5 rounded-full">
-          {count}
-        </span>
-      )}
-    </div>
-  )
-
   // ─── Map invite to DriveFile-like object ──────
 
   function inviteToFile(invite: ShareInvite, subtitle: string): DriveFile {
@@ -543,12 +501,12 @@ export function Shared() {
   // ─── Tab content: With me ─────────────────────
 
   const renderWithMe = () => {
-    const files = withMeInvites.map((i) =>
-      inviteToFile(i, i.sender_email ? `Shared by ${i.sender_email}` : 'Shared file'),
+    const items = withMeInvites.map((i) =>
+      sharedItemOf(inviteToFile(i, i.sender_email ? `Shared by ${i.sender_email}` : 'Shared file')),
     )
     return (
       <FileList
-        files={files}
+        files={items.map(sharedItemFile)}
         loading={loading}
         emptyState={<EmptyShared tab="with-me" onGoToDrive={() => navigate('/')} onShareFile={() => navigate('/')} />}
         sortable={false}
@@ -645,33 +603,9 @@ export function Shared() {
     showToast({ icon: 'check', title: 'Link copied', description: 'Includes the decryption key.' })
   }
 
-  function formatExpiry(iso: string | null): string {
-    if (!iso) return 'No expiry'
-    const d = new Date(iso)
-    if (d < new Date()) return 'Expired'
-    const days = Math.floor((d.getTime() - Date.now()) / 86_400_000)
-    if (days === 0) return 'Expires today'
-    if (days === 1) return 'Expires tomorrow'
-    return `Expires in ${days}d`
-  }
-
-  /** Returns a date string like "May 17" for use in expiry badges. */
-  function formatExpiryDate(iso: string | null): string {
-    if (!iso) return 'No expiry'
-    const d = new Date(iso)
-    const now = new Date()
-    if (d < now) return 'Expired'
-    return `Expires ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
-  }
-
-  function isExpired(iso: string | null): boolean {
-    if (!iso) return false
-    return new Date(iso) < new Date()
-  }
-
   const renderByMe = () => {
     const files = sentApproved.map((i) =>
-      inviteToFile(i, i.recipient_email ? `Shared with ${i.recipient_email}` : 'Shared file'),
+      sharedItemFile(sharedItemOf(inviteToFile(i, i.recipient_email ? `Shared with ${i.recipient_email}` : 'Shared file'))),
     )
     const byMeNames: Record<string, string> = {}
     for (const i of sentApproved) {
@@ -702,154 +636,19 @@ export function Shared() {
               </div>
             </div>
             <div className="divide-y divide-line">
-              {myShareLinks.map((share) => {
-                const name = shareLinksDecryptedNames[share.id] ?? 'Encrypted file'
-                const isExpanded = expandedShareId === share.id
-                return (
-                  <div key={share.id} className="border-b border-line last:border-b-0">
-                    {/* Link row */}
-                    <div className="group flex items-center gap-3 px-5 py-3 hover:bg-paper-2 transition-colors">
-                      <button
-                        type="button"
-                        onClick={() => setExpandedShareId(isExpanded ? null : share.id)}
-                        className="flex items-center gap-3 flex-1 min-w-0 text-left"
-                      >
-                        <div className="w-7 h-7 rounded-lg bg-amber-bg border border-amber/20 flex items-center justify-center shrink-0">
-                          <Icon name="link" size={12} className="text-amber-deep" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="text-[13px] font-medium text-ink truncate">{name}</span>
-                            {/* Task 1545, finding 4: a bundle share used to render
-                                as if it were a single file, hiding how many files
-                                (and thus how much content) the link actually
-                                exposes. */}
-                            {bundleChipLabel(share) && (
-                              <BBChip variant="default" className="text-[9.5px] shrink-0">
-                                {bundleChipLabel(share)}
-                              </BBChip>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 text-[11px] mt-0.5">
-                            {(share.open_count ?? 0) > 0 ? (
-                              <>
-                                <span className="font-mono text-ink-2">{share.open_count}</span>
-                                <span className="text-ink-2">{share.open_count === 1 ? 'view' : 'views'}</span>
-                                {share.last_opened_at && (
-                                  <><span className="text-ink-4">·</span><span className="text-ink-3">last {timeAgo(share.last_opened_at)}</span></>
-                                )}
-                              </>
-                            ) : (
-                              <span className="text-ink-4">Not yet opened</span>
-                            )}
-                            {share.max_opens && <><span className="text-ink-4">·</span><span className="font-mono text-ink-3">/ {share.max_opens} max</span></>}
-                            {share.has_passphrase && <><span className="text-ink-4">·</span><span className="text-amber-deep">Passphrase</span></>}
-                            <span className="text-ink-4">·</span>
-                            <span className="text-ink-3">Created {timeAgo(share.created_at)}</span>
-                          </div>
-                        </div>
-                        {/* Expiry badge */}
-                        <span
-                          className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10.5px] font-medium ${
-                            isExpired(share.expires_at)
-                              ? 'bg-red/10 text-red border border-red/20'
-                              : share.expires_at
-                                ? 'bg-amber-bg text-amber-deep border border-amber/30'
-                                : 'bg-paper-2 text-ink-3 border border-line'
-                          }`}
-                        >
-                          <Icon name="clock" size={9} />
-                          {formatExpiryDate(share.expires_at)}
-                        </span>
-                        <Icon
-                          name="chevron-down"
-                          size={13}
-                          className={`shrink-0 text-ink-3 transition-transform duration-150 ${isExpanded ? 'rotate-180' : ''}`}
-                        />
-                      </button>
-                      {/* Quick copy — only when a working link can be rebuilt
-                          (owner-wrapped key present + vault unlocked). */}
-                      {canRebuildShareLink(share, isUnlocked) && (
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); void copyShareLinkFor(share) }}
-                          title="Copy link"
-                          className="shrink-0 p-1.5 rounded-md text-ink-3 hover:text-ink hover:bg-paper-3 transition-colors cursor-pointer md:opacity-0 md:group-hover:opacity-100"
-                        >
-                          <Icon name="copy" size={13} />
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Insights panel */}
-                    {isExpanded && (
-                      <div className="px-5 pb-4 pt-2 bg-paper-2 border-t border-line">
-                        {/* Re-copy row — a working link when the owner-wrapped key
-                            is present + vault unlocked; otherwise the honest "not
-                            stored" note (never the keyless/wrong-key share.url). */}
-                        {canRebuildShareLink(share, isUnlocked) ? (
-                          <div className="flex items-center justify-end mb-3">
-                            <button
-                              type="button"
-                              onClick={() => void copyShareLinkFor(share)}
-                              className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-paper border border-line text-[12px] font-medium text-ink hover:bg-paper-3 transition-colors cursor-pointer"
-                            >
-                              <Icon name="copy" size={12} />
-                              Copy link
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-start gap-1.5 mb-3 text-[11.5px] text-ink-4 leading-snug">
-                            <Icon name="lock" size={11} className="text-ink-4 shrink-0 mt-0.5" />
-                            <span>
-                              The key for this link isn&apos;t stored here. Use the full link from
-                              when you created it, or revoke and create a new one.
-                            </span>
-                          </div>
-                        )}
-
-                        {/* KPI row */}
-                        <div className="grid grid-cols-4 gap-2 mb-3">
-                          <div className="rounded-lg bg-paper border border-line p-2.5">
-                            <div className="text-[10px] text-ink-4 mb-0.5">Views</div>
-                            <div className="font-mono text-[13px] font-semibold">
-                              {share.open_count ?? 0}
-                              {share.max_opens ? ` / ${share.max_opens}` : ''}
-                            </div>
-                          </div>
-                          <div className="rounded-lg bg-paper border border-line p-2.5">
-                            <div className="text-[10px] text-ink-4 mb-0.5">Last viewed</div>
-                            <div className="text-[12px]">
-                              {share.last_opened_at ? timeAgo(share.last_opened_at) : '—'}
-                            </div>
-                          </div>
-                          <div className="rounded-lg bg-paper border border-line p-2.5">
-                            <div className="text-[10px] text-ink-4 mb-0.5">Expiry</div>
-                            <div className="text-[12px] font-medium">{formatExpiry(share.expires_at)}</div>
-                          </div>
-                          <div className="rounded-lg bg-paper border border-line p-2.5">
-                            <div className="text-[10px] text-ink-4 mb-0.5">Created</div>
-                            <div className="text-[12px]">{timeAgo(share.created_at)}</div>
-                          </div>
-                        </div>
-
-                        {/* Revoke */}
-                        <div className="flex justify-end">
-                          <BBButton
-                            size="sm"
-                            variant="ghost"
-                            className="text-red hover:text-red border-red/20 hover:border-red/40"
-                            onClick={() => void handleRevokeShareLink(share.id)}
-                            disabled={revokingShareId === share.id}
-                          >
-                            {revokingShareId === share.id ? 'Revoking…' : 'Revoke link'}
-                          </BBButton>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
+              {myShareLinks.map((share) => (
+                <SharedLinkCard
+                  key={share.id}
+                  share={share}
+                  name={shareLinksDecryptedNames[share.id] ?? 'Encrypted file'}
+                  isExpanded={expandedShareId === share.id}
+                  canCopy={canRebuildShareLink(share, isUnlocked)}
+                  isRevoking={revokingShareId === share.id}
+                  onToggleExpanded={() => setExpandedShareId(expandedShareId === share.id ? null : share.id)}
+                  onCopy={() => void copyShareLinkFor(share)}
+                  onRevoke={() => void handleRevokeShareLink(share.id)}
+                />
+              ))}
             </div>
           </div>
         )}
@@ -918,39 +717,20 @@ export function Shared() {
             <SectionHeader title="Shared with you" count={incomingInvited.length} />
             <div className="divide-y divide-line">
               {incomingInvited.map((invite) => (
-                <div
+                <SharedInviteRow
                   key={invite.id}
-                  className="flex items-center gap-3 px-5 py-3.5 hover:bg-paper-2 transition-colors"
-                >
-                  <div className="shrink-0 w-[30px] h-[30px] rounded-[8px] bg-amber-bg border border-line flex items-center justify-center">
-                    <Icon name="share" size={13} className="text-amber-deep" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-medium text-ink truncate">
-                      {invite.sender_email ?? 'Someone'} shared a file
-                    </div>
-                    <div className="text-[11px] text-ink-3 mt-0.5">
-                      {timeAgo(invite.created_at)}
-                    </div>
-                  </div>
-                  <BBButton
-                    variant="amber"
-                    size="sm"
-                    className="shrink-0 gap-1"
-                    onClick={async () => {
-                      try {
-                        await claimInvite(invite.id)
-                        showToast({ icon: 'check', title: 'Claimed', description: 'Waiting for sender to approve access.' })
-                        fetchAll()
-                      } catch (e) {
-                        showToast({ icon: 'x', title: 'Failed to claim', description: userFriendlyError(e), danger: true })
-                      }
-                    }}
-                  >
-                    <Icon name="check" size={11} />
-                    Claim
-                  </BBButton>
-                </div>
+                  variant="claim"
+                  invite={invite}
+                  onClaim={async (row) => {
+                    try {
+                      await claimInvite(row.id)
+                      showToast({ icon: 'check', title: 'Claimed', description: 'Waiting for sender to approve access.' })
+                      fetchAll()
+                    } catch (e) {
+                      showToast({ icon: 'x', title: 'Failed to claim', description: userFriendlyError(e), danger: true })
+                    }
+                  }}
+                />
               ))}
             </div>
           </>
@@ -962,37 +742,18 @@ export function Shared() {
             <SectionHeader title="Invited — waiting" count={sentInvited.length} />
             <div className="divide-y divide-line">
               {sentInvited.map((invite) => (
-                <div
+                <SharedInviteRow
                   key={invite.id}
-                  className="flex items-center gap-3 px-5 py-3.5 hover:bg-paper-2 transition-colors"
-                >
-                  <div className="shrink-0 w-[30px] h-[30px] rounded-[8px] bg-paper-2 border border-line flex items-center justify-center">
-                    <Icon name="mail" size={13} className="text-ink-3" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-medium text-ink truncate">
-                      <span className="font-mono text-xs">{invite.recipient_email}</span>
-                    </div>
-                    <div className="text-[11px] text-ink-3 mt-0.5">
-                      Invited {timeAgo(invite.created_at)}
-                    </div>
-                  </div>
-                  <BBChip variant="default" className="text-[10px] shrink-0">Waiting to claim</BBChip>
-                  <BBButton
-                    size="sm"
-                    variant="ghost"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                      setCtxMenu({
-                        open: true, x: rect.left, y: rect.bottom + 4,
-                        inviteId: invite.id, tab: 'pending', status: 'invited', role: 'sender',
-                      })
-                    }}
-                  >
-                    <Icon name="more" size={13} />
-                  </BBButton>
-                </div>
+                  variant="waiting-to-claim"
+                  invite={invite}
+                  onOpenMenu={(row, e) => {
+                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                    setCtxMenu({
+                      open: true, x: rect.left, y: rect.bottom + 4,
+                      inviteId: row.id, tab: 'pending', status: 'invited', role: 'sender',
+                    })
+                  }}
+                />
               ))}
             </div>
           </>
@@ -1004,37 +765,18 @@ export function Shared() {
             <SectionHeader title="Waiting for sender" count={incomingClaimed.length} />
             <div className="divide-y divide-line">
               {incomingClaimed.map((invite) => (
-                <div
+                <SharedInviteRow
                   key={invite.id}
-                  className="flex items-center gap-3 px-5 py-3.5 hover:bg-paper-2 transition-colors"
-                >
-                  <div className="shrink-0 w-[30px] h-[30px] rounded-[8px] bg-paper-2 border border-line flex items-center justify-center">
-                    <Icon name="clock" size={13} className="text-ink-3" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-medium text-ink truncate">
-                      {invite.sender_email ?? 'Unknown sender'}
-                    </div>
-                    <div className="text-[11px] text-ink-3 mt-0.5">
-                      Claimed {invite.claimed_at ? timeAgo(invite.claimed_at) : timeAgo(invite.created_at)}
-                    </div>
-                  </div>
-                  <BBChip variant="default" className="text-[10px] shrink-0">Waiting for approval</BBChip>
-                  <BBButton
-                    size="sm"
-                    variant="ghost"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                      setCtxMenu({
-                        open: true, x: rect.left, y: rect.bottom + 4,
-                        inviteId: invite.id, tab: 'pending', status: 'claimed', role: 'recipient',
-                      })
-                    }}
-                  >
-                    <Icon name="more" size={13} />
-                  </BBButton>
-                </div>
+                  variant="waiting-approval"
+                  invite={invite}
+                  onOpenMenu={(row, e) => {
+                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                    setCtxMenu({
+                      open: true, x: rect.left, y: rect.bottom + 4,
+                      inviteId: row.id, tab: 'pending', status: 'claimed', role: 'recipient',
+                    })
+                  }}
+                />
               ))}
             </div>
           </>

@@ -1,3 +1,4 @@
+// The keyboard-shortcuts cheat sheet overlay.
 import { modLabel } from '../hooks/use-keyboard-shortcuts'
 
 interface ShortcutsCheatsheetProps {

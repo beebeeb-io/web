@@ -9,20 +9,13 @@
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { FileIcon, getFileType } from '../file-icon'
+import { formatBinarySize as formatSize } from '../../lib/format'
 
 interface UnsupportedPreviewProps {
   blob: Blob
   filename: string
   /** Optional thumbnail URL (e.g. from server-generated thumbnail for RAW files) */
   thumbnailUrl?: string | null
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
 function getExtension(filename: string): string {

@@ -1,3 +1,4 @@
+// The router and protected-route shell for every page.
 import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { ReactNode } from 'react'

@@ -1,12 +1,13 @@
 /**
- * Task 2237b — the guest's display name.
+ * Task 2237b — the guest's display name; L16 (2275 T5.7) envelopes.
  *
- * The name is encrypted with the folder key and kept in this browser only; the
- * server stores the ciphertext next to each contribution so the owner's
- * activity view can show who added what. It never leaves this device in
- * plaintext.
+ * The name is sealed with the folder key, bound to the shared folder id, and
+ * kept in this browser only; the server stores the ciphertext next to each
+ * contribution so the owner's activity view can show who added what. It never
+ * leaves this device in plaintext. Every byte of the format (sanitising
+ * included) is core's `sealFolderActorName` / `openFolderActorName`.
  */
-import { encryptFilename, readNameMetadata, serializeEncryptedBlob } from './crypto'
+import { openActorName, sealActorName } from './crypto'
 
 export const ACTOR_NAME_STORAGE_PREFIX = 'beebeeb.sharedFolder.actorName.'
 
@@ -27,21 +28,24 @@ function storageSet(key: string, value: string): void {
 }
 
 /**
- * Sealed through core's name writer, so core's name reader opens it and the
- * generic chunk decrypt is never used for a name.
+ * L16: sealed through core's folder-actor-name writer, bound to the shared
+ * folder id. No client-side sanitising or envelope code.
  */
-export async function encryptActorName(folderKey: Uint8Array, name: string): Promise<string> {
-  const encrypted = await encryptFilename(folderKey, name)
-  return serializeEncryptedBlob(encrypted.nonce, encrypted.ciphertext)
+export async function encryptActorName(
+  folderKey: Uint8Array,
+  sharedFolderId: string,
+  name: string,
+): Promise<string> {
+  return sealActorName(folderKey, sharedFolderId, name)
 }
 
 export async function decryptActorName(
   folderKey: Uint8Array,
+  sharedFolderId: string,
   b64: string,
 ): Promise<string | null> {
   try {
-    const meta = await readNameMetadata(folderKey, b64)
-    return meta.name
+    return await openActorName(folderKey, sharedFolderId, b64)
   } catch {
     return null
   }
@@ -53,7 +57,7 @@ export async function storeActorName(
   folderKey: Uint8Array,
   name: string,
 ): Promise<string> {
-  const encrypted = await encryptActorName(folderKey, name)
+  const encrypted = await encryptActorName(folderKey, folderId, name)
   storageSet(ACTOR_NAME_STORAGE_PREFIX + folderId, encrypted)
   return encrypted
 }
@@ -74,7 +78,7 @@ export async function readActorName(
   const stored = storageGet(ACTOR_NAME_STORAGE_PREFIX + folderId)
   if (stored === null) return null
   if (stored === '') return ''
-  const name = await decryptActorName(folderKey, stored)
+  const name = await decryptActorName(folderKey, folderId, stored)
   return name ?? ''
 }
 
@@ -89,5 +93,5 @@ export async function readActorNameCiphertext(
 ): Promise<string | null> {
   const stored = storageGet(ACTOR_NAME_STORAGE_PREFIX + folderId)
   if (!stored) return null
-  return (await decryptActorName(folderKey, stored)) !== null ? stored : null
+  return (await decryptActorName(folderKey, folderId, stored)) !== null ? stored : null
 }

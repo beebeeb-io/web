@@ -1,3 +1,4 @@
+// The step-up authentication prompt for sensitive actions.
 import { useCallback, useEffect, useState } from 'react'
 import { BBButton, BBInput, Icon } from '@beebeeb/shared'
 import { useFocusTrap } from '../hooks/use-focus-trap'

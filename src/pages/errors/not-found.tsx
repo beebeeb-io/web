@@ -1,3 +1,4 @@
+// The 404 route.
 import { useNavigate } from 'react-router-dom'
 import { BBLogo } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'

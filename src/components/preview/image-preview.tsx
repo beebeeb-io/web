@@ -1,3 +1,4 @@
+// The image preview with zoom and pan controls.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTouchGestures } from '../../hooks/use-touch-gestures'
 import { UnsupportedPreview } from './unsupported-preview'

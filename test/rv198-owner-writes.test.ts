@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
+import { encodeEnvelope } from '../src/lib/metadata-envelope'
 
 const wasm = loadWasm()
 const encoder = new TextEncoder()
@@ -72,8 +73,8 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, () => ({
     if (opts.parentId === MOVED_FOLDER) {
       return {
         files: [
-          { id: CHILD_OWN, is_folder: false, uploaded_by: null, acted_via_share_id: null },
-          { id: CHILD_MEMBER, is_folder: false, uploaded_by: 'member-user', acted_via_share_id: null },
+          { id: CHILD_OWN, is_folder: false, uploaded_by: null, acted_via_share_id: null, name_encrypted: nameOf(CHILD_OWN) },
+          { id: CHILD_MEMBER, is_folder: false, uploaded_by: 'member-user', acted_via_share_id: null, name_encrypted: nameOf(CHILD_MEMBER) },
         ],
         next_cursor: null,
       }
@@ -88,8 +89,48 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, () => ({
   },
 }))
 
+// The owned-item port crosses into the worker; the same core calls run here.
+await mockModuleScoped('../src/lib/owned-item', import.meta.dir, (r) => ({
+  ...r,
+  ownedItem: {
+    ...r.ownedItem,
+    async isForeign(itemId: string) {
+      return wasm.isForeignItemId(itemId)
+    },
+    async resolve(args: {
+      masterKey: Uint8Array
+      itemId: string
+      kind: number
+      nameEncrypted: string
+      sharedFolderId?: string | null
+      folderKey?: Uint8Array | null
+    }) {
+      const v = wasm.resolveOwnedKey(
+        args.masterKey,
+        args.itemId,
+        args.kind,
+        null,
+        args.nameEncrypted,
+        args.sharedFolderId ?? null,
+        args.folderKey ?? null,
+        null,
+        null,
+      ) as Record<string, unknown>
+      return {
+        key: v.key as Uint8Array,
+        contentKey: (v.contentKey as Uint8Array | null) ?? null,
+        origin: v.origin as never,
+        name: (v.name as never) ?? null,
+        writeTarget: (v.writeTarget as never) ?? null,
+      }
+    },
+  },
+}))
+
 const { moveOwnerItems, MOVED_BUT_UNPUBLISHED } = await import('../src/lib/owner-upload-key')
 const { renameKeyFor, RENAME_KEY_UNAVAILABLE } = await import('../src/lib/owner-rename')
+const { saveTargetFor } = await import('../src/lib/owner-save-target')
+const { createOwnedItemOps } = await import('../src/lib/owned-item')
 const { clearSharedFolderLookups } = await import('../src/lib/owner-adoption')
 const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 
@@ -103,14 +144,26 @@ beforeEach(() => {
   resetCustodyMemoryForTests()
 })
 
+// L15 (T5.4): the resolver proves an O row's key against its sealed name, so
+// these rows carry the names they really have.
+const nameOf = (id: string): string => {
+  const key = wasm.derive_file_key(MASTER, encoder.encode(id)) as Uint8Array
+  const meta = wasm.encrypt_metadata(key, JSON.stringify({ name: `${id}.bin`, mime_type: null })) as {
+    nonce: Uint8Array
+    ciphertext: Uint8Array
+  }
+  return encodeEnvelope(wasm, meta.nonce, meta.ciphertext)
+}
 const rows = [
-  { id: MOVED_FILE, is_folder: false, uploaded_by: null, acted_via_share_id: null },
-  { id: MOVED_FOLDER, is_folder: true, uploaded_by: null, acted_via_share_id: null },
+  { id: MOVED_FILE, is_folder: false, uploaded_by: null, acted_via_share_id: null, name_encrypted: nameOf(MOVED_FILE) },
+  { id: MOVED_FOLDER, is_folder: true, uploaded_by: null, acted_via_share_id: null, name_encrypted: nameOf(MOVED_FOLDER) },
 ]
 
 describe('P2-5: a move into a custody folder publishes its wraps', () => {
   test('the moved file, the moved folder and its own child get L7 wraps; a member-added child is never re-sealed', async () => {
-    await moveOwnerItems({ ids: [MOVED_FILE, MOVED_FOLDER], destinationId: DEST, rows, masterKey: MASTER, viewerId: VIEWER })
+    // L15 (T5.4): the move picker showed R is what makes the move a share-time
+    // event; the picker's own answer travels with the move (review F1).
+    await moveOwnerItems({ ids: [MOVED_FILE, MOVED_FOLDER], destinationId: DEST, rows, masterKey: MASTER, viewerId: VIEWER, pickerRootId: ROOT })
     expect(moved.map((m) => m.parent)).toEqual([DEST, DEST])
     const keys = published.flatMap((p) => p.keys)
     expect(published.every((p) => p.root === ROOT)).toBe(true)
@@ -138,7 +191,7 @@ describe('P2-5: a move into a custody folder publishes its wraps', () => {
   test('a publish that fails after the move says so plainly (the move itself stands)', async () => {
     publishFails = true
     await expect(
-      moveOwnerItems({ ids: [MOVED_FILE], destinationId: DEST, rows, masterKey: MASTER, viewerId: VIEWER }),
+      moveOwnerItems({ ids: [MOVED_FILE], destinationId: DEST, rows, masterKey: MASTER, viewerId: VIEWER, pickerRootId: ROOT }),
     ).rejects.toThrow(MOVED_BUT_UNPUBLISHED)
     expect(moved).toHaveLength(1)
   })
@@ -196,13 +249,16 @@ describe("P2-4: renaming a guest's or member's row seals under ITS key or not at
     expect(Array.from(fallen).every((b) => b === 0)).toBe(true) // zeroized
   })
 
-  test("the owner's own row keeps its derived key", async () => {
+  test("the owner's own row is renamed under the key that authenticated its name", async () => {
+    // SF-0002 review: an owner row goes through the RESOLVED key, so a
+    // binary-convention row is renamed under its binary key, not the plain
+    // string derivation.
     const key = await renameKeyFor({
       fileId: MOVED_FILE, file: ownRow, viewerId: VIEWER,
-      getFileKey: async () => new Uint8Array(derived),
-      getFileKeyForFile: async () => {
-        throw new Error('not used for an own row')
+      getFileKey: async () => {
+        throw new Error('the plain derivation is not used for owner renames')
       },
+      getFileKeyForFile: async () => new Uint8Array(derived),
       readName: async () => undefined,
     })
     expect(Array.from(key)).toEqual(Array.from(derived))
@@ -220,5 +276,65 @@ describe("P2-4: renaming a guest's or member's row seals under ITS key or not at
         },
       }),
     ).rejects.toThrow(RENAME_KEY_UNAVAILABLE)
+  })
+
+  test('A9: a request row has no key here — its rename goes only through sealRequestRename', async () => {
+    // §15 (2326 = A): core no longer hands web a request row's content key C,
+    // so no local "derived or C" choice exists. renameOwnerRow routes a request
+    // row to `sealRequestRename` (core derives the string convention) and never
+    // asks getFileKeyForFile for a key — asking here would be the C fallback.
+    const requestRow = {
+      id: MOVED_FILE, name_encrypted: 'NAME', acted_via_share_id: null, uploaded_by: null,
+      file_request_id: 'req-1', sender_ephemeral_pubkey: 'ePub', wrapped_content_key: 'wrapped',
+    } as never
+    await expect(
+      renameKeyFor({
+        fileId: MOVED_FILE, file: requestRow, viewerId: VIEWER,
+        getFileKey: async () => new Uint8Array(derived),
+        getFileKeyForFile: async () => {
+          throw new Error('the request content key C is not used for the name')
+        },
+        readName: async () => undefined,
+      }),
+    ).rejects.toThrow('the request content key C is not used for the name')
+  })
+})
+
+describe('A9b: a request-row content edit is saved as a NEW owner item', () => {
+  const requestRow = {
+    id: MOVED_FILE, name_encrypted: 'NAME', parent_id: ROOT, acted_via_share_id: null, uploaded_by: null,
+    file_request_id: 'req-1', sender_ephemeral_pubkey: 'ePub', wrapped_content_key: 'wrapped',
+  } as never
+  const ownerRow = {
+    id: MOVED_FILE, name_encrypted: 'NAME', parent_id: ROOT, acted_via_share_id: null, uploaded_by: null,
+  } as never
+  const ops = createOwnedItemOps(wasm)
+  const mint = (masterKey: Uint8Array) => ops.mint(masterKey, 'owner')
+
+  test('a save targeting the request row id mints a fresh owner id and never replaces that row', async () => {
+    const target = await saveTargetFor({ file: requestRow, targetFileId: MOVED_FILE, masterKey: MASTER, mint })
+    expect(target.uploadFileId).not.toBe(MOVED_FILE)
+    expect(target.isNewItem).toBe(true)
+    expect(target.newItemId?.idText).toBe(target.uploadFileId)
+    expect(target.replaceOf).toBeUndefined()
+    // Core's id class: the minted item is an owner row, so its key is the plain
+    // string derivation — never the request row's content key C.
+    expect(await wasm.isForeignItemId(target.uploadFileId)).toBe(false)
+    expect((wasm.derive_file_key(MASTER, encoder.encode(target.uploadFileId)) as Uint8Array).length).toBe(32)
+  })
+
+  test('a save on an owner row still replaces that row under its own id', async () => {
+    const target = await saveTargetFor({ file: ownerRow, targetFileId: MOVED_FILE, masterKey: MASTER, mint })
+    expect(target.uploadFileId).toBe(MOVED_FILE)
+    expect(target.isNewItem).toBe(false)
+    expect(target.replaceOf).toEqual({ nameEncrypted: 'NAME' })
+    expect(target.newItemId).toBeUndefined()
+  })
+
+  test('Keep Both on a request row stays a brand-new id with no replacement', async () => {
+    const target = await saveTargetFor({ file: requestRow, targetFileId: undefined, masterKey: MASTER, mint })
+    expect(target.uploadFileId).not.toBe(MOVED_FILE)
+    expect(target.isNewItem).toBe(true)
+    expect(target.replaceOf).toBeUndefined()
   })
 })

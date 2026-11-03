@@ -1,3 +1,4 @@
+// Requires the wasm bundle's integrity manifest before core crypto runs.
 export function requireWasmIntegrity(manifest: unknown): string {
   const integrity = (manifest as { integrity?: unknown })?.integrity
   // Unknown SRI algorithms can be ignored by the browser. Accept only the

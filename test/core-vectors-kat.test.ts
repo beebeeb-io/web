@@ -52,7 +52,7 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // relate to this one).
 //
 // ── Vendoring + refresh procedure ───────────────────────────────────────────
-// The vendored copy lives at test/vectors/core-vectors.v12.json and MUST be a
+// The vendored copy lives at test/vectors/core-vectors.v13.json and MUST be a
 // byte-for-byte copy of repos/core/test-vectors/vectors.json (so the drift
 // check below is a real sha256 comparison, not a comparison against a
 // modified copy). To refresh after core bumps the vector file:
@@ -71,7 +71,7 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // encryptChunk/decryptChunk, encryptFilename/decryptFilename,
 // recoverFromPhrase, deriveX25519Public/Private, computeRecoveryCheck,
 // x25519SharedSecret, deriveShareKey, wrapRequestPrivate/unwrapRequestPrivate,
-// sealToRequest/openRequestUpload — all in src/lib/crypto.ts) funnel through
+// sealToRequest — all re-exported from src/lib/crypto.ts) funnel through
 // `withProxy()` → a Comlink Web Worker (src/workers/crypto.worker.ts) that
 // imports the wasm binary via a Vite-only `?url` suffix and reads
 // `import.meta.env.PROD` — neither resolves under `bun test` (no Vite
@@ -95,12 +95,16 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // never touch the worker — so those ARE called directly, exactly as the app
 // calls them.
 
-const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v12.json', import.meta.url))
+const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v13.json', import.meta.url))
 // Sibling core checkout (present on developer machines / worktrees that keep
 // `core` next to `web`; absent in a bare CI checkout of web alone).
 const CORE_SIBLING_PATH = fileURLToPath(new URL('../../core/test-vectors/vectors.json', import.meta.url))
 
-// Pin from: shasum -a 256 test/vectors/core-vectors.v12.json
+// Pin from: shasum -a 256 test/vectors/core-vectors.v13.json
+// v13 = core 064c622 (core#54, SF-0002): adds upper_repair_v1 and
+// upper_repair_split_v1, the owner-only read repair for rows the iOS Files
+// app sealed under the uppercase file id; web's owner-repair module is the
+// reader under test in test/sf-0002-owner-repair.test.ts.
 // v12 = core 26094b3 (core#49, task 2255 L9; the same file at core main
 // 3831a05, whose WASM web vendors): adds invite_owner_copy_v1, the
 // purpose-bound folder-invite owner copy;
@@ -114,8 +118,8 @@ const CORE_SIBLING_PATH = fileURLToPath(new URL('../../core/test-vectors/vectors
 // key_wrap_v1 (the legacy unbound shape, pinned so a reader can prove it refuses it);
 // v9 = core 9cbf856 (core#42, task 2237b): adds combine_folder_link_key;
 // v8 = core edf7cd4 (core#41, task 2237): adds shared_folder_index_key.
-const PINNED_SHA256 = '9f426bb10fe48466c5c10bd6bd8bd20b42ceaae3f1dc8c9c04ee8babd1f7d67e'
-const EXPECTED_VERSION = 12
+const PINNED_SHA256 = '71fb633774fcb13d7cca0613603282ea47ab77e265abd09b3a2ec189689c1464'
+const EXPECTED_VERSION = 13
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2)
@@ -148,7 +152,7 @@ beforeAll(() => {
 // ─── 1. Vendored-file checksum guard ────────────────────────────────────────
 
 describe('vendored vector checksum guard', () => {
-  test('test/vectors/core-vectors.v12.json matches the pinned sha256', () => {
+  test('test/vectors/core-vectors.v13.json matches the pinned sha256', () => {
     const buf = readFileSync(VENDORED_PATH)
     expect(sha256Hex(buf)).toBe(PINNED_SHA256)
   })
@@ -204,9 +208,19 @@ const IMPLEMENTED_FAMILIES = new Set([
   'owner_wrapped_folder_key',
   'folder_wrapped_file_key',
   'invite_owner_copy_v1',
+  'upper_repair_v1',
+  'upper_repair_split_v1',
 ])
 
 const SKIPPED_FAMILIES: Record<string, string> = {
+  client_meta_device_hostname:
+    'task 1922 client-meta envelopes are consumed by the desktop/CLI sync clients, not web; ' +
+    'web imports no client-meta binding (grep of src/ finds none). Core does expose ClientMetaKey ' +
+    'in the vendored WASM, so a future web consumer can add a KAT here.',
+  client_meta_session_paths:
+    'same as client_meta_device_hostname: the desktop/CLI client-meta lane (task 1922), not web.',
+  client_meta_padding_buckets:
+    'same as client_meta_device_hostname: the desktop/CLI client-meta lane (task 1922), not web.',
   envelope_serialization:
     'not implemented client-side in web: repos/core/beebeeb-wasm/src/lib.rs exposes no ' +
     'OpaqueEnvelope::to_bytes/from_bytes WASM binding (checked the full export list — only ' +
@@ -354,7 +368,7 @@ describe('core vectors KAT (production code paths)', () => {
     }
   })
 
-  test('file_request_seal_open — unwrapRequestPrivate/openRequestUpload (src/lib/crypto.ts:796,817) + WASM derive_request_wrap_key/derive_x25519_public', () => {
+  test('file_request_seal_open — WASM unwrap_request_private/open_request_upload/derive_request_wrap_key/derive_x25519_public (web wrapper: src/lib/crypto/file-requests.ts:49)', () => {
     const v = vectors.file_request_seal_open
     const masterKey = hexToBytes(v.master_key_hex)
     const requestId = hexToBytes(v.request_id_hex)
@@ -367,9 +381,10 @@ describe('core vectors KAT (production code paths)', () => {
 
     // derive_request_wrap_key is exposed by the WASM binding but web never
     // calls it as a standalone step — wrapRequestPrivate/unwrapRequestPrivate
-    // (crypto.ts:787,796) derive it internally on the Rust side. Verified
-    // directly against the WASM export (the same code those crypto.ts
-    // functions call into) since there's no separate crypto.ts wrapper to cite.
+    // (src/lib/crypto/file-requests.ts) derive it internally on the Rust side.
+    // Verified directly against the WASM export (the same code those wrappers
+    // call into) since there's no separate web wrapper to cite. The content-key
+    // open below is core's open_request_upload with no web wrapper at all.
     const wrapKey = derive_request_wrap_key(masterKey, requestId) as Uint8Array
     expect(toHex(wrapKey)).toBe(v.expected_wrap_key_hex)
 
@@ -691,17 +706,22 @@ describe('core vectors KAT — the link passphrase stretch (2237b)', () => {
 })
 
 describe('core vectors KAT — owned-key resolution (2237d, v11)', () => {
-  test('owner_wrapped_file_key — L8: unwrapOwnerFileKey (src/lib/owner-adoption.ts) opens the pinned record for its item only', () => {
+  test('owner_wrapped_file_key — L8: F ids only, and the pinned record opens for its item only', () => {
     const v = vectors.owner_wrapped_file_key
     const master = hexToBytes(v.master_key_hex)
     const frame = hexToBytes(v.expected_frame_hex)
-    expect(toHex(unwrapOwnerFileKey(master, v.file_id, frame))).toBe(v.child_key_hex)
-    expect(() => unwrapOwnerFileKey(master, v.folder_id, frame)).toThrow(/decryption failed/)
+    // Contract 2275 L12: "Adoption writes an L8 envelope only for an F id;
+    // core's wrap_owner_file_key and unwrap_owner_file_key refuse an O id."
+    // The vector's id is an O id, so the pinned frame must now be refused.
+    expect(() => unwrapOwnerFileKey(master, v.file_id, frame)).toThrow(/foreign item id/)
+    // The same record round-trips under an F id, and still binds that id.
+    const fId = '22222222-2222-8222-8222-222222222222'
+    const again = wrapOwnerFileKey(master, fId, hexToBytes(v.child_key_hex))
+    expect(toHex(unwrapOwnerFileKey(master, fId, again))).toBe(v.child_key_hex)
+    expect(() => unwrapOwnerFileKey(master, '33333333-3333-8333-8333-333333333333', again)).toThrow(/decryption failed/)
     // The pre-L8 shape (no purpose key: decrypt under derive_file_key) does not open it.
-    const derived = derive_file_key(master, new TextEncoder().encode(v.file_id)) as Uint8Array
-    expect(() => decrypt_chunk(derived, frame.slice(0, 12), frame.slice(12))).toThrow()
-    const again = wrapOwnerFileKey(master, v.file_id, hexToBytes(v.child_key_hex))
-    expect(toHex(unwrapOwnerFileKey(master, v.file_id, again))).toBe(v.child_key_hex)
+    const derived = derive_file_key(master, new TextEncoder().encode(fId)) as Uint8Array
+    expect(() => decrypt_chunk(derived, again.slice(0, 12), again.slice(12))).toThrow()
   })
 
   test('owner_wrapped_folder_key — the L6 custody record opens with unwrapFolderCustody for its folder only', () => {

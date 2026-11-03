@@ -1,3 +1,4 @@
+// The version-delete hook and confirmation dialog.
 import { useCallback, useState } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { deleteVersion, ApiError } from '../lib/api'

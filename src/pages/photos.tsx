@@ -1,3 +1,4 @@
+// The /photos route: the media gallery.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'
@@ -16,6 +17,7 @@ import type { UploadItem } from '../components/upload-progress'
 import { UploadCards } from '../components/upload-progress-card'
 import { UploadZone } from '../components/upload-zone'
 import { encryptedUpload } from '../lib/encrypted-upload'
+import { ownedItem } from '../lib/owned-item'
 import { useToast } from '../components/toast'
 import { useDriveData } from '../lib/drive-data-context'
 import { isLikelyAlbumArtOrIcon } from '../lib/photo-library'
@@ -349,7 +351,9 @@ export function Photos() {
       uploadFilesRef.current.delete(uploadId)
       return
     }
-    const fileId = crypto.randomUUID()
+    // F9: a create mints its id in core; the tag travels with the upload.
+    const newItemId = await ownedItem.mint(getMasterKey(), 'owner')
+    const fileId = newItemId.idText
     const fileKey = await getFileKey(fileId)
     const abortController = new AbortController()
     uploadAbortRef.current.set(uploadId, abortController)
@@ -366,7 +370,7 @@ export function Photos() {
           storageRegion: p.region,
           storageCountry: p.country ?? undefined,
         } : u))
-      }, undefined, undefined, abortController.signal, getFileKey)
+      }, undefined, undefined, abortController.signal, { newItemId })
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
       uploadAbortRef.current.delete(uploadId)
       uploadFilesRef.current.delete(uploadId)

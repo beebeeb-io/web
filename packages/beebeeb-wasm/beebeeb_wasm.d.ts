@@ -7,6 +7,8 @@ export type DirectVerdict =
 | { kind: "terminal"; status: number; error: string | null }
 | { kind: "corrupt" };
 
+export type DirectStorageGet = { kind: "stored" } | { kind: "failed"; status: number };
+
 export type DirectPoll =
 | { kind: "request_window"; request: { object_version_id: string | null; start_index: number; count: number; renewal: boolean } }
 | { kind: "fetch"; index: number; method: string; url: WasmSignedUrl; length: number; expires_at: string }
@@ -16,6 +18,40 @@ export type DirectPoll =
 | { kind: "stop"; verdict: DirectVerdict };
 
 
+
+/**
+ * Opaque handle holding ONLY the derived client-metadata key (task 1922).
+ *
+ * Make it once when the vault unlocks, free it on lock. List views and SSE
+ * frames call `seal` / `open` / `openMany` on the handle, so the master key is
+ * not copied into WASM memory on every frame. The derived key never leaves
+ * Rust; the handle is zeroized on drop and `free()` is wasm-bindgen's own.
+ */
+export class ClientMetaKey {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Derive the key from a 32-byte master key. The bytes are taken into a
+     * `Zeroizing` buffer and the master key is dropped before returning.
+     */
+    constructor(master_key: Uint8Array);
+    /**
+     * Open one field's `bbcm1.` envelope.
+     */
+    open(record_key: string, device_key: string | null | undefined, field: number, envelope: string): string;
+    /**
+     * Open many rows in one call: `items` is
+     * `[{ recordKey, deviceKey?, field, envelope? }]`; the result is
+     * `[{ ok: bool, value?: string }]`. One bad row never fails the batch: a
+     * null envelope, a bad field or UUID, a malformed row and a failed open
+     * each yield `{ ok: false }` for that row only.
+     */
+    openMany(items: any): any;
+    /**
+     * Seal one field. `device_key` must be `null` for field 1 and set for 2-4.
+     */
+    seal(record_key: string, device_key: string | null | undefined, field: number, plaintext: string): string;
+}
 
 /**
  * k-anonymity breach check for one password. Core hashes and matches; **JS
@@ -152,6 +188,20 @@ export class WasmChunkEncryptor {
      * Errors if the source shrank (fewer chunks/bytes than planned).
      */
     finish(): any;
+    /**
+     * Create a push-form encryptor for a NEW row minted by
+     * `newOwnerItemId`/`newForeignItemId` (task 2275, L13).
+     *
+     * The id comes from the handle; the content key is core's derivation under
+     * that id, which is also the member's rule for a new foreign item.
+     */
+    static forNewItem(item_id: WasmNewItemId, file_size: bigint, profile: string): WasmChunkEncryptor;
+    /**
+     * Create a push-form replacement encryptor for a resolved row (task 2275,
+     * L13). The key, the id and the recorded chunk-format pin all come from the
+     * `WasmWriteTarget`, so a caller cannot drop a recorded v2 pin.
+     */
+    static forTarget(target: WasmWriteTarget, file_size: bigint, profile: string): WasmChunkEncryptor;
     /**
      * Create a push-form encryptor whose chunk plan is derived from
      * `file_size` + `profile` (the client ladder).
@@ -315,6 +365,11 @@ export class WasmDownloadPlanner {
      */
     apiFetchFailed(index: number): void;
     /**
+     * The ciphertext length of chunk `index` once the first window was accepted, else `null`.
+     * The link's `length` is this number; the caller checks a storage answer against it.
+     */
+    chunkLength(index: number): number | null;
+    /**
      * Chunk `index` arrived but did not authenticate when decrypted.
      */
     chunkUnauthentic(index: number): void;
@@ -393,6 +448,69 @@ export class WasmDownloadPlanner {
      * A 2xx window response whose body could not be decoded at all.
      */
     windowMalformed(): void;
+}
+
+/**
+ * An opaque new-item id minted by core for one master key (task 2275, L13).
+ *
+ * There is no constructor from text and no export that turns arbitrary id text
+ * into a sealer input: a new-item write can only use an id core minted (or
+ * resumed from a persisted id + tag) for this master key. `idText` is the wire
+ * form; `tag` is the resume tag to persist with the upload session.
+ */
+export class WasmNewItemId {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * The canonical id text to send on the wire.
+     */
+    readonly idText: string;
+    /**
+     * The resume tag to persist with the upload session (32 bytes).
+     */
+    readonly tag: Uint8Array;
+}
+
+/**
+ * A request row's decrypt-only content reader (task 2275 §15; 2326 delta2
+ * P2-2). It owns a copy of the row's content key `C`, bound to the row's file
+ * id and recorded chunk-format pin; the key is zeroized when the reader drops
+ * and no getter exposes it.
+ *
+ * `decryptor()` returns a FRESH sequential [`WasmChunkDecryptor`] at chunk 0
+ * on every call (retry after a mid-stream error); `openFrame(...)` opens ONE
+ * frame by index for a seek / range read.
+ */
+export class WasmRequestContentReader {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * A FRESH sequential decryptor at chunk 0. Call again after any error.
+     *
+     * Retry contract: discard EVERYTHING the failed attempt produced; never
+     * splice attempt 1's prefix with attempt 2's suffix (after a replace that
+     * splices two uploads of one id). The failed cursor is not poisoned
+     * (`open_next` does not advance `next_index` on an error), but the output
+     * must still be rebuilt from frame 0.
+     */
+    decryptor(): WasmChunkDecryptor;
+    /**
+     * Open ONE content frame at `index` without the frames before it (seek /
+     * range read). `isLast = index == chunkCount - 1`. `format` (1 = v1,
+     * 2 = v2) and `versionId` (12 bytes, v2 only) must come from authenticated
+     * data. When the row is pinned to v2, `format: 1` is refused.
+     */
+    openFrame(version_id: Uint8Array, index: number, is_last: boolean, format: number, frame: Uint8Array): Uint8Array;
+    /**
+     * The row's recorded chunk-format pin: 0 = unrecorded, 2 = v2.
+     */
+    readonly chunkFormat: number;
+    /**
+     * The file id every frame of this row must be bound to.
+     */
+    readonly fileId: string;
 }
 
 /**
@@ -606,6 +724,98 @@ export class WasmSignupCeremony {
 }
 
 /**
+ * A storage GET's body as the bytes arrive, counted in core so no client counts its own.
+ * `WasmStorageBody.fromHead(status, contentLength, expected)` starts it; `push(n)` counts the bytes
+ * read and throws as soon as they would pass the grant; `finish()` gives `{ kind: "stored" }` or
+ * `{ kind: "failed", status: 200 }` and consumes the handle. Every count crosses as a JS number.
+ * Because `finish()` takes the handle by value, a JS `push` after `finish` throws wasm-bindgen's
+ * moved-value error, which has no `code` (the count was consumed; there is nothing left to count).
+ */
+export class WasmStorageBody {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * The body's answer; the handle is consumed.
+     */
+    finish(): DirectStorageGet;
+    /**
+     * Start counting. `status` is the head's HTTP status and must be a whole number that fits a
+     * `u16`; `content_length` is the head's `Content-Length` (or `null`). Throws `status_invalid`
+     * for a status that is not one, and `failed` (with its `status`) when the head is not a `200`
+     * whose length is exactly `expected`.
+     */
+    static fromHead(status: number, content_length: number | null | undefined, expected: number): WasmStorageBody;
+    /**
+     * Count `n` more bytes read. Throws `failed` (with its `status`) as soon as they would pass
+     * `expected`, so the caller stops reading.
+     */
+    push(n: number): void;
+}
+
+/**
+ * An opaque write target issued by `resolveOwnedKey` (task 2275, L13).
+ *
+ * A replacement is sealed through this handle only: the id, the key and the
+ * chunk-format pin all come from core's resolution, so a caller cannot point a
+ * write at another row or drop a recorded v2 pin.
+ */
+export class WasmWriteTarget {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * The row id the write must target.
+     */
+    readonly itemId: string;
+    /**
+     * The chunk-format pin the write must keep (0 = unrecorded, 2 = v2).
+     */
+    readonly pin: number;
+}
+
+/**
+ * The archive/extract rule: [`path_safety::archive_component`], the portable
+ * sanitizer above. Named for the caller that extracts entries, so the intent is
+ * on the call site; it never drops a name silently.
+ */
+export function archiveEntryName(name: string): string;
+
+/**
+ * Build `{app_url}/{s|f}/{token}#key={key}`. `route` is `"s"` (the default
+ * when omitted or `null`) or `"f"`.
+ */
+export function buildShareLink(app_url: string, token: string, key: string, route?: string | null): string;
+
+/**
+ * Check one server-provided name (a single component, never a path).
+ *
+ * `portable` selects the strict cross-platform rule set (what a pulled tree or
+ * an archive must satisfy); `windows` says the caller will write it with
+ * Windows path semantics. Returns normally when the name is safe, throws the
+ * user-facing reason otherwise (e.g. `contains a path separator`).
+ */
+export function checkPathComponent(name: string, portable: boolean, windows: boolean): void;
+
+/**
+ * Was the body a storage GET actually delivered the chunk? Same answer shape as
+ * `checkStorageGet`, but decided by the counted bytes: `stored` only when `received` is
+ * exactly `expected`. `Content-Length` is only the head; a truncated stream ends short.
+ */
+export function checkStorageBody(received: number, expected: number): DirectStorageGet;
+
+/**
+ * Was a storage GET answer the chunk we asked for? `{ kind: "stored" }` or
+ * `{ kind: "failed", status }`; a caller with no HTTP answer passes status `0` (exactly what
+ * `WasmStorageBody.fromHead` reports for it). Only a `200` whose `Content-Length` is exactly
+ * `expected` is `stored`.
+ * `status` crosses as a JS number and is validated exactly as `WasmStorageBody.fromHead` validates
+ * it: a whole number in `0..=65535`, else `status_invalid`. `undefined` is not a number and throws
+ * `status_invalid` too, so a caller cannot omit the answer it means to report.
+ */
+export function checkStorageGet(status: number, content_length: number | null | undefined, expected: number): DirectStorageGet;
+
+/**
  * May the client follow this storage link? Throws an `Error` whose `code` is
  * the refusal (`malformed`, `not_https`, `userinfo`, `ip_literal`, `loopback`,
  * `bad_host`, `port`, `host_not_listed`, `bucket_not_listed`, `bad_path`); the
@@ -613,6 +823,11 @@ export class WasmSignupCeremony {
  * `parseDirectDiscovery` returned; `api_base` is the API origin in use.
  */
 export function checkStorageUrl(url: string, discovery: any, api_base: string): void;
+
+/**
+ * L14: does this row's L7 wrap open to exactly `expectedKey`?
+ */
+export function childWrapMatches(folder_key: Uint8Array, shared_folder_id: string, item_id: string, kind: number, wrapped: Uint8Array, expected_key: Uint8Array): boolean;
 
 /**
  * What an API answer means, as `{ kind, millis?, status?, error? }` with `kind`
@@ -649,6 +864,15 @@ export function combineFolderLinkKey(k_c: Uint8Array, passphrase_stretch?: Uint8
  * Compute recovery check from master key. Returns 32-byte `Uint8Array`.
  */
 export function compute_recovery_check(master_key: Uint8Array): Uint8Array;
+
+/**
+ * Decode any accepted stored form of the metadata envelope.
+ *
+ * Throws an `Error` whose message starts with `invalid input:` — the core
+ * error's own text — for invalid JSON, a missing/non-byte field, an unknown
+ * cipher suite, or a `null` field. Fields core does not know are ignored.
+ */
+export function decodeMetadataEnvelope(payload: string): any;
 
 /**
  * Decompress gzip-compressed data. Returns `Uint8Array`.
@@ -800,11 +1024,80 @@ export function directDownloadGrantsPath(file_id: string): string;
 /**
  * `{ cap_object_download_v1, cap_object_upload_v1, capabilities_header,
  * discovery_path, max_window, default_window, chunk_overhead,
+ * max_discovery_body_bytes, max_grant_body_bytes, max_chunk_body_bytes,
  * storage_connect_timeout_ms, storage_get_idle_ms, discovery_timeout_ms,
  * api_call_timeout_ms, background_put_resource_timeout_ms }`: the contract's
- * names and numbers, and the time bounds every client applies, so no client re-types them.
+ * names and numbers, the response caps and the time bounds every client applies,
+ * so no client re-types them.
  */
 export function directTransferConstants(): any;
+
+/**
+ * Serialize a nonce + ciphertext pair into the canonical wire format.
+ *
+ * Returns `{"ciphertext":"<base64>","nonce":"<base64>"}` — byte-identical to
+ * `beebeeb_core::metadata_wire::serialize_encrypted_metadata`. Never emits a
+ * `cipher_suite`: the writer is frozen.
+ *
+ * Throws for a nonce that is not exactly 12 bytes (AES-GCM's nonce length).
+ *
+ * # Names, thumbnails and notes are not this pair
+ *
+ * The envelope is generic: no AAD, no field identity, so a reader can open a
+ * value sealed for one field as if it were another. The fields are kept
+ * apart by PURPOSE SUBKEY: one per-file HKDF subkey per purpose
+ * (`beebeeb/name/v1`, `beebeeb/thumb/v1`, `beebeeb/note/v1` in core's
+ * `encrypt`). Subkeys apply to a file whose metadata records a v2 pin —
+ * every name, thumbnail and note write for that file is subkey-sealed — and
+ * to every write once the gated core `WRITE_FORMAT` switch flips. Until then
+ * core's `METADATA_SEAL_WRITE` is `Legacy`, so a non-v2 file's names,
+ * thumbnails and notes are sealed under the raw file key.
+ *
+ * Use `encryptNameForNewItem` / `encryptNameForTarget` for a name,
+ * `encryptThumbnailForNewItem` / `encryptThumbnailForTarget` for a
+ * thumbnail, and `encryptNoteForNewItem` / `encryptNoteForTarget` for a
+ * note. Read them with `decrypt_file_metadata`, `decrypt_note` and
+ * `decrypt_thumbnail` (snake_case: these exports have no `js_name`). Never
+ * use `decrypt_metadata` for them: it checks no AAD and cannot tell which
+ * field a value was sealed for.
+ */
+export function encodeMetadataEnvelope(nonce: Uint8Array, ciphertext: Uint8Array): string;
+
+/**
+ * Seal a name for a NEW row minted by `newOwnerItemId`/`newForeignItemId`.
+ *
+ * The id handle decides the key (L12): an owner id derives it. A new foreign
+ * id is refused (an F id never derives its name key) — an F name is sealed
+ * through the `writeTarget` it gets after adoption; only its content goes
+ * through `WasmChunkEncryptor.forNewItem`.
+ */
+export function encryptNameForNewItem(item_id: WasmNewItemId, filename: string, mime_type: string | null | undefined, pin: number): string;
+
+/**
+ * Seal a replacement name through the resolved row's write target. The key and
+ * the pin come from the target, so a caller cannot substitute either.
+ */
+export function encryptNameForTarget(target: WasmWriteTarget, filename: string, mime_type?: string | null): string;
+
+/**
+ * Seal a note for a NEW row minted by `newOwnerItemId`/`newForeignItemId`.
+ */
+export function encryptNoteForNewItem(item_id: WasmNewItemId, note: string, pin: number): string;
+
+/**
+ * Seal a replacement note through the resolved row's write target.
+ */
+export function encryptNoteForTarget(target: WasmWriteTarget, note: string): string;
+
+/**
+ * Seal a thumbnail for a NEW row minted by `newOwnerItemId`/`newForeignItemId`.
+ */
+export function encryptThumbnailForNewItem(item_id: WasmNewItemId, plaintext: Uint8Array, pin: number): Uint8Array;
+
+/**
+ * Seal a replacement thumbnail through the resolved row's write target.
+ */
+export function encryptThumbnailForTarget(target: WasmWriteTarget, plaintext: Uint8Array): Uint8Array;
 
 /**
  * Encrypt a plaintext chunk with AES-256-GCM. Returns a JS object
@@ -891,6 +1184,12 @@ export function encrypt_thumbnail_for(file_key: Uint8Array, plaintext: Uint8Arra
 export function evaluate_password(password: string, min_length: number): any;
 
 /**
+ * Shorten a client-metadata string for sealing: over 1024 UTF-8 bytes, keep
+ * the last 1021 bytes on a char boundary behind a leading `…`.
+ */
+export function fitForSeal(s: string): string;
+
+/**
  * A shared folder's key id (task 2133): a one-way id of the folder's 32-byte
  * key, for a server to compare folder keys without learning them (HKDF-SHA256,
  * info `beebeeb/folder-key-id/v1`). Returns a 32-byte `Uint8Array`; not secret,
@@ -898,6 +1197,20 @@ export function evaluate_password(password: string, min_length: number): any;
  * (wasm-bindgen's own copy is freed without a wipe).
  */
 export function folder_key_id(folder_key: Uint8Array): Uint8Array;
+
+/**
+ * Format a byte count with binary units and IEC labels: `1 KiB` (1,024),
+ * `1 MiB`, `1.0 TiB`. Same ladder and precision rule as the SI formatter; a
+ * negative count keeps its sign and never scales (`-1500 B`).
+ */
+export function formatBinary(bytes: bigint): string;
+
+/**
+ * Format a byte count in decimal units with `decimals` decimals (0, 1 or 2),
+ * carrying a value that rounds up into the next unit (`999.6 KB` with one
+ * decimal prints `1.0 MB`). Counts below 1,000 always print as `N B`.
+ */
+export function formatCompact(bytes: bigint, decimals: number): string;
 
 /**
  * Generate a recovery kit PDF with a title, recovery words, and metadata.
@@ -922,6 +1235,12 @@ export function generate_recovery_phrase(): any;
 export function generate_share_token(): string;
 
 /**
+ * True when `item_id` is a canonical foreign (F) id; InvalidInput (a JS throw)
+ * when the text is not canonical at all.
+ */
+export function isForeignItemId(item_id: string): boolean;
+
+/**
  * Returns `true` if the given MIME type can be previewed in-app.
  */
 export function is_previewable(mime_type?: string | null): boolean;
@@ -943,6 +1262,30 @@ export function list_archive(data: Uint8Array, filename: string): any;
  * Returns a JS array of `{ name: string, size: number, is_directory: boolean }`.
  */
 export function list_tar_entries(data: Uint8Array): any;
+
+/**
+ * The ciphertext bytes a process of `class` (`"native"`, `"browser"`, `"mobile_app"`,
+ * `"mobile_extension"`) may hold at once. Throws `class_invalid` for any other string.
+ */
+export function maxInFlightBytes(_class: string): number;
+
+/**
+ * Mint a guest (F) item id with NO master key (task 2275 §15). The anonymous
+ * uploader path uses this; the id is a canonical RFC 9562 UUID v8 and core's
+ * class check classifies it as foreign. The server has no T2 F-class check
+ * yet (future server work), so only the core check protects this id today.
+ */
+export function mintGuestItemId(): string;
+
+/**
+ * Mint a new foreign (F) item id (RFC 9562 UUID v8) for `master_key`.
+ */
+export function newForeignItemId(master_key: Uint8Array): WasmNewItemId;
+
+/**
+ * Mint a new owner (O) item id (random UUID v4) for `master_key`.
+ */
+export function newOwnerItemId(master_key: Uint8Array): WasmNewItemId;
 
 /**
  * Finish OPAQUE client login. Returns `{ message: Uint8Array, session_key: Uint8Array, export_key: Uint8Array }`.
@@ -970,6 +1313,22 @@ export function opaque_registration_finish(client_state: Uint8Array, password: U
 export function opaque_registration_start(password: Uint8Array): any;
 
 /**
+ * Open a guest's display name. The envelope must be a JSON object with
+ * exactly the keys `cipher_suite`, `nonce` and `ciphertext` (any key order,
+ * any whitespace) that opens under the one actor-name key; the plaintext then
+ * goes through the same `sanitize_actor_name` rule as the writer and is
+ * returned sanitized. Every refusal is a decryption failure.
+ */
+export function openFolderActorName(folder_key: Uint8Array, shared_folder_id: string, envelope: string): string;
+
+/**
+ * The one legacy (unbound) child opener: a 60-byte frame under the folder
+ * key, refused when its 32-byte plaintext is valid UTF-8 (L9 rule 1).
+ * Returns `undefined` when the frame is not a legacy child wrap.
+ */
+export function openLegacyChildKey(folder_key: Uint8Array, wrapped: Uint8Array): Uint8Array | undefined;
+
+/**
  * L9 (task 2255): open a LEGACY invite owner copy and return its key only when
  * core proves it over the folder's rows, in ONE call. `rows` are the server's
  * `GET /shares/invites/{id}/folder-keys` rows verbatim:
@@ -982,9 +1341,67 @@ export function openLegacyInviteOwnerCopy(master_key: Uint8Array, folder_id: str
 
 /**
  * Open a sealed request upload (owner decrypt path). Recovers the content key.
- * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
+ * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns
+ * 32-byte `Uint8Array`.
+ *
+ * **DECRYPT-ONLY.** This is a request row's content key `C`, and the
+ * anonymous uploader holds it. Use it to read the row's content; never seal a
+ * name, note or thumbnail under this key. For a request row the owner's rename
+ * goes through `seal_request_rename` / `sealRequestRename` (the §15
+ * string-derived key), never `C`.
  */
 export function open_request_upload(r_priv: Uint8Array, e_pub: Uint8Array, file_id: Uint8Array, wrapped_key: Uint8Array): Uint8Array;
+
+/**
+ * Resolve the owner's per-file key for ONE content version of a file from the
+ * canonical `file_id` and that version's first chunk frame, and report which
+ * id convention that version's key came from (SF-0002). Returns
+ * `{ key: Uint8Array, convention }`, where `convention` is `"string"`,
+ * `"binary"` or `"upper_repair"`.
+ *
+ * The first chunk frame may be a v1 legacy frame (`nonce || ciphertext ||
+ * tag`, no AAD — what the iOS File Provider wrote) or core's v2 frame 0.
+ *
+ * A file is READ-ONLY for the client if EITHER
+ * [`ownerFileKeyForName`](owner_file_key_for_name) or ANY of its versions
+ * reports `"upper_repair"`: no rename, no new version; save an edit as a new
+ * file. Resolve each version separately — the name's convention does not
+ * decide the content key.
+ */
+export function ownerFileKeyForContent(master_key: Uint8Array, file_id: string, first_chunk_frame: Uint8Array): any;
+
+/**
+ * Resolve the owner's per-file key for a file from the `(file_id,
+ * name_encrypted)` pair the server stores, and report which id convention the
+ * key came from (SF-0002). Returns `{ key: Uint8Array, convention }`, where
+ * `convention` is `"string"`, `"binary"` or `"upper_repair"`.
+ *
+ * The string convention is tried first, then the legacy binary one, then the
+ * uppercase repair one (only when uppercasing changes the id). The first
+ * candidate whose key authenticates `name_encrypted` wins.
+ *
+ * `"upper_repair"` is READ-ONLY: treat the file as read-only — no rename and
+ * no new version; save an edit as a new file. Core only reports the
+ * convention; it never re-seals or migrates an existing row.
+ */
+export function ownerFileKeyForName(master_key: Uint8Array, file_id: string, name_encrypted: string): any;
+
+/**
+ * When `wire_bytes` received since `start_ms` at `kbps` KiB/s lets the next storage
+ * request start. The three counts cross as JS numbers (`f64`), like every other count.
+ * `-Infinity` (`i64::MIN` in core) means there is no ceiling: a real deadline is a
+ * finite number, so a caller only has to test `Number.isFinite`. Desktop's formula,
+ * unchanged in value.
+ */
+export function pacedUntilMs(start_ms: number, wire_bytes: number, kbps: number): number;
+
+/**
+ * May this client use the direct transport for `direction`? True only when discovery
+ * offers it AND has at least one storage pair AND every pair in `discovery.storage_buckets`
+ * is in `pairs` (an array of `{host, bucket}`). Hosts compare ASCII case-insensitively,
+ * buckets exactly.
+ */
+export function pairsAllowed(discovery: any, direction: string, pairs: any): boolean;
 
 /**
  * Decode a discovery body (`GET /api/v1/transfer/capabilities`). Returns
@@ -994,6 +1411,24 @@ export function open_request_upload(r_priv: Uint8Array, e_pub: Uint8Array, file_
  * `discovery_malformed`.
  */
 export function parseDirectDiscovery(body: Uint8Array): any;
+
+/**
+ * Parse a `Retry-After` delta-seconds header: the number of seconds, or `null`
+ * for anything else (empty, negative, fractional, an HTTP date), so the caller
+ * falls back to the ladder.
+ */
+export function parseRetryAfter(value: string): any;
+
+/**
+ * Parse a share link on either route and on any `https` host (legacy hosts
+ * included; plain `http` only for loopback). Returns
+ * `{ base_url, route, token, key }`; `key` is the percent-decoded fragment
+ * value, not yet decoded as bytes — use `shareKeyBytes(key)` for that.
+ *
+ * The thrown message starts with core's stable code, so a caller can branch:
+ * `missing_fragment`, `missing_key`, `missing_token`, `not_a_share_link`.
+ */
+export function parseShareLink(url: string): any;
 
 /**
  * The shared retry policy of the pinned per-chunk route (4 attempts, 150 s of waiting in all, a
@@ -1037,6 +1472,20 @@ export function plan_max_extra_tb(plan_slug: string): bigint;
 export function plan_monthly_cost_cents(plan_slug: string, extra_tb: bigint, extra_users: bigint): bigint;
 
 /**
+ * One preview decision per name, for one platform: `result[i]` is `1` when
+ * `names[i]` can be previewed in-app on `platform`, `0` otherwise.
+ *
+ * `platform` is `"web"`, `"desktop"` or `"mobile"`. Any other string throws
+ * `unknown preview platform \`…\`` — it never falls back to a default, because
+ * answering for the wrong client is exactly the regression this export exists
+ * to prevent.
+ *
+ * The vector `test-vectors/consolidation/preview_platforms.json` carries the
+ * expected answer for every extension of the three-way union, per platform.
+ */
+export function previewableBatchFor(names: string[], platform: string): Uint8Array;
+
+/**
  * Recover a master key from a 12-word BIP39 recovery phrase.
  * Returns the 32-byte master key as `Uint8Array`.
  */
@@ -1046,6 +1495,49 @@ export function recover_from_phrase(phrase: string): Uint8Array;
  * A URL for a log line: scheme and host only.
  */
 export function redactUrl(url: string): string;
+
+/**
+ * Resolve one row's key from its id class (task 2275 L12).
+ *
+ * `kind` is the row kind (1 = file, 2 = folder) and is required: a plaintext
+ * name on a FOLDER uses the string convention, a plaintext name on a FILE must
+ * authenticate content chunk 0 (`firstChunkFrame`) and is refused without one.
+ *
+ * Returns `{ key: Uint8Array, contentKey: Uint8Array | null, origin: string,
+ * name: {name?, mimeType?, plaintext?, chunkFormat}, writeTarget:
+ * WasmWriteTarget | null }`. `origin` is "derived", "derived_binary",
+ * "derived_upper_repair", "owner_wrap" or "folder_wrap". `contentKey` is set
+ * only for an SF-0002 split row (name and content under different
+ * conventions). A row with an upper-repair name or content key is READ-ONLY and
+ * has no write target.
+ *
+ * Owner ids never use `ownerWrap`/the folder wrap; foreign ids never derive a
+ * key and require one of them to open AND authenticate the name.
+ */
+export function resolveOwnedKey(master_key: Uint8Array, item_id: string, kind: number, owner_wrap: Uint8Array | null | undefined, name_encrypted: string, shared_folder_id?: string | null, folder_key?: Uint8Array | null, folder_wrap?: Uint8Array | null, first_chunk_frame?: Uint8Array | null): any;
+
+/**
+ * Resolve a 2236 request row: `{content, nameOrigin, name, mimeType,
+ * chunkFormat, seal, renameTarget}`. `content` is a decrypt-only
+ * `WasmRequestContentReader` for the row's content key; no raw key reaches JS,
+ * so a request-row result offers no sealing path. The seal is `"bound"` or
+ * `"unbound"` (§15), and `renameTarget` is `{origin, pin}` or null when the
+ * name is upper-repair (read-only). Renames go through `sealRequestRename`.
+ *
+ * `request_wrap_context` is the context the owner wrapped the request private
+ * key under: empty for every request created so far (the server mints the
+ * request id after the wrap). A real request id refuses a shipped row; this
+ * function never tries both contexts.
+ */
+export function resolveRequestRow(master_key: Uint8Array, item_id: string, request_wrap_context: Uint8Array, wrapped_request_private: Uint8Array, wrap_nonce: Uint8Array, sender_ephemeral_pubkey: Uint8Array, wrapped_content_key: Uint8Array, name_encrypted: string): any;
+
+/**
+ * Resume a minted id from the id text and tag persisted with an upload session
+ * (task 2275, L13). The tag is re-checked in constant time; a tampered tag, a
+ * different id or a server-echoed id is refused, so an interrupted upload can
+ * continue but a substituted id cannot be sealed.
+ */
+export function resumeNewItemId(master_key: Uint8Array, item_id: string, tag: Uint8Array): WasmNewItemId;
 
 /**
  * What to do with an unfinished upload found on disk. `recorded` is `"api"` or `"direct"` (what the resume
@@ -1059,9 +1551,77 @@ export function redactUrl(url: string): string;
 export function resumeTransport(recorded: string, discovery: any, forced_api: boolean): string;
 
 /**
+ * The decision after `attempts_made` attempts: the delay in milliseconds to
+ * wait before the next attempt, or `null` to surface the last error. A server
+ * `Retry-After` (`retry_after_seconds`, a number of seconds or `null`)
+ * replaces the ladder exactly.
+ *
+ * `outcome` is `"success"`, `"network"`, `"fatal"`, or `{ status: 503 }`.
+ */
+export function retryDecide(policy: any, attempts_made: number, outcome: any, retry_after_seconds: any): any;
+
+/**
+ * The un-jittered ladder delay before retry number `retry` (1-based; retry 0
+ * means "no retry" and is 0 ms), capped at the policy's `cap_ms`.
+ */
+export function retryDelayMs(policy: any, retry: number): number;
+
+/**
+ * The ladder delay shortened per the policy's jitter, with a caller-supplied
+ * sample in permille (`0..=1000`; larger values are clamped). A `"none"`
+ * policy ignores the sample.
+ */
+export function retryJitteredDelayMs(policy: any, retry: number, sample_permille: number): number;
+
+/**
+ * The shipped policy: six requests in all (one try plus five retries), 500 ms
+ * base, a 30 s cap, no jitter, and a server `Retry-After` honoured.
+ */
+export function retryPolicy(): any;
+
+/**
+ * Rewrite one name so it is safe under the strictest (Windows) rule set:
+ * `: < > " | ? *` become `_`, trailing dots/spaces become `_`, a reserved
+ * device name gets a leading `_`, and bidi controls are removed. A name that
+ * is structurally unsafe (separator, `.`/`..`, control character, drive
+ * prefix) is still refused, never rewritten.
+ */
+export function sanitizePathComponent(name: string): string;
+
+/**
  * Text that may contain URLs, made safe to print.
  */
 export function scrubText(text: string): string;
+
+/**
+ * Seal a guest's display name under the folder key, bound to the shared root.
+ * Seals `sanitize_actor_name(name)` (core `kdf::sanitize_actor_name`): NFC;
+ * controls, bidi controls and the other display controls of its strip table
+ * removed (ZWNJ, ZWJ, variation selectors and tag characters are kept); NFC
+ * again; then a leading combining mark, a result outside 1..64 Unicode scalar
+ * values and a visibly blank name are refused (invalid input). Returns the
+ * envelope: a JSON object with exactly the keys `cipher_suite`, `nonce` and
+ * `ciphertext`.
+ */
+export function sealFolderActorName(folder_key: Uint8Array, shared_folder_id: string, name: string): string;
+
+/**
+ * Seal a request-row rename under the section 15 string-convention key derived
+ * from `item_id`, keeping the row's recorded `pin` (`chunkFormat` from
+ * `resolveRequestRow`). This is the only sealing path a request-row result
+ * offers: `resolveRequestRow` hands back no key, so a rename cannot be sealed
+ * under the content key `C` that the anonymous uploader holds (A9).
+ *
+ * An F id is refused by the same owner-class check the resolver runs. `pin` is
+ * the `renameTarget.pin` the resolver returned (the row's recorded format),
+ * never a field from the wire. Pin direction matters both ways:
+ * - a pin of 2 on a v1 row makes the file unreadable until it is renamed again
+ *   with the correct pin;
+ * - a pin of 0 on a v2 row drops the recorded 2, turns frame-0 detection back
+ *   on, and lets a server serve the uploader's old no-AAD name blob under `C`
+ *   as a one-frame v1 file.
+ */
+export function sealRequestRename(master_key: Uint8Array, item_id: string, pin: number, filename: string, mime_type?: string | null): string;
 
 /**
  * Seal a content key to a request's public key (anonymous uploader path).
@@ -1080,6 +1640,12 @@ export function seal_to_request(r_pub: Uint8Array, file_id: Uint8Array, content_
 export function searchIndexSyncPlan(local: any, remote: any, local_is_authoritative: boolean): any;
 
 /**
+ * Decode a `#key=` value as bytes, accepting standard base64 (legacy links) and
+ * base64url (current links), padded or unpadded; `null` when it is neither.
+ */
+export function shareKeyBytes(key: string): any;
+
+/**
  * The most a storage GET of `len` ciphertext bytes may take, in milliseconds (the same formula as a PUT).
  * Throws like `storagePutTotalMs`.
  */
@@ -1096,6 +1662,26 @@ export function storagePutTotalMs(len: number): number;
  * Format a byte count as a human-readable SI string (e.g. "5.0 TB").
  */
 export function storage_format_si(bytes: bigint): string;
+
+/**
+ * Where `bytes` falls against one variant's budgets: `"target"` (at or below
+ * `target_bytes`, stop the ladder), `"fallback"` (above target but at or below
+ * `max_bytes`, keep it and keep trying) or `"rejected"` (above `max_bytes`).
+ */
+export function thumbnailBudget(variant: string, bytes: number): string;
+
+/**
+ * The encoder output a variant asks for on `platform`: `"heic"` on iOS and
+ * macOS (the OS owns the encoder), `"webp"` everywhere else.
+ */
+export function thumbnailFormat(variant: string, platform: string): string;
+
+/**
+ * The policy for one variant (`small`, `medium`, `large`):
+ * `{ variant, target_px, target_bytes, max_bytes, steps }`, where each step is
+ * `{ max_dimension, quality }`.
+ */
+export function thumbnailPolicy(variant: string): any;
 
 /**
  * Decrypt a `nonce(12) || ciphertext` blob produced by `transfer_encrypt`.
@@ -1164,6 +1750,13 @@ export function unwrapFolderCustody(master_key: Uint8Array, folder_id: string, w
 export function unwrapInviteOwnerCopy(master_key: Uint8Array, folder_id: string, wrapped: Uint8Array): Uint8Array;
 
 /**
+ * Open a link label; one key, one shape. Returns the label in NFC (a non-NFC
+ * plaintext is normalized, not refused); invalid UTF-8 or a label outside
+ * 1..40 Unicode scalar values after NFC is a decryption failure.
+ */
+export function unwrapLinkLabel(master_key: Uint8Array, share_id: string, wrapped: Uint8Array): string;
+
+/**
  * Open a link's owner copy of K_c. K_c is the deliberate export: JS puts it
  * in the link fragment. The master key never leaves the caller.
  */
@@ -1200,6 +1793,12 @@ export function wrapFolderCustody(master_key: Uint8Array, folder_id: string, fol
 export function wrapInviteOwnerCopy(master_key: Uint8Array, folder_id: string, folder_key: Uint8Array): Uint8Array;
 
 /**
+ * Seal a link label to the owner's master key, bound to the 16-byte share id.
+ * Wire = nonce(12) || ciphertext+tag, like the L6 wraps.
+ */
+export function wrapLinkLabel(master_key: Uint8Array, share_id: string, label: string): Uint8Array;
+
+/**
  * Seal a folder link's fragment key K_c to the owner's master key, bound to
  * the link's share id (so the owner can copy the link again later).
  */
@@ -1232,19 +1831,35 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_clientmetakey_free: (a: number, b: number) => void;
     readonly __wbg_wasmbreachcheck_free: (a: number, b: number) => void;
     readonly __wbg_wasmchunkdecryptor_free: (a: number, b: number) => void;
     readonly __wbg_wasmchunkencryptor_free: (a: number, b: number) => void;
     readonly __wbg_wasmdirectdiscoverycache_free: (a: number, b: number) => void;
     readonly __wbg_wasmdirecthealth_free: (a: number, b: number) => void;
     readonly __wbg_wasmdownloadplanner_free: (a: number, b: number) => void;
+    readonly __wbg_wasmnewitemid_free: (a: number, b: number) => void;
+    readonly __wbg_wasmrequestcontentreader_free: (a: number, b: number) => void;
     readonly __wbg_wasmsearchindex_free: (a: number, b: number) => void;
     readonly __wbg_wasmsignedurl_free: (a: number, b: number) => void;
     readonly __wbg_wasmsignupceremony_free: (a: number, b: number) => void;
+    readonly __wbg_wasmstoragebody_free: (a: number, b: number) => void;
+    readonly __wbg_wasmwritetarget_free: (a: number, b: number) => void;
+    readonly archiveEntryName: (a: number, b: number, c: number) => void;
+    readonly buildShareLink: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly checkPathComponent: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly checkStorageBody: (a: number, b: number, c: number) => void;
+    readonly checkStorageGet: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly checkStorageUrl: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly childWrapMatches: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
     readonly classifyDirectAnswer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+    readonly clientmetakey_new: (a: number, b: number, c: number) => void;
+    readonly clientmetakey_open: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly clientmetakey_openMany: (a: number, b: number, c: number) => void;
+    readonly clientmetakey_seal: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly combineFolderLinkKey: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly compute_recovery_check: (a: number, b: number, c: number) => void;
+    readonly decodeMetadataEnvelope: (a: number, b: number, c: number) => void;
     readonly decompress_gzip: (a: number, b: number, c: number) => void;
     readonly decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly decrypt_chunk_frame: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
@@ -1267,6 +1882,13 @@ export interface InitOutput {
     readonly derive_x25519_public: (a: number, b: number, c: number) => void;
     readonly directDownloadGrantsPath: (a: number, b: number, c: number) => void;
     readonly directTransferConstants: (a: number) => void;
+    readonly encodeMetadataEnvelope: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly encryptNameForNewItem: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly encryptNameForTarget: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly encryptNoteForNewItem: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly encryptNoteForTarget: (a: number, b: number, c: number, d: number) => void;
+    readonly encryptThumbnailForNewItem: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly encryptThumbnailForTarget: (a: number, b: number, c: number, d: number) => void;
     readonly encrypt_chunk: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_metadata: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_name_for: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
@@ -1276,21 +1898,37 @@ export interface InitOutput {
     readonly encrypt_thumbnail: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_thumbnail_for: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly evaluate_password: (a: number, b: number, c: number, d: number) => void;
+    readonly fitForSeal: (a: number, b: number, c: number) => void;
     readonly folder_key_id: (a: number, b: number, c: number) => void;
+    readonly formatBinary: (a: number, b: bigint) => void;
+    readonly formatCompact: (a: number, b: bigint, c: number) => void;
     readonly generate_recovery_pdf: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly generate_recovery_phrase: (a: number) => void;
     readonly generate_share_token: (a: number) => void;
+    readonly isForeignItemId: (a: number, b: number, c: number) => void;
     readonly is_previewable: (a: number, b: number) => number;
     readonly is_previewable_by_extension: (a: number, b: number) => number;
     readonly list_archive: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly list_tar_entries: (a: number, b: number, c: number) => void;
+    readonly maxInFlightBytes: (a: number, b: number, c: number) => void;
+    readonly mintGuestItemId: (a: number) => void;
+    readonly newForeignItemId: (a: number, b: number, c: number) => void;
+    readonly newOwnerItemId: (a: number, b: number, c: number) => void;
     readonly opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly opaque_login_start: (a: number, b: number, c: number) => void;
     readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly opaque_registration_start: (a: number, b: number, c: number) => void;
+    readonly openFolderActorName: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly openLegacyChildKey: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly openLegacyInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly open_request_upload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly ownerFileKeyForContent: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly ownerFileKeyForName: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly pacedUntilMs: (a: number, b: number, c: number, d: number) => void;
+    readonly pairsAllowed: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly parseDirectDiscovery: (a: number, b: number, c: number) => void;
+    readonly parseRetryAfter: (a: number, b: number) => number;
+    readonly parseShareLink: (a: number, b: number, c: number) => void;
     readonly pinnedRetryDecision: (a: number, b: number, c: number, d: number) => void;
     readonly plan_base_storage_bytes: (a: number, b: number) => bigint;
     readonly plan_can_add_storage: (a: number, b: number) => number;
@@ -1298,15 +1936,30 @@ export interface InitOutput {
     readonly plan_effective_quota: (a: number, b: number, c: bigint, d: bigint) => bigint;
     readonly plan_max_extra_tb: (a: number, b: number) => bigint;
     readonly plan_monthly_cost_cents: (a: number, b: number, c: bigint, d: bigint) => bigint;
+    readonly previewableBatchFor: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly recover_from_phrase: (a: number, b: number, c: number) => void;
     readonly redactUrl: (a: number, b: number, c: number) => void;
+    readonly resolveOwnedKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number) => void;
+    readonly resolveRequestRow: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number) => void;
+    readonly resumeNewItemId: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly resumeTransport: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly retryDecide: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly retryDelayMs: (a: number, b: number, c: number) => void;
+    readonly retryJitteredDelayMs: (a: number, b: number, c: number, d: number) => void;
+    readonly retryPolicy: (a: number) => void;
+    readonly sanitizePathComponent: (a: number, b: number, c: number) => void;
     readonly scrubText: (a: number, b: number, c: number) => void;
+    readonly sealFolderActorName: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly sealRequestRename: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly seal_to_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly searchIndexSyncPlan: (a: number, b: number, c: number, d: number) => void;
+    readonly shareKeyBytes: (a: number, b: number) => number;
     readonly storageGetTotalMs: (a: number, b: number) => void;
     readonly storagePutTotalMs: (a: number, b: number) => void;
     readonly storage_format_si: (a: number, b: bigint) => void;
+    readonly thumbnailBudget: (a: number, b: number, c: number, d: number) => void;
+    readonly thumbnailFormat: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly thumbnailPolicy: (a: number, b: number, c: number) => void;
     readonly transfer_decrypt: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly transfer_derive_key: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly transfer_derive_sas_bytes: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -1316,6 +1969,7 @@ export interface InitOutput {
     readonly unwrapFolderChild: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly unwrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly unwrapLinkLabel: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
@@ -1335,6 +1989,8 @@ export interface InitOutput {
     readonly wasmchunkencryptor_chunksEmitted: (a: number) => number;
     readonly wasmchunkencryptor_expectedTotalCiphertext: (a: number) => number;
     readonly wasmchunkencryptor_finish: (a: number, b: number) => void;
+    readonly wasmchunkencryptor_forNewItem: (a: number, b: number, c: bigint, d: number, e: number) => void;
+    readonly wasmchunkencryptor_forTarget: (a: number, b: number, c: bigint, d: number, e: number) => void;
     readonly wasmchunkencryptor_format: (a: number) => number;
     readonly wasmchunkencryptor_new: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: number, h: number) => void;
     readonly wasmchunkencryptor_pushChunk: (a: number, b: number, c: number, d: number) => void;
@@ -1351,6 +2007,7 @@ export interface InitOutput {
     readonly wasmdirecthealth_new: () => number;
     readonly wasmdirecthealth_restore: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wasmdownloadplanner_apiFetchFailed: (a: number, b: number, c: number) => void;
+    readonly wasmdownloadplanner_chunkLength: (a: number, b: number) => number;
     readonly wasmdownloadplanner_chunkUnauthentic: (a: number, b: number, c: number) => void;
     readonly wasmdownloadplanner_consumed: (a: number, b: number, c: number) => void;
     readonly wasmdownloadplanner_consumedCount: (a: number) => number;
@@ -1366,6 +2023,12 @@ export interface InitOutput {
     readonly wasmdownloadplanner_windowAnswered: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wasmdownloadplanner_windowFailed: (a: number, b: number, c: number, d: number) => void;
     readonly wasmdownloadplanner_windowMalformed: (a: number) => void;
+    readonly wasmnewitemid_idText: (a: number, b: number) => void;
+    readonly wasmnewitemid_tag: (a: number, b: number) => void;
+    readonly wasmrequestcontentreader_chunkFormat: (a: number) => number;
+    readonly wasmrequestcontentreader_decryptor: (a: number) => number;
+    readonly wasmrequestcontentreader_fileId: (a: number, b: number) => void;
+    readonly wasmrequestcontentreader_openFrame: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly wasmsearchindex_build: (a: number, b: number, c: number) => void;
     readonly wasmsearchindex_encryptBuckets: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmsearchindex_encryptBucketsWithFolderKey: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
@@ -1399,9 +2062,15 @@ export interface InitOutput {
     readonly wasmsignupceremony_setPasswordUnchecked: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmsignupceremony_startRegistration: (a: number, b: number) => void;
     readonly wasmsignupceremony_step: (a: number, b: number) => void;
+    readonly wasmstoragebody_finish: (a: number, b: number) => void;
+    readonly wasmstoragebody_fromHead: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmstoragebody_push: (a: number, b: number, c: number) => void;
+    readonly wasmwritetarget_itemId: (a: number, b: number) => void;
+    readonly wasmwritetarget_pin: (a: number) => number;
     readonly wrapFolderChild: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly wrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly wrapLinkLabel: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;

@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 1832 chooser allowance label spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

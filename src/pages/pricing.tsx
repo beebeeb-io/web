@@ -1,3 +1,4 @@
+// The /pricing route: plan comparison and checkout entry.
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'

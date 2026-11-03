@@ -1,3 +1,4 @@
+// The /trash route: deleted files and restore.
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'
@@ -447,6 +448,7 @@ export function Trash() {
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
       nameEncrypted: file.name_encrypted,
+      writeTarget: file,
       noteEncrypted: file.note_encrypted ?? null,
     }
   }

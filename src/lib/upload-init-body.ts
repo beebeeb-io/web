@@ -25,9 +25,10 @@ export function buildUploadInitV2Body(metadata: UploadInitMetadata): Record<stri
     // file's id — the server (InitUploadV2Request.file_id) then writes a new
     // object version of that file and applies the quota replace-credit. For a
     // fresh upload it is the client-generated UUID the file key was derived
-    // from; the server inserts the row under it. Undefined is dropped by
-    // JSON.stringify, leaving the server to issue an id (encryptedUpload's
-    // re-derive fallback handles that case).
+    // from; the server inserts the row under it. L13 (SF-0001): every upload
+    // sends one (`initUpload` requires it) and aborts on an answer naming any
+    // other id; there is no server-issued-id path any more. An undefined
+    // field is still dropped by JSON.stringify (this builder's own tests).
     file_id: metadata.file_id,
     file_name: metadata.name_encrypted,
     file_size_bytes: metadata.size_bytes,

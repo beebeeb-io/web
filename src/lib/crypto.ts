@@ -1,244 +1,21 @@
-// ─── Crypto service ─────────────────────────────────
-// Proxies all WASM crypto operations to a Web Worker via Comlink.
-// Master key lives in memory on the main thread only.
-//
-// Memory-cap restart:
-//   WebAssembly linear memory only grows — it never shrinks. After a long
-//   session involving many large encrypt/decrypt ops the worker can hold
-//   hundreds of MB. We periodically check the worker's reported memory
-//   usage and, when it crosses MEMORY_THRESHOLD_BYTES, terminate it and
-//   spawn a fresh worker. All consumer calls funnel through `withProxy`,
-//   which gates new ops on `restartPromise` while a restart is in flight
-//   and tracks `inFlight` so the swap waits for outstanding ops to drain.
-
+// The crypto facade: named re-exports of the key, chunk, and folder-link primitives.
 import * as Comlink from 'comlink'
-import type { CryptoWorker, CeremonyOps, CeremonyResult } from '../workers/crypto.worker'
 import type { ContentPin, DecryptSummary, PinnedMetadata } from './content-crypto'
-
-/** Soft cap on WASM linear-memory bytes before we recycle the worker. */
-const MEMORY_THRESHOLD_BYTES = 256 * 1024 * 1024
-/** Check memory every N completed ops (cheap: a single Comlink round-trip). */
-const MEM_CHECK_INTERVAL = 16
-
-let currentWorker: Worker | null = null
-let workerProxy: Comlink.Remote<CryptoWorker> | null = null
-let initPromise: Promise<void> | null = null
-
-// ── Restart coordination state ──────────────────────────────────────────────
-// `inFlight` counts ops that have grabbed `workerProxy` and not yet resolved.
-// `restartPromise`, when set, blocks new ops at the gate inside `withProxy`.
-// `idleNotifier`, when set, is resolved as soon as `inFlight` returns to 0.
-let inFlight = 0
-let restartPromise: Promise<void> | null = null
-let opsSinceMemCheck = 0
-let idleNotifier: (() => void) | null = null
-
-function spawnWorker(): { worker: Worker; proxy: Comlink.Remote<CryptoWorker> } {
-  const worker = new Worker(
-    new URL('../workers/crypto.worker.ts', import.meta.url),
-    { type: 'module' },
-  )
-  const proxy = Comlink.wrap<CryptoWorker>(worker)
-  return { worker, proxy }
-}
-
-/** Spawn the crypto worker and initialize WASM inside it (singleton). */
-export async function initCrypto(): Promise<void> {
-  if (workerProxy) return
-  if (initPromise) return initPromise
-
-  initPromise = (async () => {
-    const { worker, proxy } = spawnWorker()
-    await proxy.init()
-    currentWorker = worker
-    workerProxy = proxy
-  })()
-
-  try {
-    await initPromise
-  } finally {
-    // Allow re-init after a terminate(): once `workerProxy` is null again
-    // a later `initCrypto()` should run the spawn flow.
-    initPromise = null
-  }
-}
-
-function notifyIdleIfReached(): void {
-  if (inFlight === 0 && idleNotifier) {
-    const n = idleNotifier
-    idleNotifier = null
-    n()
-  }
-}
-
-function waitForIdle(): Promise<void> {
-  if (inFlight === 0) return Promise.resolve()
-  return new Promise<void>((resolve) => {
-    // Only one waiter ever — the restart driver. We don't have multiple
-    // restart drivers because `restartPromise` itself gates concurrency.
-    idleNotifier = resolve
-  })
-}
-
-/**
- * Run `fn` against the current worker proxy with concurrency tracking.
- *
- * - Waits for any in-flight restart before grabbing the proxy
- * - Lazily initializes the worker on first call
- * - Increments `inFlight` for the duration of the call so a concurrent
- *   restart driver can wait for the op to settle before terminating
- * - After the call resolves, periodically polls memory usage and triggers
- *   a restart if the soft cap is exceeded
- */
-async function withProxy<T>(
-  fn: (proxy: Comlink.Remote<CryptoWorker>) => Promise<T>,
-): Promise<T> {
-  // Gate: block new ops while a restart is in flight.
-  while (restartPromise) {
-    await restartPromise
-  }
-  if (!workerProxy) {
-    await initCrypto()
-  }
-  const proxy = workerProxy
-  if (!proxy) {
-    throw new Error('Crypto worker not initialized — call initCrypto() first')
-  }
-
-  inFlight++
-  try {
-    return await fn(proxy)
-  } finally {
-    inFlight--
-    notifyIdleIfReached()
-    opsSinceMemCheck++
-    if (opsSinceMemCheck >= MEM_CHECK_INTERVAL && !restartPromise) {
-      opsSinceMemCheck = 0
-      // Fire and forget — restart runs in its own async context.
-      void maybeRestart()
-    }
-  }
-}
-
-/**
- * True while the worker owns a stateful instance that a recycle would orphan:
- * each is a pointer into THIS worker's WASM memory, addressed from the main
- * thread by handle. A streaming encryptor (an upload; terminating mid-upload
- * would break finish()'s integrity guard), a content decryptor (a download,
- * task 1943), the search index (B4; long-lived, tiny) or a signup ceremony
- * (password, phrase and master key, task 1745). Direct proxy calls: they do
- * not count as in-flight ops.
- */
-async function hasLiveWorkerInstances(proxy: Comlink.Remote<CryptoWorker>): Promise<boolean> {
-  return (
-    (await proxy.liveEncryptorCount()) > 0 ||
-    (await proxy.liveDecryptorCount()) > 0 ||
-    (await proxy.liveSearchIndexCount()) > 0 ||
-    (await proxy.liveCeremonyCount()) > 0
-  )
-}
-
-/**
- * Check WASM memory usage; if above the threshold, terminate the worker
- * and spawn a fresh one. Safe to call concurrently — `restartPromise`
- * serializes the actual swap.
- */
-async function maybeRestart(): Promise<void> {
-  if (restartPromise || !workerProxy) return
-  // LIVE-INSTANCE GUARD (hasLiveWorkerInstances): never recycle the worker
-  // while it owns an encryptor, a content decryptor, the search index or a
-  // signup ceremony. Checked here, before taking the restart lock, and again
-  // under the lock once in-flight ops have drained. The index is name-only
-  // (tiny), so blocking the recycle while one is live costs nothing: the
-  // memory cap is only ever hit by a large upload or download, which the
-  // encryptor and decryptor guards cover.
-  try {
-    if (await hasLiveWorkerInstances(workerProxy)) return
-  } catch (err) {
-    // Worker went away (terminate raced us) — bail; the next op lazily re-inits.
-    console.warn('[crypto] live-instance count failed', err)
-    return
-  }
-  let bytes = 0
-  try {
-    // Direct call (not via withProxy) so the memory probe itself doesn't
-    // bump `inFlight` and deadlock the drain step below.
-    bytes = await workerProxy.getMemoryUsage()
-  } catch (err) {
-    // If the worker has gone away (terminate raced us) just bail; the next
-    // op will lazily re-init.
-    console.warn('[crypto] getMemoryUsage failed', err)
-    return
-  }
-  if (bytes <= MEMORY_THRESHOLD_BYTES) return
-  // Re-check the lock — another driver may have raced us past the entry
-  // guard while we were awaiting getMemoryUsage(). The next assignment must
-  // be synchronous so a parallel driver sees a non-null restartPromise.
-  if (restartPromise) return
-
-  // Take the restart lock. Any new `withProxy` call now blocks until we're
-  // done. Existing in-flight ops continue against the old worker and we
-  // wait for them to settle before terminating.
-  restartPromise = (async () => {
-    try {
-      await waitForIdle()
-      // Re-check under the lock (Codex P2 on web#170): an op admitted between
-      // the check above and taking the lock (a download creating its
-      // decryptor, an upload its encryptor) has now finished and may own a
-      // live instance in this worker. Recycling now would orphan its handle.
-      // New ops stay blocked until this promise settles.
-      const current = workerProxy
-      if (!current || (await hasLiveWorkerInstances(current))) return
-      const oldWorker = currentWorker
-      currentWorker = null
-      workerProxy = null
-      try {
-        oldWorker?.terminate()
-      } catch (err) {
-        console.warn('[crypto] worker.terminate() failed', err)
-      }
-      const { worker, proxy } = spawnWorker()
-      await proxy.init()
-      currentWorker = worker
-      workerProxy = proxy
-      // Best-effort observability — useful when watching the manual test.
-      console.info(
-        `[crypto] worker recycled at ${(bytes / (1024 * 1024)).toFixed(1)} MB WASM memory`,
-      )
-    } catch (err) {
-      console.error('[crypto] worker restart failed', err)
-      // Leave workerProxy null — the next withProxy() will run initCrypto()
-      // which spawns a fresh worker from scratch.
-    }
-  })()
-  try {
-    await restartPromise
-  } finally {
-    restartPromise = null
-  }
-}
-
-/**
- * Test-only hook: reports the current memory threshold + state. Not part
- * of the public API. Kept un-exported in production builds.
- */
-export const __cryptoRestartInternals = {
-  getInFlight: () => inFlight,
-  getMemoryThresholdBytes: () => MEMORY_THRESHOLD_BYTES,
-  isRestarting: () => restartPromise !== null,
-  /** Test-only: the memory check every 16th completed op triggers, run now. */
-  checkMemoryNow: () => maybeRestart(),
-  /** Test-only: forget a test's fake worker (terminates nothing). */
-  forgetWorkerForTests: () => {
-    currentWorker = null
-    workerProxy = null
-    initPromise = null
-    restartPromise = null
-    inFlight = 0
-    opsSinceMemCheck = 0
-  },
-}
-
+import type { ContentKey } from './request-row'
+import { withProxy } from './crypto/service'
+import { fromBase64, toBase64, x25519SharedSecret, zeroize } from './crypto/helpers'
+import { withCryptoError } from './crypto/errors'
+export { __cryptoRestartInternals, initCrypto, withProxy } from './crypto/service'
+export { SearchIndexProxy, buildSearchIndex, createSearchIndex, createSharedSearchIndex, searchIndexFromShards, searchIndexSyncPlan, sharedSearchIndexFromShards } from './crypto/search-index'
+export type { CoreEncryptedShard, ShardCoordinate, ShardSyncPlan } from './crypto/search-index'
+export { FILE_REQUEST_EMPTY_ID, derivePublicFromPrivate, generateRequestKeypair, sealToRequest, unwrapRequestPrivate, wrapRequestPrivate } from './crypto/file-requests'
+export type { RequestKeypair } from './crypto/file-requests'
+export { decryptTransferBlob, deriveTransferSession, sessionIdToBytes, transferDecrypt, transferDeriveKey, transferDeriveSasBytes, transferEncrypt, transferGenerateKeypair, transferSasToWords } from './crypto/transfers'
+export { CHUNK_SIZE, chunkFile, fromBase64, toBase64, x25519SharedSecret, zeroize } from './crypto/helpers'
+export { BreachCheckProxy, CeremonyError, CeremonyProxy, createBreachCheck, createSignupCeremony, evaluatePasswordCore } from './crypto/ceremony'
+export type { BreachVerdict, CeremonyConfig, PasswordEvaluation } from './crypto/ceremony'
+export { CryptoError, cryptoErrorKindOf, withCryptoError } from './crypto/errors'
+export type { CryptoErrorKind } from './crypto/errors'
 // ─── Key derivation ─────────────────────────────────
 
 /** Derive a master key from a password + salt via Argon2id. */
@@ -293,7 +70,7 @@ export async function decryptChunk(
   nonce: Uint8Array,
   ciphertext: Uint8Array,
 ): Promise<Uint8Array> {
-  return withProxy((p) => p.decryptChunk(fileKey, nonce, ciphertext))
+  return withCryptoError(() => withProxy((p) => p.decryptChunk(fileKey, nonce, ciphertext)))
 }
 
 /**
@@ -342,7 +119,7 @@ export {
  * write and replace of that file.
  */
 export async function readFileMetadata(fileKey: Uint8Array, nameEncrypted: string): Promise<PinnedMetadata> {
-  return withProxy((p) => p.readFileMetadata(fileKey, nameEncrypted))
+  return withCryptoError(() => withProxy((p) => p.readFileMetadata(fileKey, nameEncrypted)))
 }
 
 /**
@@ -351,7 +128,7 @@ export async function readFileMetadata(fileKey: Uint8Array, nameEncrypted: strin
  * never the source of a FILE's content pin.
  */
 export async function readNameMetadata(fileKey: Uint8Array, nameEncrypted: string): Promise<PinnedMetadata> {
-  return withProxy((p) => p.readNameMetadata(fileKey, nameEncrypted))
+  return withCryptoError(() => withProxy((p) => p.readNameMetadata(fileKey, nameEncrypted)))
 }
 
 /** Seal a note of an EXISTING file or folder under the rule of its recorded pin (see src/lib/file-note.ts). */
@@ -361,7 +138,172 @@ export async function encryptNoteFor(fileKey: Uint8Array, text: string, pin: Con
 
 /** Open a note: the note subkey first, then the legacy raw key. Throws on plaintext or a wrong key. */
 export async function decryptNote(fileKey: Uint8Array, noteEncrypted: string): Promise<string> {
-  return withProxy((p) => p.decryptNote(fileKey, noteEncrypted))
+  return withCryptoError(() => withProxy((p) => p.decryptNote(fileKey, noteEncrypted)))
+}
+
+// ─── SF-0002 owner read-repair ──────────────────────
+// The two core derivations that open a row an older iOS File Provider sealed
+// under the uppercase id. See src/lib/owner-repair.ts for the rule; these are
+// only the worker transport (the WASM call must stay off the main thread).
+
+/** Owner key for a name that does not open under this client's derived key. */
+export async function ownerRepairNameKey(
+  masterKey: Uint8Array,
+  fileId: string,
+  nameEncrypted: string,
+): Promise<{ key: Uint8Array; convention: string }> {
+  return withProxy((p) => p.ownerRepairNameKey(masterKey, fileId, nameEncrypted))
+}
+
+/** Owner key for a version whose first frame does not open under the key we have. */
+export async function ownerRepairContentKey(
+  masterKey: Uint8Array,
+  fileId: string,
+  firstChunkFrame: Uint8Array,
+): Promise<{ key: Uint8Array; convention: string }> {
+  return withProxy((p) => p.ownerRepairContentKey(masterKey, fileId, firstChunkFrame))
+}
+
+// ─── 2275 L12/L13: id class, minting, the owner resolver ────────────────────
+// Worker transport only. `src/lib/owned-item.ts` holds the typed surface; the
+// decisions (class, key, write target, wrap match) are all core's.
+
+export async function mintItemIdWorker(
+  masterKey: Uint8Array,
+  foreign: boolean,
+): Promise<{ idText: string; tag: Uint8Array }> {
+  return withProxy((p) => p.mintItemId(masterKey, foreign))
+}
+
+export async function resumeItemIdWorker(
+  masterKey: Uint8Array,
+  itemId: string,
+  tag: Uint8Array,
+): Promise<{ idText: string; tag: Uint8Array }> {
+  return withProxy((p) => p.resumeItemId(masterKey, itemId, tag))
+}
+
+export async function isForeignItemIdWorker(itemId: string): Promise<boolean> {
+  return withProxy((p) => p.isForeignItemId(itemId))
+}
+
+export interface ResolveOwnedItemArgs {
+  masterKey: Uint8Array
+  itemId: string
+  kind: number
+  ownerWrap?: Uint8Array | null
+  nameEncrypted: string
+  sharedFolderId?: string | null
+  folderKey?: Uint8Array | null
+  folderWrap?: Uint8Array | null
+  firstChunkFrame?: Uint8Array | null
+}
+
+export async function resolveOwnedItemWorker(args: ResolveOwnedItemArgs): Promise<{
+  key: Uint8Array
+  contentKey: Uint8Array | null
+  origin: string
+  name: { name?: string; mimeType?: string | null; plaintext?: string; chunkFormat: number } | null
+  writeTarget: { itemId: string; pin: number } | null
+}> {
+  return withProxy((p) => p.resolveOwnedItem(args))
+}
+
+export async function childWrapMatchesWorker(
+  folderKey: Uint8Array,
+  sharedFolderId: string,
+  itemId: string,
+  kind: number,
+  wrapped: Uint8Array,
+  expectedKey: Uint8Array,
+): Promise<boolean> {
+  return withProxy((p) => p.childWrapMatches(folderKey, sharedFolderId, itemId, kind, wrapped, expectedKey))
+}
+
+// ─── 2275 §15 (2326 = A): the request-row resolver ──────────────────────────
+// Core opens BOTH seals (bound and the shipped empty-id one), names the seal
+// it opened, and returns a decrypt-only content reader. No content key crosses
+// to the page; the reader stays in the worker behind a handle.
+
+export interface ResolveRequestRowArgs {
+  masterKey: Uint8Array
+  itemId: string
+  /** The context the request private key was wrapped under: empty for every request so far. */
+  requestWrapContext: Uint8Array
+  wrappedRequestPrivate: Uint8Array
+  wrapNonce: Uint8Array
+  senderEphemeralPubkey: Uint8Array
+  wrappedContentKey: Uint8Array
+  nameEncrypted: string
+}
+
+export interface WorkerResolvedRequestRow {
+  /** Worker handle of the decrypt-only `WasmRequestContentReader`. */
+  handle: number
+  fileId: string
+  chunkFormat: number
+  nameOrigin: string
+  name: string | null
+  mimeType: string | null
+  seal: 'bound' | 'unbound'
+  renameTarget: { origin: string; pin: number } | null
+}
+
+export async function resolveRequestRowWorker(
+  args: ResolveRequestRowArgs,
+): Promise<WorkerResolvedRequestRow> {
+  return withProxy((p) =>
+    p.resolveRequestRow(
+      args.masterKey,
+      args.itemId,
+      args.requestWrapContext,
+      args.wrappedRequestPrivate,
+      args.wrapNonce,
+      args.senderEphemeralPubkey,
+      args.wrappedContentKey,
+      args.nameEncrypted,
+    ),
+  )
+}
+
+/** §15: a fresh sequential decryptor over a request row's worker-held reader. */
+export async function requestReaderDecryptor(readerHandle: number): Promise<number> {
+  return withProxy((p) => p.requestReaderDecryptor(readerHandle))
+}
+
+/** §15: open ONE frame of a request row (seek / range read). */
+export async function requestReaderOpenFrame(
+  readerHandle: number,
+  versionId: Uint8Array,
+  index: number,
+  isLast: boolean,
+  format: number,
+  frame: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) =>
+    p.requestReaderOpenFrame(readerHandle, versionId, index, isLast, format, frame),
+  )
+}
+
+/** §15: free a request row's worker-held reader. */
+export async function requestReaderFree(readerHandle: number): Promise<void> {
+  await withProxy((p) => p.requestReaderFree(readerHandle))
+}
+
+/** §15: the ONLY request-row rename path (string convention, never C). */
+export async function sealRequestRenameWorker(
+  masterKey: Uint8Array,
+  itemId: string,
+  pin: number,
+  filename: string,
+  mimeType: string | null = null,
+): Promise<string> {
+  return withProxy((p) => p.sealRequestRename(masterKey, itemId, pin, filename, mimeType))
+}
+
+/** L12: mint a guest (F-class) item id from core. Needs no master key. */
+export async function mintGuestItemIdWorker(): Promise<string> {
+  return withProxy((p) => p.mintGuestItemId())
 }
 
 /** The worker calls a content decryptor needs. Production: the crypto worker over Comlink. */
@@ -376,6 +318,21 @@ const workerDecryptorPort: DecryptorPort = {
     withProxy((p) => p.decryptorPushFrame(handle, Comlink.transfer(frame, [frame.buffer]))),
   decryptorFinish: (handle) => withProxy((p) => p.decryptorFinish(handle)),
   decryptorDispose: (handle) => withProxy((p) => p.decryptorDispose(handle)),
+}
+
+/** Push one frame into a worker-owned decryptor (see `StreamingDecryptor`). */
+export async function decryptorPushFrame(handle: number, frame: Uint8Array): Promise<Uint8Array> {
+  return workerDecryptorPort.decryptorPushFrame(handle, frame)
+}
+
+/** Finish a worker-owned decryptor; consumes it. */
+export async function decryptorFinish(handle: number): Promise<DecryptSummary> {
+  return workerDecryptorPort.decryptorFinish(handle)
+}
+
+/** Release a worker-owned decryptor that will not be finished. */
+export async function decryptorDispose(handle: number): Promise<void> {
+  return workerDecryptorPort.decryptorDispose(handle)
 }
 
 /**
@@ -396,6 +353,19 @@ export class StreamingDecryptor {
   constructor(handle: number, port: DecryptorPort = workerDecryptorPort) {
     this.#handle = handle
     this.#port = port
+  }
+
+  /** The worker-owned handle. Only `createChunkReader` hands it over. */
+  get handle(): number {
+    return this.#handle
+  }
+
+  /**
+   * The worker took this decryptor over (it became a random-access reader).
+   * Mark it consumed WITHOUT touching the handle: it no longer exists.
+   */
+  release(): void {
+    this.#consumed = true
   }
 
   /**
@@ -428,16 +398,116 @@ export class StreamingDecryptor {
 }
 
 /**
+ * What a stream needs from a decryptor: the worker handle that becomes the
+ * random-access reader, and the sequential calls up to that point. A request
+ * row's source returns this too — `handle` is required, never assumed (2326
+ * review P2-1: a source without one streamed nothing in production).
+ */
+export interface StreamDecryptor {
+  readonly handle: number
+  pushFrame(frame: Uint8Array): Promise<Uint8Array>
+  finish(): Promise<DecryptSummary>
+  dispose(): Promise<void>
+  release?(): void
+}
+
+/**
  * Start reading one file's content. `fileId` is the id the file was uploaded
  * under (v2 frames bind it); `pin` comes from `readFileMetadata` of that file.
+ *
+ * A request row has no key to pass: its `RequestContentSource` starts the
+ * decryptor core bound to the row (and ignores `fileId`/`pin`, which core
+ * already fixed). Every other row passes its 32-byte key.
  */
 export async function startDecryptStream(
-  fileKey: Uint8Array,
+  fileKey: ContentKey,
   fileId: string,
   pin: ContentPin,
-): Promise<StreamingDecryptor> {
+): Promise<StreamDecryptor> {
+  if (!(fileKey instanceof Uint8Array)) {
+    return await fileKey.startStream()
+  }
   const handle = await withProxy((p) => p.createDecryptor(fileKey, fileId, pin))
   return new StreamingDecryptor(handle)
+}
+
+/** The worker calls a chunk reader needs. Production: the crypto worker over Comlink. */
+export interface ChunkReaderPort {
+  createChunkReader(decryptorHandle: number): Promise<number>
+  openChunkAt(handle: number, index: number, isLast: boolean, frame: Uint8Array): Promise<Uint8Array>
+  closeChunkReader(handle: number): Promise<void>
+}
+
+const workerChunkReaderPort: ChunkReaderPort = {
+  createChunkReader: (handle) => withProxy((p) => p.createChunkReader(handle)),
+  openChunkAt: (handle, index, isLast, frame) =>
+    withProxy((p) =>
+      p.openChunkAt(handle, index, isLast, Comlink.transfer(frame, [frame.buffer])),
+    ),
+  closeChunkReader: (handle) => withProxy((p) => p.closeChunkReader(handle)),
+}
+
+/**
+ * Main-thread proxy over a worker-owned random-access reader (contract LD-0001
+ * §5.1). It opens ONE frame at its own index; the key, format and v2 version id
+ * live in the worker and are never passed from the page. The plaintext buffer
+ * is transferred back, so each call allocates a fresh buffer.
+ */
+export class ChunkReader {
+  #handle: number
+  #port: ChunkReaderPort
+  #closed = false
+
+  constructor(handle: number, port: ChunkReaderPort = workerChunkReaderPort) {
+    this.#handle = handle
+    this.#port = port
+  }
+
+  /** Open the frame at `index`; `isLast` must be `index === chunkCount - 1`. */
+  async openAt(index: number, isLast: boolean, frame: Uint8Array): Promise<Uint8Array> {
+    if (this.#closed) throw new Error('chunk reader already closed')
+    return this.#port.openChunkAt(this.#handle, index, isLast, frame)
+  }
+
+  /** Close the worker-side reader and wipe its key copy. Idempotent. */
+  async close(): Promise<void> {
+    if (this.#closed) return
+    this.#closed = true
+    try {
+      await this.#port.closeChunkReader(this.#handle)
+    } catch (err) {
+      console.warn('[crypto] chunk reader close failed', err)
+    }
+  }
+}
+
+/**
+ * Turn a `StreamingDecryptor` whose chunk 0 was pushed into a random-access
+ * reader. The worker frees the decryptor and moves the key copy into the
+ * reader; this proxy is then consumed.
+ */
+export async function createChunkReader(
+  decryptor: { handle: number; release?(): void },
+  port: ChunkReaderPort = workerChunkReaderPort,
+): Promise<ChunkReader> {
+  if (decryptor.handle < 0) throw new Error('decryptor is not live')
+  let handle: number
+  try {
+    handle = await port.createChunkReader(decryptor.handle)
+  } catch (err) {
+    // LD-0001 r4 A-R3: the worker may have built the reader (and moved the
+    // key copy into it) before the reply failed. A reader takes its
+    // decryptor's handle, so close it by that handle; closing is idempotent
+    // and a no-op when no reader was built.
+    try {
+      await port.closeChunkReader(decryptor.handle)
+    } catch {
+      // Best effort: the original failure is what the caller needs.
+    }
+    throw err
+  }
+  decryptor.release?.()
+  return new ChunkReader(handle, port)
 }
 
 // ─── Metadata (filename) encryption ─────────────────
@@ -582,14 +652,6 @@ export async function deriveX25519Private(masterKey: Uint8Array): Promise<Uint8A
 }
 
 /** Compute X25519 shared secret for user-to-user sharing. */
-export async function x25519SharedSecret(
-  myPrivate: Uint8Array,
-  theirPublic: Uint8Array,
-): Promise<Uint8Array> {
-  return withProxy((p) => p.x25519SharedSecret(myPrivate, theirPublic))
-}
-
-/** Derive a per-file share key from a shared secret and file ID bytes. */
 export async function deriveShareKey(
   sharedSecret: Uint8Array,
   fileId: Uint8Array,
@@ -654,6 +716,47 @@ export async function unwrapFolderCustody(
   wrapped: Uint8Array,
 ): Promise<Uint8Array> {
   return withProxy((p) => p.unwrapFolderCustody(masterKey, folderId, wrapped))
+}
+
+// ─── L16 (2275 T5.7): actor names and link labels ───────────────────────────
+// Core owns the sanitising (NFC, control stripping, blank refusal) and the
+// envelopes; web only carries the bytes. Actor names are bound to the shared
+// folder id, link labels to the share id.
+
+/** L16: seal an actor's display name, bound to the shared folder id. */
+export async function sealActorName(
+  folderKey: Uint8Array,
+  sharedFolderId: string,
+  name: string,
+): Promise<string> {
+  return withProxy((p) => p.sealFolderActorName(folderKey, sharedFolderId, name))
+}
+
+/** L16: open an actor's display name; a different folder id is refused. */
+export async function openActorName(
+  folderKey: Uint8Array,
+  sharedFolderId: string,
+  envelope: string,
+): Promise<string> {
+  return withProxy((p) => p.openFolderActorName(folderKey, sharedFolderId, envelope))
+}
+
+/** L16: seal a link label under the master key, bound to the share id. */
+export async function wrapLinkLabel(
+  masterKey: Uint8Array,
+  shareId: string,
+  label: string,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapLinkLabel(masterKey, shareId, label))
+}
+
+/** L16: open a link label; a different share id is refused. */
+export async function unwrapLinkLabel(
+  masterKey: Uint8Array,
+  shareId: string,
+  wrapped: Uint8Array,
+): Promise<string> {
+  return withProxy((p) => p.unwrapLinkLabel(masterKey, shareId, wrapped))
 }
 
 /** L6: a link's `owner_wrapped_key` (K_c), bound to the share id. */
@@ -735,47 +838,18 @@ export async function encryptFileKeyForSharing(
 
 // ─── Encrypted blob serialization ──────────────────
 //
-// Canonical wire format (used by CLI, mobile, and now web):
-//   {"cipher_suite":"V1Aes256Gcm","nonce":[byte_array],"ciphertext":[byte_array]}
-//
-// Legacy web format (still accepted on read, no longer produced):
-//   {"nonce":"base64string","ciphertext":"base64string"}
+// The envelope grammar lives in core (`metadata_wire`, W-P3-2): the worker
+// writes core's frozen canonical form and reads every form clients have
+// stored. See `metadata-envelope.ts`; this file only hops to the worker.
 
-/**
- * Parse an encrypted blob JSON string into raw nonce + ciphertext bytes.
- *
- * Tolerant reader: accepts canonical format (cipher_suite + byte arrays),
- * legacy web format (base64 strings), or a mix.
- */
-export function parseEncryptedBlob(json: string): { nonce: Uint8Array; ciphertext: Uint8Array } {
-  const parsed = JSON.parse(json) as {
-    cipher_suite?: string
-    nonce: string | number[]
-    ciphertext: string | number[]
-  }
-
-  const nonce = Array.isArray(parsed.nonce)
-    ? new Uint8Array(parsed.nonce)
-    : fromBase64(parsed.nonce)
-
-  const ciphertext = Array.isArray(parsed.ciphertext)
-    ? new Uint8Array(parsed.ciphertext)
-    : fromBase64(parsed.ciphertext)
-
-  return { nonce, ciphertext }
+/** Parse an encrypted blob JSON string into raw nonce + ciphertext bytes (core's tolerant reader). */
+export async function parseEncryptedBlob(json: string): Promise<{ nonce: Uint8Array; ciphertext: Uint8Array }> {
+  return withCryptoError(() => withProxy((p) => p.decodeMetadataEnvelope(json)))
 }
 
-/**
- * Serialize nonce + ciphertext into the canonical encrypted blob JSON format.
- *
- * All new writes use canonical format so CLI, mobile, and web are interoperable.
- */
-export function serializeEncryptedBlob(nonce: Uint8Array, ciphertext: Uint8Array): string {
-  return JSON.stringify({
-    cipher_suite: 'V1Aes256Gcm',
-    nonce: Array.from(nonce),
-    ciphertext: Array.from(ciphertext),
-  })
+/** Serialize nonce + ciphertext into core's canonical encrypted blob JSON format. */
+export async function serializeEncryptedBlob(nonce: Uint8Array, ciphertext: Uint8Array): Promise<string> {
+  return withProxy((p) => p.encodeMetadataEnvelope(nonce, ciphertext))
 }
 
 // ─── Chunk planning ────────────────────────────────
@@ -795,535 +869,16 @@ export async function planChunks(
 }
 
 // ─── Streaming encryption (shared core ChunkEncryptor) ──────────────────────
-//
-// The web client adopts the same streaming primitive as CLI/desktop/mobile via
-// the WASM `WasmChunkEncryptor`. Because the encryptor instance is a pointer
-// into the worker's linear memory, it CANNOT be proxied directly through
-// Comlink — instead the worker keeps it in a registry and hands back an opaque
-// numeric handle. `StreamingEncryptor` below mirrors that handle on the main
-// thread: every method round-trips the handle to the worker, and the WASM
-// instance itself never crosses the boundary.
+// The encryptor proxy lives in crypto-stream-encrypt.ts; re-exported here so
+// every consumer keeps importing it from the crypto service.
 
-export interface ChunkEncryptorSummary {
-  chunk_count: number
-  total_plaintext: number
-  total_ciphertext: number
-  chunk_size_bytes: number
-}
-
-export type ChunkProfile = 'desktop' | 'web' | 'mobile' | 'backup'
-
-/**
- * Main-thread proxy over a worker-owned `WasmChunkEncryptor`.
- *
- * One handle = one file, single consumer. Push plaintext slices in order via
- * `pushChunk`, then call `finish()` exactly once to run the integrity guard
- * and get the summary. On an aborted/failed upload, call `dispose()` to free
- * the worker-side instance. After `finish()` the handle is already gone, so a
- * follow-up `dispose()` is a harmless no-op.
- */
-export class StreamingEncryptor {
-  #handle: number
-  #consumed = false
-
-  constructor(handle: number) {
-    this.#handle = handle
-  }
-
-  /**
-   * Replace / new version of an EXISTING file only (core 1908 checklist item
-   * 4): write in the format the file's recorded pin requires. `pin` MUST come
-   * from `readFileMetadata` of the file being replaced; a brand-new file never
-   * calls this (it would create a v2 file before the gated switch). Call before
-   * the first `pushChunk`. Returns the format now written (1 = v1, 2 = v2).
-   */
-  async applyRecordedPin(pin: ContentPin): Promise<number> {
-    return withProxy((p) => p.encryptorApplyRecordedPin(this.#handle, pin))
-  }
-
-  /** The chunk format this encryptor writes: 1 = v1, 2 = v2. Record it with the session. */
-  async format(): Promise<number> {
-    return withProxy((p) => p.encryptorFormat(this.#handle))
-  }
-
-  /**
-   * Core's resume rule (1908 checklist item 7): may this NEW encryptor
-   * continue an interrupted session whose frames are in `storedFormat`
-   * (undefined when the resume record does not say)? `'continue'` only for a
-   * v1 session resumed by a v1 writer; otherwise `'restart'`: abandon the old
-   * session, init a fresh one and upload from chunk 0, never PUT to the old
-   * session again (a v2 writer's version id differs from the stored frames').
-   */
-  async resumePolicy(storedFormat: number | undefined): Promise<'continue' | 'restart'> {
-    return withProxy((p) => p.encryptorResumePolicy(this.#handle, storedFormat))
-  }
-
-  /**
-   * Encrypt one plaintext slice and return the full wire frame
-   * (`nonce || ciphertext || tag`) ready to PUT. The plaintext buffer is
-   * transferred to the worker (zero-copy) — do not reuse it afterward.
-   */
-  async pushChunk(plaintext: Uint8Array): Promise<Uint8Array> {
-    return withProxy((p) =>
-      p.encryptorPushChunk(this.#handle, Comlink.transfer(plaintext, [plaintext.buffer])),
-    )
-  }
-
-  /**
-   * Run the core integrity guard and return the summary. Consumes the handle.
-   * Throws if the source shrank (fewer chunks/bytes than the plan).
-   */
-  async finish(): Promise<ChunkEncryptorSummary> {
-    this.#consumed = true
-    return withProxy((p) => p.encryptorFinish(this.#handle))
-  }
-
-  /**
-   * Best-effort release for aborted/failed uploads. Never throws; safe to call
-   * after `finish()` (the handle is already gone on the worker side).
-   */
-  async dispose(): Promise<void> {
-    if (this.#consumed) return
-    this.#consumed = true
-    try {
-      await withProxy((p) => p.encryptorDispose(this.#handle))
-    } catch (err) {
-      console.warn('[crypto] encryptor dispose failed', err)
-    }
-  }
-}
-
-/**
- * Start a streaming encryptor whose chunk plan is derived from `fileSize` +
- * `profile` (the client ladder). Use when the chunk size was NOT overridden by
- * the server. The per-file key is derived inside core from `masterKey` +
- * `fileId` — pass the SAME `fileId` the key will later be derived from.
- */
-export async function startEncryptedStream(
-  masterKey: Uint8Array,
-  fileId: string,
-  fileSize: number,
-  profile: ChunkProfile = 'web',
-): Promise<StreamingEncryptor> {
-  const handle = await withProxy((p) => p.createEncryptor(masterKey, fileId, fileSize, profile))
-  return new StreamingEncryptor(handle)
-}
-
-/**
- * Start a streaming encryptor with an explicit, server-dictated chunk size.
- * Use when the v2 upload-init response overrode `chunk_size` so the client plan
- * cannot diverge from what the server expects.
- */
-export async function startEncryptedStreamWithChunkSize(
-  masterKey: Uint8Array,
-  fileId: string,
-  fileSize: number,
-  chunkSizeBytes: number,
-): Promise<StreamingEncryptor> {
-  const handle = await withProxy((p) =>
-    p.createEncryptorWithChunkSize(masterKey, fileId, fileSize, chunkSizeBytes),
-  )
-  return new StreamingEncryptor(handle)
-}
-
-// ─── Search index (shared core WasmSearchIndex, handle-addressed) ───────────
-//
-// Like the streaming encryptor, `WasmSearchIndex` is a worker-owned stateful
-// struct (a pointer into the worker's WASM linear memory) that cannot cross
-// Comlink. The worker keeps the instance in a registry and hands back an opaque
-// numeric handle; this proxy mirrors the handle on the main thread and round-
-// trips it on every op. The master key crosses as 32 raw bytes; ALL crypto
-// (per-shard key derivation, AES-256-GCM) runs in core.
-
-/** An encrypted shard page exactly as core produces / consumes it. */
-export interface CoreEncryptedShard {
-  bucket: number
-  page: number
-  /** Opaque `nonce||ciphertext||tag` core ciphertext — never parsed in JS. */
-  blob: Uint8Array
-}
-
-/**
- * Main-thread proxy over a worker-owned `WasmSearchIndex`. One proxy = one
- * index, single consumer. Call `dispose()` to free the worker-side instance
- * when the vault locks.
- */
-export class SearchIndexProxy {
-  #handle: number
-  #disposed = false
-
-  constructor(handle: number) {
-    this.#handle = handle
-  }
-
-  /** Insert/update a file name. Returns the dirty bucket set. */
-  async upsert(fileId: string, name: string): Promise<number[]> {
-    return withProxy((p) => p.searchIndexUpsert(this.#handle, fileId, name))
-  }
-
-  /** Remove a file. Returns the dirty bucket set. */
-  async remove(fileId: string): Promise<number[]> {
-    return withProxy((p) => p.searchIndexRemove(this.#handle, fileId))
-  }
-
-  /** Query the index; returns matching file_ids. */
-  async query(term: string): Promise<string[]> {
-    return withProxy((p) => p.searchIndexQuery(this.#handle, term))
-  }
-
-  /** Encrypt EVERY non-empty shard page for a full rebuild push. */
-  async encryptShards(masterKey: Uint8Array): Promise<CoreEncryptedShard[]> {
-    return withProxy((p) => p.searchIndexEncryptShards(this.#handle, masterKey))
-  }
-
-  /** Encrypt only the dirty buckets for an incremental sync. */
-  async encryptBuckets(masterKey: Uint8Array, buckets: number[]): Promise<CoreEncryptedShard[]> {
-    return withProxy((p) => p.searchIndexEncryptBuckets(this.#handle, masterKey, buckets))
-  }
-
-  /** Encrypt every non-empty shard page under a shared folder key (2237b). */
-  async encryptShardsWithFolderKey(folderKey: Uint8Array): Promise<CoreEncryptedShard[]> {
-    return withProxy((p) => p.searchIndexEncryptShardsWithFolderKey(this.#handle, folderKey))
-  }
-
-  /** Encrypt only the dirty buckets under a shared folder key (2237b). */
-  async encryptBucketsWithFolderKey(
-    folderKey: Uint8Array,
-    buckets: number[],
-  ): Promise<CoreEncryptedShard[]> {
-    return withProxy((p) => p.searchIndexEncryptBucketsWithFolderKey(this.#handle, folderKey, buckets))
-  }
-
-  /** Bucket count of this index. */
-  async numShards(): Promise<number> {
-    return withProxy((p) => p.searchIndexNumShards(this.#handle))
-  }
-
-  /** Number of indexed files. */
-  async fileCount(): Promise<number> {
-    return withProxy((p) => p.searchIndexFileCount(this.#handle))
-  }
-
-  /** Free the worker-side instance. Idempotent; never throws. */
-  async dispose(): Promise<void> {
-    if (this.#disposed) return
-    this.#disposed = true
-    try {
-      await withProxy((p) => p.searchIndexDispose(this.#handle))
-    } catch (err) {
-      console.warn('[crypto] search index dispose failed', err)
-    }
-  }
-}
-
-/** Create a fresh empty search index with `numShards` buckets. */
-export async function createSearchIndex(numShards: number): Promise<SearchIndexProxy> {
-  const handle = await withProxy((p) => p.searchIndexNew(numShards))
-  return new SearchIndexProxy(handle)
-}
-
-/** Build a search index from `[{fileId, name}]` pairs. */
-export async function buildSearchIndex(
-  files: Array<{ fileId: string; name: string }>,
-  numShards: number,
-): Promise<SearchIndexProxy> {
-  const handle = await withProxy((p) => p.searchIndexBuild(files, numShards))
-  return new SearchIndexProxy(handle)
-}
-
-/**
- * Reconstruct a search index from encrypted shards, decrypting each with the
- * 32-byte master key (in core).
- */
-export async function searchIndexFromShards(
-  masterKey: Uint8Array,
-  shards: CoreEncryptedShard[],
-  numShards: number,
-): Promise<SearchIndexProxy> {
-  const handle = await withProxy((p) => p.searchIndexFromShards(masterKey, shards, numShards))
-  return new SearchIndexProxy(handle)
-}
-
-/**
- * A fresh shared-folder index built from `[{fileId, name}]` pairs (2237b).
- * The names come from decrypted listings, so no key is needed to build; the
- * shards are encrypted under the folder key on push.
- */
-export async function createSharedSearchIndex(
-  files: Array<{ fileId: string; name: string }>,
-  numShards: number,
-): Promise<SearchIndexProxy> {
-  return buildSearchIndex(files, numShards)
-}
-
-/**
- * Reconstruct a shared-folder index from shards encrypted under its folder key
- * (2237b). Mirrors `searchIndexFromShards`, which is master-key only.
- */
-export async function sharedSearchIndexFromShards(
-  folderKey: Uint8Array,
-  shards: CoreEncryptedShard[],
-  numShards: number,
-): Promise<SearchIndexProxy> {
-  const handle = await withProxy((p) =>
-    p.searchIndexFromShardsWithFolderKey(folderKey, shards, numShards),
-  )
-  return new SearchIndexProxy(handle)
-}
-
-/** A shard coordinate (bucket, page) — no version. */
-export interface ShardCoordinate {
-  bucket: number
-  page: number
-}
-
-/** The result of `searchIndexSyncPlan` — shard coords to converge local↔remote. */
-export interface ShardSyncPlan {
-  toPut: ShardCoordinate[]
-  toGet: ShardCoordinate[]
-  toDelete: ShardCoordinate[]
-}
-
-/**
- * Pure manifest-diff (LWW) → which shards to PUT/GET/DELETE to converge the
- * client's `local` shard set with the server `remote` manifest. Runs the core
- * `search_sync::diff_manifest` planner. `local`/`remote` are
- * `[{bucket, page, version}]`.
- */
-export async function searchIndexSyncPlan(
-  local: Array<{ bucket: number; page: number; version: number }>,
-  remote: Array<{ bucket: number; page: number; version: number }>,
-  localIsAuthoritative: boolean,
-): Promise<ShardSyncPlan> {
-  return withProxy((p) => p.searchIndexSyncPlan(local, remote, localIsAuthoritative))
-}
-
-// ─── File requests (sealed-box / ECIES per request) ─────────────────────────
-//
-// All crypto is the core `file_request` binding — this layer only composes the
-// pieces. Two domain-separation inputs (`request_id` for the private-key wrap,
-// `file_id` for the per-upload seal) are passed to core as HKDF `info`. Because
-// the SERVER assigns the request UUID and the file UUID *after* the client has
-// already wrapped / sealed, neither id is known at wrap/seal time, and the
-// server carries no client-chosen id to echo back. So both sides use a FIXED
-// EMPTY value — the only value reconstructable by both the wrapper/unwrapper and
-// the sealer/opener. This stays secure: each wrap uses a fresh random GCM nonce,
-// and each seal uses a fresh ephemeral X25519 keypair, so uniqueness never
-// depends on the (empty) id. Every client (web/cli/mobile) MUST use this same
-// empty convention for links to round-trip cross-client.
-export const FILE_REQUEST_EMPTY_ID = new Uint8Array(0)
-
-export interface RequestKeypair {
-  /** 32-byte X25519 private key (R_priv). Wrap before persisting. */
-  privateKey: Uint8Array
-  /** 32-byte X25519 public key (R_pub). Goes in the link fragment. */
-  publicKey: Uint8Array
-}
-
-/** Generate a fresh per-request X25519 keypair. R_priv is 32 random bytes;
- *  R_pub is derived by the core binding (clamping applied internally). */
-export async function generateRequestKeypair(): Promise<RequestKeypair> {
-  const privateKey = crypto.getRandomValues(new Uint8Array(32))
-  const publicKey = await withProxy((p) => p.deriveX25519PublicFromPrivate(privateKey))
-  return { privateKey, publicKey }
-}
-
-/** Derive R_pub from a (already-unwrapped) R_priv — used to rebuild a link. */
-export async function derivePublicFromPrivate(rPriv: Uint8Array): Promise<Uint8Array> {
-  return withProxy((p) => p.deriveX25519PublicFromPrivate(rPriv))
-}
-
-/** Wrap a request's R_priv under the owner's master key. */
-export async function wrapRequestPrivate(
-  masterKey: Uint8Array,
-  rPriv: Uint8Array,
-  requestId: Uint8Array = FILE_REQUEST_EMPTY_ID,
-): Promise<{ wrapped: Uint8Array; nonce: Uint8Array }> {
-  return withProxy((p) => p.wrapRequestPrivate(masterKey, requestId, rPriv))
-}
-
-/** Unwrap a request's R_priv with the owner's master key. */
-export async function unwrapRequestPrivate(
-  masterKey: Uint8Array,
-  wrapped: Uint8Array,
-  nonce: Uint8Array,
-  requestId: Uint8Array = FILE_REQUEST_EMPTY_ID,
-): Promise<Uint8Array> {
-  return withProxy((p) => p.unwrapRequestPrivate(masterKey, requestId, wrapped, nonce))
-}
-
-/** Seal a per-file content key C to a request public key (uploader path).
- *  Returns the uploader's ephemeral public key + the wrapped content key. */
-export async function sealToRequest(
-  rPub: Uint8Array,
-  contentKey: Uint8Array,
-  fileId: Uint8Array = FILE_REQUEST_EMPTY_ID,
-): Promise<{ ePub: Uint8Array; wrappedKey: Uint8Array }> {
-  const result = await withProxy((p) => p.sealToRequest(rPub, fileId, contentKey))
-  return { ePub: result.e_pub, wrappedKey: result.wrapped_key }
-}
-
-/** Open a sealed upload, recovering the content key C (owner decrypt path). */
-export async function openRequestUpload(
-  rPriv: Uint8Array,
-  ePub: Uint8Array,
-  wrappedKey: Uint8Array,
-  fileId: Uint8Array = FILE_REQUEST_EMPTY_ID,
-): Promise<Uint8Array> {
-  return withProxy((p) => p.openRequestUpload(rPriv, ePub, fileId, wrappedKey))
-}
-
-// ─── Constellation peer transfer ─────────────────────────────────────────────
-//
-// Ephemeral X25519 (per-transfer) + HKDF-SHA256 (salted with the session id) +
-// AES-256-GCM, all implemented in core and exposed through the worker. The
-// receiver generates a keypair, sends its public key, performs ECDH against the
-// sender's public key (`x25519SharedSecret`), then derives BOTH the AES transfer
-// key and the 4 SAS words from the SAME shared secret + session id — so the SAS
-// words authenticate the real key agreement (a relay swapping either public key
-// produces different words on the two screens).
-
-/** Generate a fresh ephemeral X25519 keypair for a transfer. */
-export async function transferGenerateKeypair(): Promise<{
-  public: Uint8Array
-  private: Uint8Array
-}> {
-  return withProxy((p) => p.transferGenerateKeypair())
-}
-
-/** Derive the 32-byte AES-256 transfer key from a shared secret + session id. */
-export async function transferDeriveKey(
-  sharedSecret: Uint8Array,
-  sessionId: Uint8Array,
-): Promise<Uint8Array> {
-  return withProxy((p) => p.transferDeriveKey(sharedSecret, sessionId))
-}
-
-/** Derive the 4-byte SAS material from a shared secret + session id (MITM check). */
-export async function transferDeriveSasBytes(
-  sharedSecret: Uint8Array,
-  sessionId: Uint8Array,
-): Promise<Uint8Array> {
-  return withProxy((p) => p.transferDeriveSasBytes(sharedSecret, sessionId))
-}
-
-/** Map 4 SAS bytes to 4 words from the canonical core wordlist. */
-export async function transferSasToWords(sasBytes: Uint8Array): Promise<string[]> {
-  return withProxy((p) => p.transferSasToWords(sasBytes))
-}
-
-/** Encrypt a transfer payload under the transfer key → `nonce(12) || ct+tag`. */
-export async function transferEncrypt(
-  key: Uint8Array,
-  plaintext: Uint8Array,
-): Promise<Uint8Array> {
-  return withProxy((p) => p.transferEncrypt(key, plaintext))
-}
-
-/** Decrypt a `nonce(12) || ciphertext` blob produced by transferEncrypt. */
-export async function transferDecrypt(
-  key: Uint8Array,
-  blob: Uint8Array,
-): Promise<Uint8Array> {
-  return withProxy((p) => p.transferDecrypt(key, blob))
-}
-
-/**
- * Parse a UUID (e.g. the server `session_id`) into its RAW 16 bytes.
- *
- * The transfer key + SAS derivations salt with the session id; both sides MUST
- * agree on the exact salt bytes. The canonical salt is the UUID's 16 raw bytes
- * (hex, dashes stripped) — NOT the UTF-8 of the dashed string. Getting this
- * wrong silently produces a different key/SAS on each end and the decrypt fails.
- */
-export function sessionIdToBytes(sessionId: string): Uint8Array {
-  const hex = sessionId.replace(/-/g, '')
-  if (hex.length !== 32 || /[^0-9a-fA-F]/.test(hex)) {
-    throw new Error(`Invalid session_id UUID: ${sessionId}`)
-  }
-  const bytes = new Uint8Array(16)
-  for (let i = 0; i < 16; i++) {
-    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  }
-  return bytes
-}
-
-/**
- * The receiver's end of a transfer key agreement, as a pure (worker-proxied)
- * helper so it can be unit-tested without the React page. Performs ECDH against
- * the sender's public key and derives the AES transfer key + the 4 SAS words
- * from the same shared secret + session id.
- */
-export async function deriveTransferSession(
-  receiverPrivate: Uint8Array,
-  senderPublic: Uint8Array,
-  sessionId: string,
-): Promise<{ transferKey: Uint8Array; sasWords: string[]; sharedSecret: Uint8Array }> {
-  const sessionIdBytes = sessionIdToBytes(sessionId)
-  const sharedSecret = await x25519SharedSecret(receiverPrivate, senderPublic)
-  const transferKey = await transferDeriveKey(sharedSecret, sessionIdBytes)
-  const sasWords = await transferSasToWords(
-    await transferDeriveSasBytes(sharedSecret, sessionIdBytes),
-  )
-  return { transferKey, sasWords, sharedSecret }
-}
-
-/**
- * Decrypt a Constellation transfer blob under the agreed transfer key. Thin,
- * pure wrapper over `transferDecrypt` so the receiver-page decrypt path has a
- * single testable entry point (round-trip tested in transfer-crypto.test.ts).
- */
-export async function decryptTransferBlob(
-  transferKey: Uint8Array,
-  blob: Uint8Array,
-): Promise<Uint8Array> {
-  return transferDecrypt(transferKey, blob)
-}
-
-// ─── Helpers ────────────────────────────────────────
-
-/**
- * Legacy 4 MB constant — kept only for the `chunkFile` helper below (used by
- * some older callers). New upload code should use `planChunks()` instead.
- */
-export const CHUNK_SIZE = 4 * 1024 * 1024 // 4 MB
-
-/** Split a file into 4MB chunks. */
-export async function chunkFile(file: File): Promise<Uint8Array[]> {
-  const chunks: Uint8Array[] = []
-  let offset = 0
-  while (offset < file.size) {
-    const slice = file.slice(offset, offset + CHUNK_SIZE)
-    const buffer = await slice.arrayBuffer()
-    chunks.push(new Uint8Array(buffer))
-    offset += CHUNK_SIZE
-  }
-  return chunks
-}
-
-/** Encode bytes to base64 (for sending in JSON). */
-export function toBase64(bytes: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
-}
-
-/** Decode base64 back to bytes. */
-export function fromBase64(b64: string): Uint8Array {
-  const binary = atob(b64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
-}
-
-/** Zero out a Uint8Array (for clearing key material). */
-export function zeroize(buffer: Uint8Array): void {
-  buffer.fill(0)
-}
+export {
+  StreamingEncryptor,
+  startEncryptedStream,
+  startEncryptedStreamForNewItem,
+  startEncryptedStreamWithChunkSize,
+} from './crypto-stream-encrypt'
+export type { ChunkEncryptorSummary, ChunkProfile } from './crypto-stream-encrypt'
 
 // ─── Client-side share key wrapping ─────────────────────────────────────────
 //
@@ -1520,188 +1075,3 @@ export async function unwrapBundleItemKey(
 }
 
 
-// ─── Signup ceremony (core onboarding module, task 1745) ────────────────────
-//
-// The ceremony (password policy and breach gate, recovery phrase, OPAQUE start
-// and finish) is a stateful core struct living in the worker, addressed by an
-// opaque handle exactly like the search index. No policy or crypto is
-// re-implemented here: this is a typed doorway. A failing call throws a
-// `CeremonyError` whose `code` is core's stable `CeremonyError::code`
-// (`password_too_short`, `password_breached`, `phrase_word_mismatch`, ...), so
-// the UI branches on cause, never on message text.
-
-export class CeremonyError extends Error {
-  readonly code: string
-  constructor(code: string, message: string) {
-    super(message)
-    this.name = 'CeremonyError'
-    this.code = code
-  }
-}
-
-/** `evaluate_password` / `WasmBreachCheck.evaluate` payload shapes (core `serde` structs). */
-export interface PasswordEvaluation {
-  length: number
-  min_length: number
-  missing_characters: number
-  meets_minimum: boolean
-  has_mixed_case: boolean
-  has_number_or_symbol: boolean
-  strength: 'too_short' | 'fair' | 'good' | 'strong'
-  /** Meter level 1 to 4. */
-  level: number
-  hint:
-    | 'none'
-    | 'need_more_characters'
-    | 'mix_case_and_add_number_or_symbol'
-    | 'mix_case'
-    | 'add_number_or_symbol'
-}
-
-export interface BreachVerdict {
-  kind: 'clean' | 'breached' | 'check_failed_allowed' | 'check_failed_blocked' | 'not_required'
-  count: number
-  allows_proceeding: boolean
-  check_failed: boolean
-}
-
-// Comlink's `Remote<>` type distributes a `Promise` over a union, so the
-// `CeremonyResult` unions below are re-asserted at each call site.
-function unwrapCeremony<T>(r: CeremonyResult<T>): T {
-  if (r.ok) return r.value
-  throw new CeremonyError(r.code, r.message)
-}
-
-/** Advisory password evaluation from core (meter + hint). Stateless. */
-export async function evaluatePasswordCore(password: string, minLength: number): Promise<PasswordEvaluation> {
-  return unwrapCeremony(
-    await withProxy((p) => p.evaluatePassword(password, minLength) as Promise<CeremonyResult<PasswordEvaluation>>),
-  )
-}
-
-export interface CeremonyConfig {
-  /** `policy.password.min_length` (core clamps it up to its floor). */
-  minLength: number
-  /** The document lists a required `verify_email_code`. */
-  emailVerificationRequired: boolean
-  /** `policy.recovery_phrase.verify_word_count`. */
-  verifyWordCount: number
-  /** The document declares `policy.password.breach_check`. */
-  breachCheckRequired: boolean
-  /** `policy.password.breach_check.fail_open` (applied by core, not by the caller). */
-  breachFailOpen: boolean
-}
-
-/** A breach check bound to one password. Dispose it when the password changes or the step is left. */
-export class BreachCheckProxy {
-  #handle: number
-  #disposed = false
-  /** The 5 upper-case hex characters of the SHA-1 digest: the only thing that may be sent. */
-  readonly prefix: string
-
-  constructor(handle: number, prefix: string) {
-    this.#handle = handle
-    this.prefix = prefix
-  }
-
-  /** @internal the registry key `CeremonyProxy.setPassword` hands to core. */
-  get handle(): number {
-    return this.#handle
-  }
-
-  /**
-   * Record the endpoint's answer (`null` = the request failed) and get the verdict to display.
-   * `requestedPrefix` MUST be the exact prefix the request URL (or cache entry) used: core
-   * rejects any other with `breach_prefix_mismatch` rather than reading another prefix's body as clean.
-   */
-  async evaluate(requestedPrefix: string, body: string | null, failOpen: boolean): Promise<BreachVerdict> {
-    return unwrapCeremony(
-      await withProxy((p) => p.breachCheckEvaluate(this.#handle, requestedPrefix, body, failOpen) as Promise<CeremonyResult<BreachVerdict>>),
-    )
-  }
-
-  async dispose(): Promise<void> {
-    if (this.#disposed) return
-    this.#disposed = true
-    try {
-      await withProxy((p) => p.breachCheckDispose(this.#handle))
-    } catch (err) {
-      console.warn('[crypto] breach check dispose failed', err)
-    }
-  }
-}
-
-export async function createBreachCheck(password: string): Promise<BreachCheckProxy> {
-  const { handle, prefix } = await withProxy((p) => p.breachCheckNew(password))
-  return new BreachCheckProxy(handle, prefix)
-}
-
-/** Main-thread proxy over a worker-owned `WasmSignupCeremony`. One proxy = one signup attempt. */
-export class CeremonyProxy {
-  #handle: number
-  #disposed = false
-
-  constructor(handle: number) {
-    this.#handle = handle
-  }
-
-  async #call<K extends keyof CeremonyOps>(op: K, ...args: CeremonyOps[K]['args']): Promise<CeremonyOps[K]['result']> {
-    if (this.#disposed) throw new CeremonyError('ceremony_gone', 'ceremony was disposed')
-    return unwrapCeremony(
-      await withProxy(
-        (p) => p.ceremonyCall(this.#handle, op, args) as Promise<CeremonyResult<CeremonyOps[K]['result']>>,
-      ),
-    )
-  }
-
-  async emailVerified(): Promise<void> { await this.#call('emailVerified') }
-  /** The user edited a verified email: verification withdrawn, password and confirmed phrase kept. */
-  async emailChanged(): Promise<void> { await this.#call('emailChanged') }
-  /** `signup_ticket_invalid` at register-finish: back to the code step, secrets kept. */
-  async emailTicketInvalidated(): Promise<void> { await this.#call('emailTicketInvalidated') }
-
-  /** Pass the breach check made for THIS password, or null when the document declares none. */
-  async setPassword(password: string, confirmation: string, breach: BreachCheckProxy | null): Promise<PasswordEvaluation> {
-    return (await this.#call('setPassword', password, confirmation, breach ? breach.handle : null)) as PasswordEvaluation
-  }
-
-  async beginPhrase(): Promise<void> { await this.#call('beginPhrase') }
-  /** Call only while rendering the phrase; drop the reference afterwards (core cannot wipe a JS copy). */
-  async phrase(): Promise<string> { return this.#call('phrase') }
-  async acknowledgePhrase(): Promise<void> { await this.#call('acknowledgePhrase') }
-  async challengePositions(): Promise<number[]> { return this.#call('challengePositions') }
-  async confirmPhrase(answers: string[]): Promise<void> { await this.#call('confirmPhrase', answers) }
-
-  async startRegistration(): Promise<Uint8Array> { return this.#call('startRegistration') }
-  async finishRegistration(serverMessage: Uint8Array) { return this.#call('finishRegistration', serverMessage) }
-  async registrationFailed(): Promise<void> { await this.#call('registrationFailed') }
-  /** The server accepted register-finish. The caller owns (and must wipe) the returned 32-byte master key. */
-  async accountCreated(): Promise<Uint8Array> { return this.#call('accountCreated') }
-
-  /** Wipe the password, phrase and key and start over. Call on back, cancel and error exits. */
-  async abandon(): Promise<void> { await this.#call('abandon') }
-
-  /** Wipe and free the worker-side instance. Idempotent; never throws. */
-  async dispose(): Promise<void> {
-    if (this.#disposed) return
-    this.#disposed = true
-    try {
-      await withProxy((p) => p.ceremonyDispose(this.#handle))
-    } catch (err) {
-      console.warn('[crypto] ceremony dispose failed', err)
-    }
-  }
-}
-
-export async function createSignupCeremony(config: CeremonyConfig): Promise<CeremonyProxy> {
-  const handle = await withProxy((p) =>
-    p.ceremonyNew(
-      config.minLength,
-      config.emailVerificationRequired,
-      config.verifyWordCount,
-      config.breachCheckRequired,
-      config.breachFailOpen,
-    ),
-  )
-  return new CeremonyProxy(handle)
-}

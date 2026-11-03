@@ -87,7 +87,6 @@ function coreBackedEncryptor() {
 }
 
 await mockModuleScoped('../src/lib/crypto', import.meta.dir, {
-  CHUNK_SIZE: 4,
   planChunks: async () => ({ chunk_size_bytes: 4, chunk_count: 1 }),
   startEncryptedStream: async () => coreBackedEncryptor(),
   startEncryptedStreamWithChunkSize: async () => coreBackedEncryptor(),
@@ -152,13 +151,17 @@ function record(over: Partial<UploadState>): UploadState {
   return {
     fingerprint: 'fp', fileId: V2_FILE_ID, fileName: 'report.bin', fileSize: 4, totalChunks: 1,
     upload_session_id: 'old-session', object_version_id: 'ov-old', chunk_size_bytes: 4, chunk_count: 1,
-    region: 'Europe', parentId: null, createdAt: 1, ...over,
+    region: 'Europe', parentId: null, createdAt: 1,
+    // L13 (SF-0001): a record THIS client wrote (marked), so these tests are
+    // about core's resume rule; an unmarked record restarts (l13-r2.test.ts E3).
+    selfMinted: true,
+    ...over,
   }
 }
 
 async function upload(fileId: string, fileKey: Uint8Array, options?: { replaceOf?: { nameEncrypted: string } }, resumeFileId?: string) {
   return encryptedUpload(
-    file(), fileId, fileKey, MK, undefined, undefined, resumeFileId, undefined, undefined, async () => fileKey, options,
+    file(), fileId, fileKey, MK, undefined, undefined, resumeFileId, undefined, undefined, options,
   )
 }
 

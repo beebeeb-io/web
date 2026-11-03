@@ -1,3 +1,4 @@
+// Copy and predicates for the closed 2FA-reset paths (password-set, sign-in required).
 import { ApiError } from '@beebeeb/shared'
 import {
   TWO_FACTOR_TIMED_OUT_MESSAGE,

@@ -1,3 +1,4 @@
+// Remembers a pending data-export intent across the checkout redirect.
 export const PENDING_EXPORT_KEY = 'bb_pending_export'
 export const DATA_EXPORT_ROUTE = '/settings/privacy'
 

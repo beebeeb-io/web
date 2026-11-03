@@ -1,3 +1,4 @@
+// The context menu for items in the shared views.
 import { useEffect, useRef } from 'react'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'

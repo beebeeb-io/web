@@ -1,3 +1,4 @@
+// The drag-and-drop upload zone and browse-file/folder hooks.
 import { useState, useRef, useCallback, useEffect, type ReactNode } from 'react'
 import { Icon } from '@beebeeb/shared'
 

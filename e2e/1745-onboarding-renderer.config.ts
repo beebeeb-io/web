@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 1745 onboarding renderer spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

@@ -1,164 +1,98 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { BBButton } from '@beebeeb/shared'
-import { Breadcrumb } from '../components/breadcrumb'
-import { DriveLayout } from '../components/drive-layout'
-import { Icon } from '@beebeeb/shared'
-import { FileList } from '../components/file-list'
-import { PresenceAvatars } from '../components/presence-avatars'
-import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
-import { TrustDetailsPanel, type TrustFile } from '../components/trust-details-panel'
-import { ShareDialog } from '../components/share-dialog'
-import { ShareInfoModal } from '../components/share-info-modal'
-import { MoveModal } from '../components/move-modal'
-import { RenameDialog } from '../components/rename-dialog'
-import { UploadZone, useBrowseFiles, useBrowseFolders, type FolderFile } from '../components/upload-zone'
-import type { UploadItem } from '../components/upload-progress'
-import { UploadCards } from '../components/upload-progress-card'
-import { NewFolderDialog } from '../components/new-folder-dialog'
-import { NewMenu } from '../components/new-menu'
-import { NewDocumentDialog } from '../components/new-document-dialog'
-import { foldName, getNewDocumentType, NewDocumentNameClashError, type NewDocumentType } from '../lib/new-document'
-import { blankDocumentBytes } from '../lib/office/blank-documents'
-import { FEATURE_OFFICE_EDITOR } from '../lib/flags'
-import { DeleteBackupsDialog } from '../components/delete-backups-dialog'
-import { VersionHistory } from '../components/version-history'
-import { DuplicateFileDialog, getUniqueName, type ConflictItem } from '../components/duplicate-file-dialog'
-import { ShortcutsCheatsheet } from '../components/shortcuts-cheatsheet'
-import { WelcomeTour } from '../components/welcome-tour'
-import { OnboardingTour } from '../components/onboarding-tour'
-import { FilePreview } from '../components/preview/file-preview'
-import { useFilePreview } from '../hooks/use-file-preview'
-import { useOnboarding } from '../lib/onboarding-context'
-import { getPreference, setPreference } from '../lib/api'
-import { applyKnownLargeThumbFlags, recordLargeThumbFlags } from '../lib/sync-thumb-flags'
-import {
-  createAttributionRefresher,
-  learnAttribution,
-  rowsMissingAttribution,
-  withAttribution,
-  type RowAttribution,
-} from '../lib/row-attribution'
-import { EncryptionStatus } from '../components/encryption-status'
-import { FILE_STATUS_BAR } from '../components/file-browser-row'
-import { useDriveData } from '../lib/drive-data-context'
-import { useToast } from '../components/toast'
-import { useWsEvent } from '../lib/ws-context'
-import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
-import { useSync } from '../lib/sync-context'
-import { useKeys } from '../lib/key-context'
-import { useKeyboardShortcuts, isMac } from '../hooks/use-keyboard-shortcuts'
-import { useFrozen } from '../hooks/use-frozen'
-import { useAuth } from '../lib/auth-context'
-import {
-  listAllFiles,
-  toggleStar,
-  updateFile,
-  deleteFile,
-  bulkTrashFiles,
-  getFile,
-  getPendingApprovals,
-  listMyShares,
-  listVersions,
-  getSharesForFile,
-  getFolderMembers,
-  type DriveFile,
-  type MyShare,
-  type StorageUsage,
-  type SyncNode,
-} from '../lib/api'
-import { createOwnerFolder, moveOwnerItems } from '../lib/owner-upload-key'
-import { userFriendlyError } from '../lib/user-friendly-error'
-import { usePlanBlock } from '../hooks/use-plan-block'
-import { noCardTrialStatus, trialCapShortfallNotice } from '../lib/no-card-trial'
-import type { FileActivityEntry } from '../components/file-details-panel'
-import { timeAgo } from '../components/file-list'
-import { getRemainingBytes } from '../components/quota-warning'
-import { requiredQuotaBytes, UploadQuotaLedger, type QuotaCheckItem } from '../lib/upload-quota'
-import {
-  buildNameToFileMap as buildNameToFileMapPure,
-  siblingLowercaseNames,
-} from '../lib/name-collision'
-import {
-  UpgradeNudgeModal,
-  StorageFullBanner,
-  shouldShowUpgradeNudge,
-} from '../components/upgrade-nudge-modal'
-import { encryptedUpload } from '../lib/encrypted-upload'
-import { UploadRestartFailedError } from '../lib/upload-session-reinit'
-import { encryptedDownload } from '../lib/encrypted-download'
-import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../lib/bulk-download'
-import {
-  computeFingerprint,
-  getActiveUploads,
-  findByFingerprint,
-  removeUploadState,
-  type UploadState,
-} from '../lib/upload-resume'
-import { encryptFilename, encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata, readFileMetadata } from '../lib/crypto'
-import { renameKeyFor } from '../lib/owner-rename'
-import { useSearchIndex } from '../hooks/use-search-index'
-import { EmptyDrive } from '../components/empty-states/empty-drive'
-import { RestoreFromEraseOffer } from '../components/restore-from-erase'
-import { formatBytes } from '../lib/format'
-import { cacheFileList, getCachedFileList, invalidateFileListCache, getOfflineCacheScope, isCurrentOfflineCacheScope } from '../lib/offline-cache'
-import { decideSyncRows, EMPTY_CONFIRM_MS } from '../lib/sync-rows'
-import { createScopedTimer } from '../lib/scoped-timer'
-import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
-import { isBackupsRoot as isBackupsRootPure } from '../lib/backups-root'
-import { fileStorageCountry } from '../lib/storage-regions'
-import { knownPoolLocation, learnPoolLocations } from '../lib/sync-storage-locations'
+// The /drive route: composes the drive hooks and views into the file browser.
+import {useState, useEffect, useCallback, useMemo, useRef} from 'react'
+import {useLocation, useNavigate} from 'react-router-dom'
+
+import {DriveLayout} from '../components/drive-layout'
+
+
+
+
+
+
+
+import {useBrowseFiles, useBrowseFolders} from '../components/upload-zone'
+import type {UploadItem} from '../components/upload-progress'
+
+
+
+import {DriveTopBar} from './drive/drive-top-bar'
+import {DriveBanners, type DedupWarning, type FolderSuggestion} from './drive/drive-banners'
+import {DriveFileList} from './drive/drive-file-list'
+import {DriveCreationOverlays} from './drive/drive-creation-overlays'
+import {DriveFileOverlays} from './drive/drive-file-overlays'
+import {DriveGuideOverlays} from './drive/drive-guide-overlays'
+import {useDriveUploads} from './drive/use-drive-uploads'
+import {useDriveCommands} from './drive/use-drive-commands'
+import {useDriveActions} from './drive/use-drive-actions'
+import {useDriveFiles} from './drive/use-drive-files'
+
+import {getNewDocumentType, type NewDocumentType} from '../lib/new-document'
+
+import {FEATURE_OFFICE_EDITOR} from '../lib/flags'
+
+
+import {type ConflictItem} from '../components/duplicate-file-dialog'
+
+
+
+
+import {useFilePreview} from '../hooks/use-file-preview'
+import {useOnboarding} from '../lib/onboarding-context'
+import {getPreference, setPreference} from '../lib/api'
+
+
+import {useDriveData} from '../lib/drive-data-context'
+import {useToast} from '../components/toast'
+import {useWsEvent} from '../lib/ws-context'
+import {useSelfHealRefetch} from '../hooks/use-self-heal-refetch'
+import {useSync} from '../lib/sync-context'
+import {useKeys} from '../lib/key-context'
+import {noteDriveUrlFolder} from '../lib/drive-anchors'
+import {useKeyboardShortcuts} from '../hooks/use-keyboard-shortcuts'
+import {useFrozen} from '../hooks/use-frozen'
+import {useAuth} from '../lib/auth-context'
+import {getFile, getPendingApprovals, type DriveFile, type MyShare, type StorageUsage} from '../lib/api'
+
+
+import {usePlanBlock} from '../hooks/use-plan-block'
+import type {FileActivityEntry} from '../components/file-details-panel'
+
+
+import {UploadQuotaLedger} from '../lib/upload-quota'
+import {siblingLowercaseNames} from '../lib/name-collision'
+import {shouldShowUpgradeNudge} from '../components/upgrade-nudge-modal'
+
+
+
+
+
+import {getActiveUploads, removeUploadState, type UploadState} from '../lib/upload-resume'
+import {decryptFileMetadata} from '../lib/crypto'
+
+
+
+import {useSearchIndex} from '../hooks/use-search-index'
+
+
+
+import {recordUpload} from '../lib/upload-dedup'
+
+
+
 
 // ─── Drive component ────────────────────────────────
 // Folders are always grouped before files; the chosen key only orders
 // within each group. localStorage key: 'bb_drive_sort'.
 
-function inferMimeFromName(name: string): string | null {
-  const ext = name.toLowerCase().split('.').pop()
-  switch (ext) {
-    case 'jpg':
-    case 'jpeg':
-      return 'image/jpeg'
-    case 'png':
-      return 'image/png'
-    case 'webp':
-      return 'image/webp'
-    case 'gif':
-      return 'image/gif'
-    case 'heic':
-      return 'image/heic'
-    case 'heif':
-      return 'image/heif'
-    case 'pdf':
-      return 'application/pdf'
-    case 'txt':
-      return 'text/plain'
-    case 'md':
-      return 'text/markdown'
-    case 'csv':
-      return 'text/csv'
-    case 'json':
-      return 'application/json'
-    case 'docx':
-      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    case 'xlsx':
-      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    case 'mp4':
-      return 'video/mp4'
-    case 'mov':
-      return 'video/quicktime'
-    default:
-      return null
-  }
-}
-
 export function Drive() {
   const { isFrozen } = useFrozen()
   const { user } = useAuth()
-  const { getFileKey, getMasterKey, getFileKeyForFile, isUnlocked, cryptoReady, cryptoError } = useKeys()
-  const { usage: driveUsage, planDetails: drivePlanDetails, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline, unpinFolders, accountDocument: driveAccountDocument } = useDriveData()
-  const noCardTrial = noCardTrialStatus(driveAccountDocument)
-  const { indexFile, reindexFields, unindexFile } = useSearchIndex()
+  const keys = useKeys()
+  const { getFileKey, isUnlocked, cryptoError } = keys
+  const driveData = useDriveData()
+  const { usage: driveUsage, planDetails: drivePlanDetails, incomingCount: driveIncomingCount, setOffline: setDriveOffline, accountDocument: driveAccountDocument } = driveData
+  const search = useSearchIndex()
+  const { unindexFile } = search
   const sync = useSync()
   const { refresh: refreshOnboarding } = useOnboarding()
   const { previewFile, openPreview, closePreview } = useFilePreview()
@@ -335,7 +269,6 @@ export function Drive() {
   const [pendingConflict, setPendingConflict] = useState<PendingConflictUpload | null>(null)
 
   // ─── Smart folder suggestion state ───────────────────
-  type FolderSuggestion = { type: 'images'; count: number } | { type: 'pdfs'; count: number }
   const DISMISSED_SUGGESTIONS_KEY = 'bb_dismissed_folder_suggestions'
 
   function getDismissedSuggestions(): Set<string> {
@@ -365,16 +298,6 @@ export function Drive() {
 
   // ─── Dedup banner state ──────────────────────────────
   // Shows when a file whose hash was already uploaded this session is selected.
-  interface DedupWarning {
-    /** The file that looks like a duplicate */
-    file: File
-    /** Hash used to look it up */
-    hash: string
-    /** Name of the previously uploaded file */
-    existingName: string
-    /** Remaining files that are not duplicates — queued if the user skips */
-    otherFiles: File[]
-  }
   const [dedupWarning, setDedupWarning] = useState<DedupWarning | null>(null)
 
   // ─── Storage quota state (from shared DriveDataContext) ──────────────────
@@ -385,355 +308,29 @@ export function Drive() {
   const [fileActivity, setFileActivity] = useState<FileActivityEntry[]>([])
 
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
+  const selectedFile = files.find((f) => f.id === selectedFileId) ?? null
 
-  // Ref-tracked sync.ready so fetchFiles/refreshFromSync can read the current
-  // value without listing it as a dep (which would re-create the callbacks and
-  // re-fire the useEffect on every sync state transition, causing API storms).
-  const syncReadyRef = useRef(sync.ready)
-  useEffect(() => { syncReadyRef.current = sync.ready }, [sync.ready])
-
-  // Ref-tracked sync.treeComplete (task 1700). Declared BEFORE the treeVersion
-  // effect below so a render that flips both (snapshot merged) always updates
-  // this ref before refreshFromSync runs.
-  const syncTreeCompleteRef = useRef(sync.treeComplete)
-  useEffect(() => { syncTreeCompleteRef.current = sync.treeComplete }, [sync.treeComplete])
-
-  // Current rows / folder, readable from refreshFromSync and WS handlers
-  // without adding them to callbacks' dep arrays (task 1700 no-clobber +
-  // scoping checks).
-  const filesRef = useRef<DriveFile[]>([])
-  useEffect(() => { filesRef.current = files }, [files])
-  const currentParentIdRef = useRef<string | null>(null)
-  useEffect(() => { currentParentIdRef.current = currentParentId ?? null }, [currentParentId])
-
-  // Navigation scope for the delayed actions below (review S2): route + folder.
-  // A timer scheduled for one scope must never fire against another — the
-  // scope is re-checked at fire time and pending runs are cancelled on change.
-  const syncScopeRef = useRef('')
-  const emptyConfirmTimer = useRef(createScopedTimer(() => syncScopeRef.current)).current
-  const wsRefetchTimer = useRef(createScopedTimer(() => syncScopeRef.current)).current
-  // Empty-derive confirmation (task 1700): an all-empty derive from the tree
-  // is deferred briefly so a delete+create burst cannot flash EmptyDrive.
-  const emptyConfirmedRef = useRef(false)
-  useEffect(() => {
-    syncScopeRef.current = `${location.pathname}|${currentParentId ?? ''}`
-    // Scope change or unmount: drop delayed actions that belong to the old view.
-    return () => {
-      emptyConfirmTimer.cancel()
-      wsRefetchTimer.cancel()
-    }
-  }, [location.pathname, currentParentId, emptyConfirmTimer, wsRefetchTimer])
-
-  // Sync nodes (snapshot) carry no has_large_thumbnail; GET /files does. Keep
-  // every value we have seen so a sync-sourced refresh cannot silently demote
-  // the preview to the medium thumbnail (see lib/sync-thumb-flags.ts).
-  const knownLargeThumbRef = useRef(new Map<string, boolean>())
-  const withKnownLargeThumbs = useCallback((next: DriveFile[]): DriveFile[] => {
-    const out = applyKnownLargeThumbFlags(next, knownLargeThumbRef.current)
-    recordLargeThumbFlags(knownLargeThumbRef.current, out)
-    return out
-  }, [])
-
-  // Sync nodes carry a storage_pool_id but no storage_location; GET /files
-  // carries the location. Learn pool -> location from API rows so a
-  // sync-derived refresh keeps each row's real country (task 1919, 2050; see
-  // lib/sync-storage-locations.ts). A pool never seen stays unknown.
-  const poolLocationsRef = useRef(new Map<string, unknown>())
-
-  // Task 2237b: sync nodes carry no attribution (who added a row to a shared
-  // folder), GET /files does. Learn it from API rows and overlay it, so a
-  // guest's file pushed over the stream opens through the shared-folder path
-  // without a reload; a row the API never described is looked up, bounded
-  // (see lib/row-attribution.ts).
-  const rowAttributionRef = useRef(new Map<string, RowAttribution>())
-  const listingInFlightRef = useRef(false)
-  const [attributionRefresher] = useState(() => createAttributionRefresher({
-    known: rowAttributionRef.current,
-    getFile,
-    listFolder: () => listAllFiles(currentParentIdRef.current ?? undefined),
-    onLearned: () => refreshFromSyncRef.current(),
-    listingInFlight: () => listingInFlightRef.current,
-  }))
-  useEffect(() => () => attributionRefresher.reset(), [currentParentId, attributionRefresher])
-
-  // Stable mapper — deps never change after mount.
-  const syncNodeToDriveFile = useCallback((n: SyncNode): DriveFile => {
-    // Folders hold no chunks, so the API sends them no location either.
-    const location = n.is_folder ? undefined : knownPoolLocation(poolLocationsRef.current, n)
-    return withAttribution({
-      id: n.id,
-      name_encrypted: n.name_encrypted,
-      file_request_id: n.file_request_id,
-      sender_ephemeral_pubkey: n.sender_ephemeral_pubkey,
-      wrapped_content_key: n.wrapped_content_key,
-      mime_type: n.mime_type ?? '',
-      size_bytes: n.size_bytes,
-      is_folder: n.is_folder,
-      is_trashed: n.is_trashed,
-      parent_id: n.parent_id,
-      chunk_count: n.chunk_count ?? 1,
-      is_starred: n.is_starred,
-      has_thumbnail: n.has_thumbnail,
-      has_large_thumbnail: n.has_large_thumbnail,
-      version_number: n.version_number,
-      created_at: n.created_at,
-      updated_at: n.updated_at,
-      ...(location === undefined ? {} : { storage_location: location }),
-    }, rowAttributionRef.current)
-  }, [])
-
-  // refreshFromSync — reads sync.children() without an API call.
-  // Used by the treeVersion effect so SSE-pushed updates don't hit the server
-  // on every mutation event.
-  //
-  // Task 1700: this must not redraw for unrelated ops (identical derived rows
-  // are skipped by signature), must not clobber a good list with an empty
-  // derive while tree coverage is incomplete, and must not persist either
-  // state to the offline cache.
-  const refreshFromSync = useCallback(() => {
-    if (!isUnlocked || !syncReadyRef.current) return
-    const trashed = location.pathname === '/trash'
-    const rawNodes = sync
-      .children(currentParentId ?? null)
-      .filter((n) => Boolean(n.is_trashed) === trashed)
-    // The rows on screen may still be API rows: learn their pools' cities
-    // before they are replaced by sync-derived ones.
-    learnPoolLocations(poolLocationsRef.current, rawNodes, filesRef.current)
-    const syncNodes = rawNodes.map(syncNodeToDriveFile)
-    const nodes = withKnownLargeThumbs(syncNodes)
-    const coverageComplete = syncTreeCompleteRef.current
-    if (!trashed) attributionRefresher.request(rowsMissingAttribution(nodes, rowAttributionRef.current))
-
-    const decision = decideSyncRows({
-      next: nodes,
-      current: filesRef.current,
-      coverageComplete,
-      emptyConfirmed: emptyConfirmedRef.current,
-    })
-    emptyConfirmedRef.current = false
-
-    if (decision.confirmEmpty) {
-      emptyConfirmTimer.schedule(EMPTY_CONFIRM_MS, () => {
-        emptyConfirmedRef.current = true
-        refreshFromSyncRef.current()
-      })
-      return
-    }
-    emptyConfirmTimer.cancel()
-    if (!decision.apply) return
-
-    setFiles(nodes)
-    setDriveOffline(false)
-    if (!trashed && coverageComplete && nodes.length > 0) {
-      // Persist current decryptedNames map alongside so a cold offline reload
-      // can display names without re-running the crypto bootstrap. Only a
-      // complete tree may write the cache (task 1700).
-      const names: Record<string, string> = {}
-      for (const [id, name] of Object.entries(externalDecryptedNamesRef.current)) {
-        if (typeof name === 'string') names[id] = name
-      }
-      void cacheFileList(currentParentId ?? null, nodes, names)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, withKnownLargeThumbs, setDriveOffline])
-
-  // fetchFiles — triggered on folder navigation (currentParentId change).
-  // When the sync engine is ready and the view is not trash, show the
-  // sync snapshot immediately (no spinner) then fall through to a background
-  // API call so the list is always fresh after back-navigation. This prevents
-  // stale data when SSE may have missed events for the revisited folder.
-  const fetchFiles = useCallback(async () => {
-    if (!isUnlocked) return
-    const cacheScope = getOfflineCacheScope()
-    if (!isCurrentOfflineCacheScope(cacheScope)) return
-    const trashed = location.pathname === '/trash'
-
-    if (syncReadyRef.current && !trashed) {
-      // Show sync snapshot immediately — drop the spinner right away.
-      const syncNodes = sync
-        .children(currentParentId ?? null)
-        .filter((n) => !n.is_trashed)
-        .map(syncNodeToDriveFile)
-      const nodes = withKnownLargeThumbs(syncNodes)
-      setFiles(nodes)
-      setDriveOffline(false)
-      setLoading(false)
-      if (syncTreeCompleteRef.current && nodes.length > 0) {
-        // Never cache a list derived from an incomplete tree (task 1700).
-        void cacheFileList(currentParentId ?? null, nodes)
-      }
-      // Fall through to the API refresh — do NOT return here.
-    } else {
-      setLoading(true)
-    }
-
-    listingInFlightRef.current = true
-    try {
-      const data = withKnownLargeThumbs(await listAllFiles(currentParentId ?? undefined, { trashed }))
-      learnAttribution(rowAttributionRef.current, data)
-      if (!isCurrentOfflineCacheScope(cacheScope)) return
-      if (syncReadyRef.current) {
-        learnPoolLocations(poolLocationsRef.current, sync.children(currentParentId ?? null), data)
-      }
-      setFiles(data)
-      setDriveOffline(false)
-      setLoadError(null)
-      if (!trashed) {
-        if (data.length === 0) {
-          // Authoritative empty list (the folder really is empty online) —
-          // clear any stale cache. The no-[]-write guard in offline-cache.ts
-          // exists to stop partial-tree clobbers, not genuine empties (review
-          // NIT: without this, deleted rows stay visible offline up to TTL).
-          void invalidateFileListCache(currentParentId ?? null)
-        } else {
-          // Persist alongside whatever decrypted names the previous render
-          // produced — the new file set may be a superset of the cached entries.
-          const names: Record<string, string> = {}
-          for (const [id, name] of Object.entries(externalDecryptedNamesRef.current)) {
-            if (typeof name === 'string') names[id] = name
-          }
-          void cacheFileList(currentParentId ?? null, data, names)
-        }
-      }
-      setSyncedAgo(0)
-    } catch (err) {
-      if (!isCurrentOfflineCacheScope(cacheScope)) return
-      console.error('[Drive] Failed to load files:', err)
-      // 4xx errors are real failures (auth, permission, not found) — surface
-      // them. Network errors (status 0, TypeError, offline navigator) and
-      // transient 5xx fall back to the offline cache for this parent_id.
-      const apiStatus = (err instanceof Error && 'status' in err)
-        ? (err as { status?: number }).status
-        : undefined
-      const isNetworkOrServerError =
-        !navigator.onLine ||
-        apiStatus === 0 ||
-        apiStatus === undefined ||
-        (typeof apiStatus === 'number' && apiStatus >= 500)
-      const cached = isNetworkOrServerError
-        ? await getCachedFileList(currentParentId ?? null)
-        : null
-      // Treat stale entries as missing — task spec says > 7d entries become a
-      // "couldn't load files" error rather than misleadingly old data.
-      if (!isCurrentOfflineCacheScope(cacheScope)) return
-      if (cached && !cached.stale) {
-        setFiles(withKnownLargeThumbs(cached.files))
-        setDriveOffline(true)
-        setLoadError(null)
-        if (Object.keys(cached.decryptedNames).length) {
-          // Hydrate decrypted names so the offline cold-reload doesn't need
-          // crypto bootstrap to show readable file names.
-          setExternalDecryptedNames((prev) => ({ ...cached.decryptedNames, ...prev }))
-        }
-      } else {
-        // Show an inline banner with a Try again button instead of (only)
-        // toasting — the page would otherwise be a silent empty state.
-        setLoadError(userFriendlyError(err))
-        setFiles([])
-        setDriveOffline(false)
-      }
-    } finally {
-      listingInFlightRef.current = false
-      if (isCurrentOfflineCacheScope(cacheScope)) setLoading(false)
-    }
-  // sync.ready intentionally read via syncReadyRef to avoid infinite re-fetch
-  // loop: listing sync.ready as a dep would recreate fetchFiles on every sync
-  // state transition and re-trigger this effect, hammering the API.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, withKnownLargeThumbs, setDriveOffline])
-
-  // Latest-callback refs for the scope-guarded timers (review S2): when the
-  // scope still matches, the CURRENT callback must run, not the closure from
-  // when the timer was scheduled.
-  const refreshFromSyncRef = useRef(refreshFromSync)
-  useEffect(() => { refreshFromSyncRef.current = refreshFromSync }, [refreshFromSync])
-  const fetchFilesRef = useRef(fetchFiles)
-  useEffect(() => { fetchFilesRef.current = fetchFiles }, [fetchFiles])
-
-  useEffect(() => {
-    fetchFiles()
-  }, [fetchFiles])
-
-  // When sync becomes ready, show the live snapshot without an extra API call.
-  // fetchFiles already ran the API call on mount; this just swaps in fresh
-  // in-memory data once the sync engine has its first snapshot.
-  useEffect(() => {
-    if (sync.ready && isUnlocked) refreshFromSync()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sync.ready])
-
-  // ─── My active shares ──────────────────────────────
-  // Loaded once per drive session and refreshed when the user creates,
-  // revokes, or deletes a share. Powers the "shared" indicator on file
-  // rows and seeds the ShareInfoModal so it doesn't have to flash a
-  // loading state every time it opens.
-  const fetchMyShares = useCallback(async () => {
-    if (!isUnlocked) return
-    try {
-      const shares = await listMyShares()
-      setMyShares(shares)
-    } catch {
-      // Non-fatal — the file list still works without share indicators.
-    }
-  }, [isUnlocked])
-
-  useEffect(() => {
-    fetchMyShares()
-  }, [fetchMyShares])
-
-  // ─── Folder viewer counts (collaborative presence) ────
-  // For each shared folder visible in the current view, fetch how many
-  // collaborators have access. We batch-resolve after `files` settles.
-  // Throttled to avoid hammering the API on large directories.
-  useEffect(() => {
-    if (!isUnlocked || files.length === 0) {
-      setFolderViewerCounts({})
-      return
-    }
-    let cancelled = false
-
-    // Only look at folders that the current user has shared (myShares gives us
-    // the subset without needing to probe every folder row).
-    const sharedFolderIds = files
-      .filter((f) => f.is_folder)
-      .map((f) => f.id)
-      .filter((id) => myShares.some((s) => s.file_id === id))
-
-    if (sharedFolderIds.length === 0) {
-      setFolderViewerCounts({})
-      return
-    }
-
-    async function resolveViewerCounts() {
-      const counts: Record<string, { count: number; emails: string[] }> = {}
-      const currentUserId = user?.user_id ?? null
-
-      for (const folderId of sharedFolderIds) {
-        if (cancelled) return
-        try {
-          const { members } = await getFolderMembers(folderId)
-          // Exclude current user from the count
-          const others = members.filter((m) => m.user_id !== currentUserId)
-          if (others.length > 0) {
-            counts[folderId] = {
-              count: others.length,
-              emails: others.map((m) => m.email),
-            }
-          }
-        } catch {
-          // Non-fatal — skip this folder
-        }
-      }
-      if (!cancelled) {
-        setFolderViewerCounts(counts)
-      }
-    }
-
-    void resolveViewerCounts()
-    return () => { cancelled = true }
-  // Depend on files + myShares; re-run when files list or share list changes.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files, myShares, isUnlocked])
+  const {
+    syncReadyRef, syncTreeCompleteRef, currentParentIdRef, wsRefetchTimer,
+    refreshFromSync, fetchFiles, fetchFilesRef, fetchMyShares,
+  } = useDriveFiles({
+    isUnlocked,
+    sync,
+    pathname: location.pathname,
+    currentParentId,
+    files,
+    setFiles,
+    setLoading,
+    setLoadError,
+    setDriveOffline,
+    setSyncedAgo,
+    setExternalDecryptedNames,
+    externalDecryptedNamesRef,
+    userId: user?.user_id ?? null,
+    myShares,
+    setMyShares,
+    setFolderViewerCounts,
+  })
 
   // ─── Smart folder suggestion analysis ─────────────────
   // Only active at root (no parent). Detect 5+ images or 5+ PDFs without
@@ -832,6 +429,11 @@ export function Drive() {
     if (!isUnlocked) return
     const params = new URLSearchParams(location.search)
     const folderId = params.get('folder')
+    // L15 (b)3: this effect renders what the URL says (a deep link, ?folder=, a
+    // reload, Back/forward, the Quick Access jump). It NEVER anchors — it only
+    // tells the trail where the URL is, so a navigation still in flight blocks
+    // a publish until the user clicks again.
+    noteDriveUrlFolder(folderId)
 
     // Palette/recent file results deep-link as ?folder=<parent>&highlight=<id>
     // (command-palette.tsx). Selecting the file opens the detail panel; for a
@@ -1080,6 +682,46 @@ export function Drive() {
   }, [])
 
 
+  const {
+    browseResume,
+    HiddenResumeInput,
+    handleFilesSelected,
+    handleFolderFilesSelected,
+    handleRetryUpload,
+    handleConflictReplace,
+    handleConflictKeepBoth,
+    handleConflictCancel,
+    queueResolvedUploads,
+    handleFileDownload,
+  } = useDriveUploads({
+    keys,
+    search,
+    driveData,
+    files,
+    setFiles,
+    uploads,
+    setUploads,
+    pausedUploads,
+    setPausedUploads,
+    uploadAbortRef,
+    uploadFilesRef,
+    quotaLedgerRef,
+    pendingConflict,
+    setPendingConflict,
+    setDedupWarning,
+    setRecentlyUploaded,
+    markTourStepDone,
+    fetchFiles,
+    storageUsage,
+    breadcrumbs,
+    currentParentId,
+    externalDecryptedNames,
+    blockUpload,
+    handlePlanError,
+    refreshOnboarding,
+  })
+
+
   // Browse files hook
   const { browse, HiddenInput } = useBrowseFiles(handleFilesSelected)
   const { browseFolder, HiddenFolderInput } = useBrowseFolders(handleFolderFilesSelected)
@@ -1114,1554 +756,94 @@ export function Drive() {
   }, [browse, openNewFolderDialog])
 
   // Resume upload handler
-  async function handleResumeFile(selectedFiles: File[]) {
-    if (!isUnlocked || !cryptoReady) {
-      showToast({
-        icon: 'lock',
-        title: 'Vault is locked',
-        description: 'Log in again to unlock encryption before resuming.',
-        danger: true,
-      })
-      return
-    }
-    if (selectedFiles.length === 0) return
-
-    for (const file of selectedFiles) {
-      const fingerprint = await computeFingerprint(file)
-      const match = await findByFingerprint(fingerprint)
-
-      if (!match) {
-        showToast({
-          icon: 'upload',
-          title: 'No matching upload found',
-          description: `"${file.name}" does not match any paused upload.`,
-          danger: true,
-        })
-        continue
-      }
-
-      const uploadId = `resume-${Date.now()}-${match.fileId.slice(0, 8)}`
-      setUploads((prev) => [
-        ...prev,
-        {
-          id: uploadId,
-          name: file.name,
-          size: file.size,
-          progress: 0,
-          stage: 'Uploading' as const,
-        },
-      ])
-
-      // Remove from paused list immediately
-      setPausedUploads((prev) => prev.filter((u) => u.fileId !== match.fileId))
-
-      const fileKey = await getFileKey(match.fileId)
-      try {
-        let resumeStartedAt: number | undefined
-        await encryptedUpload(
-          file,
-          match.fileId,
-          fileKey,
-          getMasterKey(),
-          match.parentId ?? undefined,
-          (p) => {
-            if (p.stage === 'Uploading' && !resumeStartedAt) {
-              resumeStartedAt = Date.now()
-            }
-            setUploads((prev) =>
-              prev.map((u) =>
-                u.id === uploadId
-                  ? {
-                      ...u,
-                      stage: p.stage,
-                      progress: p.progress,
-                      bytesUploaded: p.bytesUploaded,
-                      uploadedChunks: p.uploadedChunks,
-                      totalChunks: p.totalChunks,
-                      chunkSizeBytes: p.chunkSizeBytes,
-                      storageRegion: p.region,
-                      storageCountry: p.country ?? undefined,
-                      startedAt: resumeStartedAt,
-                    }
-                  : u,
-              ),
-            )
-          },
-          match.fileId, // resumeFileId
-          undefined,
-          undefined,
-          getFileKey,
-        )
-        setUploads((prev) => prev.filter((u) => u.id !== uploadId))
-        showToast({ icon: 'check', title: 'Upload resumed', description: file.name })
-        fetchFiles()
-      } catch (err) {
-        // Task 1589: the server swept this paused upload (its lease expired)
-        // and a fresh start failed too. encryptedUpload already dropped the
-        // dead IndexedDB entry, so the banner will not offer it again — say
-        // so plainly and drop the row instead of leaving it "Queued" forever.
-        if (err instanceof UploadRestartFailedError) {
-          showToast({
-            icon: 'upload',
-            title: 'Paused upload expired',
-            description: `${file.name}: ${userFriendlyError(err)}`,
-            danger: true,
-          })
-          setUploads((prev) => prev.filter((u) => u.id !== uploadId))
-          continue
-        }
-        showToast({
-          icon: 'upload',
-          title: 'Resume failed',
-          description: userFriendlyError(err),
-          danger: true,
-        })
-        setUploads((prev) =>
-          prev.map((u) =>
-            u.id === uploadId
-              ? { ...u, stage: 'Queued' as const, progress: 0 }
-              : u,
-          ),
-        )
-      }
-    }
-  }
-
-  const { browse: browseResume, HiddenInput: HiddenResumeInput } = useBrowseFiles(handleResumeFile)
-
-  // Build a map of lowercase decrypted name → DriveFile for conflict detection.
-  // Delegates to the shared, unit-tested helper (task 1544 finding 3): a
-  // decrypted name shared by more than one file is AMBIGUOUS and is left
-  // out of the map, rather than silently resolving to whichever file
-  // iterated last.
-  function buildNameToFileMap(): Map<string, DriveFile> {
-    return buildNameToFileMapPure(files, (file) => externalDecryptedNames[file.id])
-  }
-
-  function shouldAutoVersionUpload(existingFile: DriveFile, incomingFile: File): boolean {
-    const existingName = externalDecryptedNames[existingFile.id] ?? existingFile.name_encrypted
-    const existingMime = existingFile.mime_type || inferMimeFromName(existingName)
-    const incomingMime = incomingFile.type || inferMimeFromName(incomingFile.name)
-    const sameType = !existingMime || !incomingMime || existingMime.toLowerCase() === incomingMime.toLowerCase()
-    // Same name + same type → always auto-version (regardless of size).
-    // Same name + different type → show dialog (ambiguous intent).
-    return sameType
-  }
-
-  /**
-   * Queue a resolved list of uploads.
-   * Each item carries the File to upload, an optional replaceFileId for the
-   * Replace path, and the final name to use (may differ from file.name for
-   * the "Keep both" path where we rename with a suffix).
-   */
-  function queueResolvedUploads(
-    resolved: ResolvedUpload[],
-  ) {
-    if (resolved.length === 0) return
-
-    // ─── Quota check (task 1544 findings 1 + 2) ───────────
-    // Runs HERE — after conflict/auto-version resolution — so a
-    // version-replace (auto-version, or explicit "Replace" from the
-    // conflict dialog) is credited the existing file's size, mirroring the
-    // server's replace-credit logic (uploads.rs:495-513). A "Keep both"
-    // upload gets no credit — it creates a new file, same as the server.
-    //
-    // Checked against the ledger, not the raw exceedsQuota — storageUsage
-    // is React state that only updates after a fetch/refresh completes, so
-    // a SECOND call to this function (e.g. the dedup-warning banner's
-    // "Upload anyway", which queues the confirmed file directly and routes
-    // the rest through handleFilesSelected moments later) would otherwise
-    // check against the exact same stale snapshot as the first call and
-    // both could pass independently while together exceeding quota
-    // (finding 2a). requiredQuotaBytes/the ledger's reserve() also clamp
-    // each item's replace-credit to itself, never letting a shrinking
-    // replacement fund a sibling upload in the same batch (finding 2b) —
-    // doEncryptedUpload below runs once per item, independently.
-    const remaining = getRemainingBytes(storageUsage?.used_bytes, storageUsage?.plan_limit_bytes)
-    const quotaItems: QuotaCheckItem[] = resolved.map((r) => ({
-      sizeBytes: r.file.size,
-      replacedSizeBytes: r.replaceFileId
-        ? files.find((f) => f.id === r.replaceFileId)?.size_bytes
-        : undefined,
-    }))
-    if (quotaLedgerRef.current.wouldExceed(quotaItems, remaining)) {
-      const needed = requiredQuotaBytes(quotaItems)
-      const effectiveRemaining = Math.max(0, (remaining ?? 0) - quotaLedgerRef.current.reservedBytes)
-      // Task 1757: inside a no-card trial the limit is the trial's cap, and the way past it is
-      // to subscribe, so say that instead of the allowance-flavoured generic line.
-      const trialNotice = trialCapShortfallNotice(noCardTrial, needed, effectiveRemaining, 'upload')
-      showToast(
-        trialNotice
-          ? { icon: 'shield', ...trialNotice, danger: true }
-          : {
-              icon: 'shield',
-              title: 'Not enough storage',
-              description: `This upload needs ${formatBytes(needed)} but you only have ${formatBytes(effectiveRemaining)} remaining.`,
-              href: '/billing',
-              danger: true,
-            },
-      )
-      return
-    }
-
-    // Task 1527: the welcome checklist's "upload" step is done once a file
-    // is genuinely enqueued here — not when the picker merely opens (the
-    // previous bug marked it done on click, even if the user cancelled).
-    // This is the one place every upload path (direct, dedup-resolved,
-    // conflict-resolved, auto-versioned, drag-drop) converges before
-    // encryption starts, so it covers all of them.
-    markTourStepDone('upload')
-
-    const newUploads: UploadItem[] = resolved.map((r, i) => ({
-      id: `upload-${Date.now()}-${i}`,
-      name: r.finalName ?? r.file.name,
-      size: r.file.size,
-      progress: 0,
-      stage: 'Queued' as const,
-    }))
-    setUploads((prev) => [...prev, ...newUploads])
-
-    resolved.forEach((r, i) => {
-      const uploadId = newUploads[i].id
-      // Reserve this item's (clamped) quota cost against the ledger NOW,
-      // before doEncryptedUpload's async work even starts — release() is
-      // called by its success/failure paths below once this specific
-      // upload settles (task 1544 finding 2a).
-      quotaLedgerRef.current.reserve(uploadId, quotaItems[i])
-      // For "Keep both", create a renamed File object so encryptedUpload
-      // encrypts the new name (not the original).
-      const fileToUpload =
-        r.finalName && r.finalName !== r.file.name
-          ? new File([r.file], r.finalName, { type: r.file.type })
-          : r.file
-      uploadFilesRef.current.set(uploadId, fileToUpload)
-      doEncryptedUpload(uploadId, fileToUpload, r.replaceFileId, r.conflictCreated === true)
-    })
-  }
-
-  async function handleFilesSelected(selectedFiles: File[]) {
-    if (selectedFiles.length > 0 && blockUpload()) return
-    // Quota is checked in queueResolvedUploads, AFTER conflict/auto-version
-    // resolution — see task 1544 finding 1. Checking here (before we know
-    // which files will replace an existing one) rejects same-size version
-    // uploads at 0 remaining quota that the server would allow.
-
-    // ─── Smart duplicate detection (session-based, pre-encryption) ────────
-    // Hash each file with SHA-256 and check against files already uploaded
-    // this session. We check one duplicate at a time — if the user hits
-    // "Skip", we continue checking the rest. "Upload anyway" proceeds for
-    // that file and records the hash.
-    const toCheck = [...selectedFiles]
-    const cleared: File[] = []
-    for (const f of toCheck) {
-      let hash: string | null
-      try {
-        hash = await hashFile(f)
-      } catch {
-        // Hash failed (memory, permissions) — pass through without a check
-        cleared.push(f)
-        continue
-      }
-      if (hash === null) {
-        // File exceeds DEDUP_HASH_MAX_BYTES — skip the dedup check rather
-        // than buffer the whole file into memory (task 1544 finding 4).
-        cleared.push(f)
-        continue
-      }
-      const existing = checkDuplicate(hash)
-      if (existing) {
-        // Show the dedup banner for this file, passing the remaining files
-        // so the "Skip" path can still process them.
-        const otherFiles = toCheck.filter((x) => x !== f).concat(cleared)
-        setDedupWarning({ file: f, hash, existingName: existing.name, otherFiles })
-        return
-      }
-      cleared.push(f)
-    }
-
-    // ─── Conflict detection ───────────────────────
-    // Run whenever the vault is unlocked. buildNameToFileMap() only includes
-    // files that have already decrypted names — files not yet decrypted are
-    // simply absent from the map (treating them as non-conflicting is the
-    // correct safe default; false conflicts are worse than missed conflicts here).
-    if (isUnlocked) {
-      const nameToFile = buildNameToFileMap()
-      const conflicts: ConflictItem[] = []
-      const autoVersioned: ResolvedUpload[] = []
-      const nonConflicting: File[] = []
-
-      for (const f of cleared) {
-        const existing = nameToFile.get(f.name.toLowerCase())
-        if (existing) {
-          if (shouldAutoVersionUpload(existing, f)) {
-            autoVersioned.push({ file: f, replaceFileId: existing.id })
-          } else {
-            const existingName = externalDecryptedNames[existing.id] ?? f.name
-            conflicts.push({
-              newFile: f,
-              existingFileId: existing.id,
-              existingName: existingName ?? f.name,
-            })
-          }
-        } else {
-          nonConflicting.push(f)
-        }
-      }
-
-      if (conflicts.length > 0) {
-        // Pause only unresolved conflicts. Same-name, same-type changed files
-        // are already resolved as version uploads.
-        setPendingConflict({ conflicts, autoVersioned, nonConflicting, allFiles: cleared })
-        return
-      }
-
-      if (autoVersioned.length > 0) {
-        queueResolvedUploads([
-          ...nonConflicting.map((f) => ({ file: f })),
-          ...autoVersioned,
-        ])
-        return
-      }
-    }
-
-    // ─── No conflicts — queue immediately ─────────
-    queueResolvedUploads(cleared.map((f) => ({ file: f })))
-  }
-
-  // ─── Conflict dialog resolution ──────────────────
-
-  function handleConflictReplace() {
-    if (!pendingConflict) return
-    const { conflicts, autoVersioned, nonConflicting } = pendingConflict
-    setPendingConflict(null)
-    queueResolvedUploads([
-      ...nonConflicting.map((f) => ({ file: f })),
-      ...autoVersioned,
-      ...conflicts.map((c) => ({ file: c.newFile, replaceFileId: c.existingFileId })),
-    ])
-  }
-
-  function handleConflictKeepBoth() {
-    if (!pendingConflict) return
-    const { conflicts, autoVersioned, nonConflicting } = pendingConflict
-    setPendingConflict(null)
-
-    // Build the set of existing lowercase names for suffix generation.
-    const existingNames = new Set(
-      files
-        .filter((f) => !f.is_folder)
-        .map((f) => externalDecryptedNames[f.id])
-        .filter(Boolean)
-        .map((n) => (n as string).toLowerCase()),
-    )
-    // Track names already assigned in this batch to prevent duplicates.
-    const usedInBatch = new Set<string>()
-
-    const resolved = [
-      ...nonConflicting.map((f) => ({ file: f })),
-      ...autoVersioned,
-      ...conflicts.map((c) => {
-        const finalName = getUniqueName(c.newFile.name, existingNames, usedInBatch)
-        usedInBatch.add(finalName.toLowerCase())
-        return { file: c.newFile, finalName, conflictCreated: true }
-      }),
-    ]
-    queueResolvedUploads(resolved)
-  }
-
-  function handleConflictCancel() {
-    setPendingConflict(null)
-  }
-
-  /**
-   * Upload a single file.
-   *
-   * @param replaceFileId  When set (Replace mode), uses the EXISTING file's ID
-   *   so the server creates a new version of that file. The key is derived from
-   *   this ID — same key as the original, so old versions remain decryptable.
-   *   When undefined (normal / Keep-both mode), generates a fresh UUID.
-   */
-  async function doEncryptedUpload(uploadId: string, file: File, replaceFileId?: string, conflictCreated = false) {
-    if (!isUnlocked || !cryptoReady) {
-      showToast({
-        icon: 'lock',
-        title: 'Vault is locked',
-        description: 'Log in again to unlock encryption before uploading.',
-        danger: true,
-      })
-      setUploads((prev) => prev.filter((u) => u.id !== uploadId))
-      uploadFilesRef.current.delete(uploadId)
-      // Never started — nothing to hold reserved (task 1544 finding 2a).
-      quotaLedgerRef.current.release(uploadId)
-      return
-    }
-
-    // Replace mode uses the existing file's ID for versioning;
-    // normal mode generates a new UUID.
-    const fileId = replaceFileId ?? crypto.randomUUID()
-    const fileKey = await getFileKey(fileId)
-
-    const abortController = new AbortController()
-    uploadAbortRef.current.set(uploadId, abortController)
-
-    try {
-      // Replace: the existing file's current name, whose recorded pin decides
-      // the format of the new version (task 1943). Read from the listing, or
-      // from the server when the row is not loaded here; a new file has none.
-      const replaceOf = replaceFileId
-        ? {
-            nameEncrypted:
-              files.find((f) => f.id === replaceFileId)?.name_encrypted
-              ?? (await getFile(replaceFileId)).name_encrypted,
-          }
-        : undefined
-      let uploadStartedAt: number | undefined
-      const uploadedFile = await encryptedUpload(file, fileId, fileKey, getMasterKey(), currentParentId, (p) => {
-        if (p.stage === 'Uploading' && !uploadStartedAt) {
-          uploadStartedAt = Date.now()
-        }
-        setUploads((prev) =>
-          prev.map((u) =>
-            u.id === uploadId
-              ? {
-                  ...u,
-                  stage: p.stage,
-                  progress: p.progress,
-                  bytesUploaded: p.bytesUploaded,
-                  uploadedChunks: p.uploadedChunks,
-                  totalChunks: p.totalChunks,
-                  chunkSizeBytes: p.chunkSizeBytes,
-                  storageRegion: p.region,
-                  storageCountry: p.country ?? undefined,
-                  startedAt: uploadStartedAt,
-                }
-              : u,
-          ),
-        )
-      }, undefined, undefined, abortController.signal, getFileKey, { conflictCreated, replaceOf })
-      const uploadedFileId = uploadedFile.id
-
-      // Update the encrypted search index with the new file
-      const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
-      indexFile(uploadedFileId, {
-        name: file.name,
-        path: pathPrefix ? `/${pathPrefix}` : '/',
-        type: file.type || 'application/octet-stream',
-        size: file.size,
-        parent: currentParentId ?? null,
-        starred: false,
-        created: new Date().toISOString(),
-        modified: new Date().toISOString(),
-        tags: [],
-      })
-
-      setUploads((prev) => prev.filter((u) => u.id !== uploadId))
-      uploadAbortRef.current.delete(uploadId)
-      uploadFilesRef.current.delete(uploadId)
-      // Settled successfully — the refreshDriveUsage()/fetchFiles() calls
-      // below will make storageUsage reflect this for real; drop the
-      // reservation that stood in for it until now (task 1544 finding 2a).
-      quotaLedgerRef.current.release(uploadId)
-      // Remove from paused list if this was a resume
-      setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
-      showToast({ icon: 'check', title: 'Uploaded', description: file.name })
-      // Notify sidebar badge that a file was uploaded
-      window.dispatchEvent(new CustomEvent('beebeeb:file-uploaded'))
-      // Record hash for duplicate detection in this session (fire-and-forget).
-      // hashFile returns null for files over DEDUP_HASH_MAX_BYTES — nothing
-      // to record in that case (task 1544 finding 4).
-      hashFile(file)
-        .then((hash) => {
-          if (hash !== null) recordUpload(hash, file.name)
-        })
-        .catch(() => {})
-      // Refresh storage usage so quota warning updates
-      refreshDriveUsage()
-      // Advance onboarding state (first_upload_done might now be true)
-      void refreshOnboarding()
-      // Mark as recently uploaded for glow animation
-      setRecentlyUploaded((prev) => new Set(prev).add(uploadedFileId))
-      setTimeout(() => {
-        setRecentlyUploaded((prev) => {
-          const next = new Set(prev)
-          next.delete(uploadedFileId)
-          return next
-        })
-      }, 1200)
-      fetchFiles()
-    } catch (err) {
-      uploadAbortRef.current.delete(uploadId)
-      // Failed or cancelled — nothing changed server-side, so this
-      // reservation must not linger and permanently overcount a future
-      // queueResolvedUploads call (task 1544 finding 2a). Covers both
-      // branches below.
-      quotaLedgerRef.current.release(uploadId)
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        // Cancelled by user — silently remove from list, drop the cached File
-        setUploads((prev) => prev.filter((u) => u.id !== uploadId))
-        uploadFilesRef.current.delete(uploadId)
-        return
-      }
-      const errorMessage = userFriendlyError(err)
-      // Task 1037 — 409 plan_required / account_lapsed get the plan notice
-      // (and the chooser for plan_required), not a generic "Upload failed".
-      if (!handlePlanError(err)) {
-        showToast({
-          icon: 'upload',
-          title: 'Upload failed',
-          description: errorMessage,
-          danger: true,
-        })
-      }
-      // Mark the card as Error so the user sees it failed and can hit Retry.
-      // Keep the cached File in uploadFilesRef so handleRetryUpload can re-run
-      // the encrypted-upload pipeline without the user re-picking the file.
-      setUploads((prev) =>
-        prev.map((u) =>
-          u.id === uploadId
-            ? { ...u, stage: 'Error' as const, progress: 0, errorMessage }
-            : u,
-        ),
-      )
-    }
-  }
-
-  function handleRetryUpload(uploadId: string) {
-    if (blockUpload()) return
-    const file = uploadFilesRef.current.get(uploadId)
-    if (!file) {
-      // Cached File was lost (e.g. page reload between failure and retry click).
-      // Just drop the stale card — the user will need to re-pick the file.
-      setUploads((prev) => prev.filter((u) => u.id !== uploadId))
-      return
-    }
-    // Reset the card to Queued so the existing UI re-engages (prevents a flash
-    // of "Uploaded 0%" if doEncryptedUpload's progress callback hasn't fired
-    // yet by the time the user looks at the card).
-    setUploads((prev) =>
-      prev.map((u) =>
-        u.id === uploadId
-          ? {
-              ...u,
-              stage: 'Queued' as const,
-              progress: 0,
-              bytesUploaded: undefined,
-              startedAt: undefined,
-              errorMessage: undefined,
-            }
-          : u,
-      ),
-    )
-    void doEncryptedUpload(uploadId, file)
-  }
-
-  async function handleFolderFilesSelected(folderFiles: FolderFile[]) {
-    if (folderFiles.length > 0 && blockUpload()) return
-    if (!isUnlocked || !cryptoReady) {
-      showToast({
-        icon: 'lock',
-        title: 'Vault is locked',
-        description: 'Log in again to unlock encryption before uploading.',
-        danger: true,
-      })
-      return
-    }
-
-    if (folderFiles.length === 0) return
-
-    // ─── Quota check ──────────────────────────────
-    // Unlike handleFilesSelected, a folder upload never resolves to a
-    // version-replace: every folder and file below gets a fresh UUID (see
-    // the creation loop below), so there is no existing file to credit
-    // back — a raw totalSize > remaining comparison is correct here (task
-    // 1544 finding 1 only applies to handleFilesSelected's conflict/
-    // auto-version path).
-    const remaining = getRemainingBytes(storageUsage?.used_bytes, storageUsage?.plan_limit_bytes)
-    if (remaining !== null) {
-      const totalSize = folderFiles.reduce((sum, ff) => sum + ff.file.size, 0)
-      if (totalSize > remaining) {
-        const trialNotice = trialCapShortfallNotice(noCardTrial, totalSize, remaining, 'folder')
-        showToast(
-          trialNotice
-            ? { icon: 'shield', ...trialNotice, danger: true }
-            : {
-                icon: 'shield',
-                title: 'Not enough storage',
-                description: `This folder needs ${formatBytes(totalSize)} but you only have ${formatBytes(remaining)} remaining.`,
-                href: '/billing',
-                danger: true,
-              },
-        )
-        return
-      }
-    }
-
-    // Collect all unique folder paths from the file list, sorted by depth (parent first)
-    const folderPaths = new Set<string>()
-    for (const ff of folderFiles) {
-      const parts = ff.relativePath.split('/')
-      // Build all ancestor folder paths (excluding the filename itself)
-      for (let i = 1; i < parts.length; i++) {
-        folderPaths.add(parts.slice(0, i).join('/'))
-      }
-    }
-    const sortedFolderPaths = Array.from(folderPaths).sort((a, b) => {
-      const depthA = a.split('/').length
-      const depthB = b.split('/').length
-      if (depthA !== depthB) return depthA - depthB
-      return a.localeCompare(b)
-    })
-
-    // Track total progress for all files in the folder upload
-    const totalFiles = folderFiles.length
-    let completedFiles = 0
-    const foldUploadId = `folder-upload-${Date.now()}`
-    const rootFolderName = folderFiles[0].relativePath.split('/')[0]
-
-    setUploads((prev) => [
-      ...prev,
-      {
-        id: foldUploadId,
-        name: `${rootFolderName}/ (${totalFiles} files)`,
-        size: folderFiles.reduce((sum, ff) => sum + ff.file.size, 0),
-        progress: 0,
-        stage: 'Encrypting' as const,
-      },
-    ])
-
-    try {
-      // Map of relative folder path -> server folder ID
-      const folderIdMap: Record<string, string> = {}
-
-      // Create all folders in order (parent before child)
-      for (const folderPath of sortedFolderPaths) {
-        const parts = folderPath.split('/')
-        const folderName = parts[parts.length - 1]
-        const parentPath = parts.slice(0, -1).join('/')
-        const parentId = parentPath ? folderIdMap[parentPath] : currentParentId
-
-        const folderId = crypto.randomUUID()
-        const folderKey = await getFileKey(folderId)
-        const enc = await encryptFileMetadata(folderKey, folderName)
-        const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-
-        // Inside a shared folder its name-key wrap is published too, so guests
-        // and members can read the new folder's name.
-        const result = await createOwnerFolder({ nameEncrypted, parentId, folderId, nameKey: folderKey, masterKey: getMasterKey() })
-        folderIdMap[folderPath] = result.id
-
-        // Index the folder in the search index
-        const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
-        const folderLocation = parentPath
-          ? `/${pathPrefix ? pathPrefix + '/' : ''}${parentPath}`
-          : pathPrefix ? `/${pathPrefix}` : '/'
-        indexFile(result.id, {
-          name: folderName,
-          path: folderLocation,
-          type: 'folder',
-          size: 0,
-          parent: parentId ?? null,
-          starred: false,
-          created: new Date().toISOString(),
-          modified: new Date().toISOString(),
-          tags: [],
-        })
-      }
-
-      setUploads((prev) =>
-        prev.map((u) =>
-          u.id === foldUploadId ? { ...u, stage: 'Uploading' as const, progress: 5 } : u,
-        ),
-      )
-
-      // Upload all files into their respective folders
-      for (const ff of folderFiles) {
-        const parts = ff.relativePath.split('/')
-        const parentPath = parts.slice(0, -1).join('/')
-        const parentId = parentPath ? folderIdMap[parentPath] : currentParentId
-
-        const fileId = crypto.randomUUID()
-        const fileKey = await getFileKey(fileId)
-
-        const uploadedFile = await encryptedUpload(ff.file, fileId, fileKey, getMasterKey(), parentId, (p) => {
-          // Blend per-file progress into overall progress
-          const fileProgress = p.progress / 100
-          const overallProgress = Math.round(
-            5 + ((completedFiles + fileProgress) / totalFiles) * 95,
-          )
-          setUploads((prev) =>
-            prev.map((u) =>
-              u.id === foldUploadId
-                ? {
-                    ...u,
-                    stage: p.stage === 'Done' ? 'Uploading' as const : p.stage,
-                    progress: overallProgress,
-                    uploadedChunks: p.uploadedChunks,
-                    totalChunks: p.totalChunks,
-                    chunkSizeBytes: p.chunkSizeBytes,
-                    storageRegion: p.region,
-                    storageCountry: p.country ?? undefined,
-                  }
-                : u,
-            ),
-          )
-        }, undefined, undefined, undefined, getFileKey)
-
-        // Index each file
-        const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
-        const filePath = parentPath
-          ? `/${pathPrefix ? pathPrefix + '/' : ''}${parentPath}`
-          : pathPrefix ? `/${pathPrefix}` : '/'
-        indexFile(uploadedFile.id, {
-          name: ff.file.name,
-          path: filePath,
-          type: ff.file.type || 'application/octet-stream',
-          size: ff.file.size,
-          parent: parentId ?? null,
-          starred: false,
-          created: new Date().toISOString(),
-          modified: new Date().toISOString(),
-          tags: [],
-        })
-
-        completedFiles++
-      }
-
-      setUploads((prev) => prev.filter((u) => u.id !== foldUploadId))
-      showToast({
-        icon: 'check',
-        title: 'Folder uploaded',
-        description: `${rootFolderName}/ -- ${totalFiles} file${totalFiles !== 1 ? 's' : ''}`,
-      })
-      // Notify sidebar badge that files were uploaded
-      window.dispatchEvent(new CustomEvent('beebeeb:file-uploaded', { detail: { count: totalFiles } }))
-      refreshDriveUsage()
-      fetchFiles()
-    } catch (err) {
-      const errorMessage = userFriendlyError(err)
-      if (!handlePlanError(err)) {
-        showToast({
-          icon: 'upload',
-          title: 'Folder upload failed',
-          description: errorMessage,
-          danger: true,
-        })
-      }
-      // Folder uploads don't support per-file retry yet (we'd need to remember
-      // which subfile failed and how far it got). Surface as Error so the user
-      // sees it failed; the dismiss (×) button removes the card.
-      setUploads((prev) =>
-        prev.map((u) =>
-          u.id === foldUploadId
-            ? { ...u, stage: 'Error' as const, progress: 0, errorMessage }
-            : u,
-        ),
-      )
-    }
-  }
-
-  async function handleFileDownload(file: DriveFile) {
-    if (!isUnlocked || !cryptoReady || file.is_folder) return
-
-    try {
-      const fileKey = await getFileKeyForFile(file)
-      await encryptedDownload(
-        file.id,
-        fileKey,
-        file.name_encrypted,
-        file.mime_type ?? undefined,
-        file.chunk_count,
-        file.size_bytes,
-      )
-    } catch (err) {
-      console.error('Download failed:', err)
-      showToast({
-        icon: 'download',
-        title: 'Download failed',
-        description: err instanceof Error ? err.message : 'Could not decrypt the file.',
-        danger: true,
-      })
-    }
-  }
-
-  function displayName(file: DriveFile): string {
-    const cached = externalDecryptedNames[file.id]
-    if (cached === undefined) return '' // pending — caller should not use this until truthy
-    return cached ?? 'Encrypted file'   // null = failed
-  }
-
-  async function handleCreateFolder(name: string) {
-    try {
-      // Create folder first to get the server-assigned ID
-      // Then encrypt the name with that ID as the key derivation input
-      const folderId = crypto.randomUUID()
-      let nameEncrypted = name
-      let nameKey: Uint8Array | undefined
-      if (isUnlocked && cryptoReady) {
-        nameKey = await getFileKey(folderId)
-        const enc = await encryptFileMetadata(nameKey, name)
-        nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      }
-      // Inside a shared folder its name-key wrap is published too (guests and
-      // members read the name through it).
-      const result = await createOwnerFolder({
-        nameEncrypted,
-        parentId: currentParentId,
-        folderId,
-        nameKey,
-        masterKey: nameKey ? getMasterKey() : undefined,
-      })
-
-      // Update the encrypted search index with the new folder
-      const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
-      indexFile(result.id, {
-        name,
-        path: pathPrefix ? `/${pathPrefix}` : '/',
-        type: 'folder',
-        size: 0,
-        parent: currentParentId ?? null,
-        starred: false,
-        created: new Date().toISOString(),
-        modified: new Date().toISOString(),
-        tags: [],
-      })
-
-      fetchFiles()
-    } catch (err) {
-      showToast({
-        icon: 'folder',
-        title: 'Failed to create folder',
-        description: userFriendlyError(err),
-        danger: true,
-      })
-    }
-  }
-
-  // ─── "+ New" document (task 1582) ────────────────────────────────────────
-  //
-  // Creates a real, valid, empty file of the chosen type in the current
-  // folder through the SAME encrypted upload path as any other upload
-  // (encryptedUpload: name + mime encrypted as metadata, content encrypted
-  // chunk by chunk on this device). There is no plaintext fallback: with the
-  // vault locked, creation is refused.
-  //
-  // Called synchronously from the name prompt's submit event. For Office
-  // types the editor tab is opened HERE, before the first await, while the
-  // browser still counts it as a user gesture — opening it after the upload
-  // resolves would be eaten by the popup blocker. The tab shows a short
-  // "encrypting" line until the file exists, then navigates to the editor.
-  function handleCreateDocument(type: NewDocumentType, name: string): Promise<void> {
-    if (!isUnlocked || !cryptoReady) {
-      return Promise.reject(new Error('Your vault is locked. Log in again to unlock encryption, then try again.'))
-    }
-    if (type.editor === 'office' && !FEATURE_OFFICE_EDITOR) {
-      return Promise.reject(new Error('The Office editor is not enabled on this device.'))
-    }
-    const fileId = crypto.randomUUID()
-    let tab: Window | null = null
-    if (type.editor === 'office') {
-      tab = window.open('', `bb-office-${fileId}`)
-      if (tab) {
-        try {
-          tab.document.title = `Creating ${name}`
-          tab.document.body.style.cssText =
-            'margin:0;display:flex;align-items:center;justify-content:center;height:100vh;font:14px Inter,system-ui,sans-serif;color:#6b6760;background:#fbfaf7'
-          tab.document.body.textContent = `Encrypting ${name} on this device…`
-        } catch {
-          // Cosmetic only.
-        }
-      }
-    }
-    return (async () => {
-      try {
-        // Authoritative clash check against a FRESH, complete listing of the
-        // folder (every page), each name decrypted now — not the on-screen
-        // cache, which can lag a sibling renamed or added from another
-        // device (PR #117 review). The server cannot catch this itself: it
-        // only ever sees encrypted names.
-        const siblings = await listAllFiles(currentParentId ?? undefined)
-        const wanted = foldName(name)
-        for (const f of siblings) {
-          let sibling: string | null = null
-          try {
-            sibling = (await decryptFileMetadata(await getFileKeyForFile(f), f.name_encrypted)).name
-          } catch {
-            sibling = null // undecryptable: cannot clash with a name we can see
-          }
-          if (sibling && foldName(sibling) === wanted) {
-            throw new NewDocumentNameClashError(name)
-          }
-        }
-        const bytes = await blankDocumentBytes(type)
-        const file = new File([bytes as BlobPart], name, { type: type.mimeType })
-        const fileKey = await getFileKey(fileId)
-        const created = await encryptedUpload(
-          file,
-          fileId,
-          fileKey,
-          getMasterKey(),
-          currentParentId,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          getFileKey,
-        )
-        const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
-        const now = new Date().toISOString()
-        indexFile(created.id, {
-          name,
-          path: pathPrefix ? `/${pathPrefix}` : '/',
-          type: type.mimeType,
-          size: bytes.length,
-          parent: currentParentId ?? null,
-          starred: false,
-          created: now,
-          modified: now,
-          tags: [],
-        })
-        window.dispatchEvent(new CustomEvent('beebeeb:file-uploaded'))
-        void fetchFiles()
-        void refreshDriveUsage()
-        // A created file is a real first file: advance onboarding and the
-        // welcome checklist's "upload" step like any upload (PR #117 review).
-        markTourStepDone('upload')
-        void refreshOnboarding()
-
-        if (type.editor === 'office') {
-          const url = `/office/${encodeURIComponent(created.id)}`
-          if (tab && !tab.closed) {
-            tab.location.replace(url)
-          } else if (!window.open(url, `bb-office-${created.id}`)) {
-            showToast({
-              icon: 'check',
-              title: `Created ${name}`,
-              description: 'Your browser blocked the editor tab. Open the file from Drive to edit it.',
-            })
-            return
-          }
-        } else {
-          setPreviewEditFileId(created.id)
-          openPreview(created)
-        }
-        showToast({ icon: 'check', title: 'Created', description: name })
-      } catch (err) {
-        if (tab && !tab.closed) tab.close()
-        if (err instanceof NewDocumentNameClashError) throw err
-        throw new Error(userFriendlyError(err))
-      }
-    })()
-  }
-
-  // ─── Smart folder suggestion: create folder + move files ─────────────────
-
-  async function handleAcceptFolderSuggestion() {
-    if (!folderSuggestion || !isUnlocked || !cryptoReady) return
-    const folderName = folderSuggestion.type === 'images' ? 'Photos' : 'Documents'
-    const filesToMove = folderSuggestion.type === 'images'
-      ? files.filter((f) => !f.is_folder && (f.mime_type ?? '').startsWith('image/'))
-      : files.filter((f) => !f.is_folder && f.mime_type === 'application/pdf')
-
-    setSuggestionCreating(true)
-    try {
-      // Create the folder
-      const folderId = crypto.randomUUID()
-      const folderKey = await getFileKey(folderId)
-      const enc = await encryptFileMetadata(folderKey, folderName)
-      const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      const result = await createOwnerFolder({ nameEncrypted, folderId })
-
-      // Move all matching files into it
-      await moveOwnerItems({ ids: filesToMove.map((f) => f.id), destinationId: result.id, rows: filesToMove, masterKey: getMasterKey(), viewerId: user?.user_id ?? null })
-
-      showToast({
-        icon: 'folder',
-        title: `${folderName} folder created`,
-        description: `${filesToMove.length} file${filesToMove.length !== 1 ? 's' : ''} moved.`,
-      })
-      setFolderSuggestion(null)
-      fetchFiles()
-    } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Could not create folder',
-        description: userFriendlyError(err),
-        danger: true,
-      })
-    } finally {
-      setSuggestionCreating(false)
-    }
-  }
-
-  function handleDismissFolderSuggestion() {
-    if (!folderSuggestion) return
-    dismissSuggestion(folderSuggestion.type)
-    setFolderSuggestion(null)
-  }
-
-  // ─── Backups-folder delete guard (task 0838 / 0848) ────────
-  // The root folder literally named "Backups" is the device-backup root the
-  // desktop/mobile engines write to (Backups/{device}/{category}/). Match by
-  // decrypted name AND root position so a user's own folder called "Backups"
-  // nested elsewhere is unaffected.
-  //
-  // The pure logic lives in src/lib/backups-root.ts (extracted for unit tests,
-  // task 0848). This wrapper reads the pending-vs-resolved name from component
-  // state and forwards it explicitly so the pure function stays testable.
-  function isBackupsRoot(file: DriveFile): boolean {
-    // externalDecryptedNames[id] is undefined at runtime when the key is absent
-    // (name still pending), even though the Record type says string|null.
-    // Cast to include undefined so the pure function's type accepts it.
-    const name = externalDecryptedNames[file.id] as string | null | undefined
-    return isBackupsRootPure(file, name)
-  }
-
-  // Cheap descendant summary from the in-memory sync tree (no network): how many
-  // items live under Backups and how many top-level device folders it has.
-  function summarizeBackups(backupsId: string): { deviceCount: number; itemCount: number } {
-    let itemCount = 0
-    let deviceCount = 0
-    const queue: string[] = [backupsId]
-    const seen = new Set<string>()
-    while (queue.length) {
-      const parentId = queue.shift() as string
-      for (const child of sync.children(parentId)) {
-        if (seen.has(child.id) || child.is_trashed) continue
-        seen.add(child.id)
-        itemCount++
-        if (parentId === backupsId && child.is_folder) deviceCount++
-        if (child.is_folder) queue.push(child.id)
-      }
-    }
-    return { deviceCount, itemCount }
-  }
-
-  function performSingleTrash(file: DriveFile) {
-    const trashName = displayName(file)
-    setTrashingIds((prev) => new Set(prev).add(file.id))
-    setTimeout(async () => {
-      try {
-        await deleteFile(file.id)
-        showToast({ icon: 'trash', title: 'Moved to trash', description: trashName })
-        unindexFile(file.id)
-        // A trashed folder must not linger in Quick Access (task 0837).
-        if (file.is_folder) unpinFolders([file.id])
-        fetchFiles()
-      } catch (err) {
-        showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
-      } finally {
-        setTrashingIds((prev) => { const next = new Set(prev); next.delete(file.id); return next })
-      }
-    }, 200)
-  }
-
-  function handleFolderOpen(folder: DriveFile) {
-    // Idempotent: a row's single-click + double-click can both fire open, which
-    // would append a duplicate breadcrumb (same id → React duplicate-key) and
-    // push a redundant history entry. If we're already in this folder, no-op.
-    if (currentParentId === folder.id) return
-    // The URL is the source of truth for the current folder (task 0839): pushing
-    // /?folder=<id> gives the browser Back button a history entry per level and
-    // makes the location copy-pasteable. Set the ref so the ?folder= effect
-    // treats this as already-resolved and keeps the optimistic breadcrumb below
-    // instead of re-walking the chain.
-    lastResolvedFolderRef.current = folder.id
-    setBreadcrumbs((prev) =>
-      prev[prev.length - 1]?.id === folder.id
-        ? prev
-        : [...prev, { id: folder.id, name: externalDecryptedNames[folder.id] ?? 'Folder' }],
-    )
-    navigate(`/?folder=${folder.id}`)
-  }
-
-  function handleBreadcrumbNav(index: number) {
-    const next = breadcrumbs.slice(0, index + 1)
-    const target = next[next.length - 1]
-    lastResolvedFolderRef.current = target.id
-    setBreadcrumbs(next)
-    navigate(target.id ? `/?folder=${target.id}` : '/')
-  }
-
-  function handleCancelUpload(uploadId: string) {
-    const controller = uploadAbortRef.current.get(uploadId)
-    if (controller) {
-      controller.abort()
-    } else {
-      // For queued/error items not currently in flight, remove the card and
-      // drop the cached File — there's nothing to cancel via signal.
-      setUploads((prev) => prev.filter((u) => u.id !== uploadId))
-    }
-    uploadFilesRef.current.delete(uploadId)
-  }
-
-  // ─── File details panel helpers ───────────────────
-
-  const selectedFile = files.find((f) => f.id === selectedFileId) ?? null
-
-  // Load activity feed when the details panel opens for a file
-  useEffect(() => {
-    if (!selectedFileId || !selectedFile) {
-      setFileActivity([])
-      return
-    }
-    let cancelled = false
-    async function loadActivity() {
-      if (!selectedFileId) return
-      try {
-        const events: FileActivityEntry[] = []
-
-        // ── Baseline: created event ──────────────────────────────────────────
-        if (selectedFile) {
-          events.push({
-            label: selectedFile.is_folder ? 'Folder created' : 'File created',
-            when: timeAgo(selectedFile.created_at),
-            icon: selectedFile.is_folder ? 'folder' : 'upload',
-          })
-        }
-
-        // ── Version history (files only) ─────────────────────────────────────
-        if (selectedFile && !selectedFile.is_folder) {
-          try {
-            const versionData = await listVersions(selectedFileId)
-            if (!cancelled) {
-              // Each version beyond the first represents a new upload
-              const sorted = [...versionData.versions].sort(
-                (a, b) => a.version_number - b.version_number,
-              )
-              for (const v of sorted) {
-                if (v.version_number > 1) {
-                  events.push({
-                    label: `Version ${v.version_number} uploaded`,
-                    when: timeAgo(v.created_at),
-                    icon: 'clock',
-                  })
-                }
-              }
-            }
-          } catch {
-            // Versions endpoint may not be available — skip silently
-          }
-        }
-
-        // ── Share events ─────────────────────────────────────────────────────
-        try {
-          const shares = await getSharesForFile(selectedFileId)
-          if (!cancelled) {
-            for (const s of shares) {
-              events.push({
-                label: 'Share link created',
-                when: timeAgo(s.created_at),
-                icon: 'share',
-              })
-              if (s.revoked) {
-                events.push({
-                  label: 'Share link revoked',
-                  when: s.expires_at ? timeAgo(s.expires_at) : 'previously',
-                  icon: 'x',
-                })
-              }
-            }
-          }
-        } catch {
-          // Share endpoint may not include this file — skip silently
-        }
-
-        // We only have relative "time ago" strings, so preserve insertion order which is chronological
-        // (events were pushed in: created → versions → shares, already time-ordered)
-
-        if (!cancelled) setFileActivity(events)
-      } catch {
-        if (!cancelled) setFileActivity([])
-      }
-    }
-    loadActivity()
-    return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedFileId])
-
-  function buildDetailsMeta(file: DriveFile): FileDetailsMeta {
-    const name = displayName(file)
-    const ext = name.includes('.') ? name.split('.').pop() ?? '' : ''
-    const locationPath = breadcrumbs.map((b) => b.name).join(' / ')
-    return {
-      id: file.id,
-      name,
-      extension: ext,
-      mimeType: file.mime_type || null,
-      sizeBytes: file.size_bytes,
-      isFolder: file.is_folder,
-      hasThumbnail: file.has_thumbnail ?? false,
-      createdAt: file.created_at,
-      updatedAt: file.updated_at,
-      location: locationPath || '/',
-      cipher: isUnlocked ? 'AES-256-GCM' : undefined,
-      keyId: isUnlocked ? file.id : undefined,
-      region: undefined,
-      nameEncrypted: file.name_encrypted,
-      noteEncrypted: file.note_encrypted ?? null,
-    }
-  }
-
-  async function handleToggleStar(fileId: string) {
-    try {
-      const result = await toggleStar(fileId)
-      // Mirror into the sync tree too: the drive re-derives its rows from the
-      // tree on every tree change (refreshFromSync), so a star recorded only
-      // in `files` is reverted by the next re-derive (task 1577).
-      sync.setNodeStarred(fileId, result.is_starred)
-      setFiles((prev) =>
-        prev.map((f) =>
-          f.id === fileId ? { ...f, is_starred: result.is_starred } : f,
-        ),
-      )
-      // Trigger star pulse animation
-      setStarPulseId(fileId)
-      setTimeout(() => setStarPulseId(null), 400)
-      // Notify the sidebar starred section to refresh
-      window.dispatchEvent(new Event('beebeeb:star-changed'))
-    } catch (err) {
-      showToast({
-        icon: 'star',
-        title: 'Failed to update star',
-        description: userFriendlyError(err),
-        danger: true,
-      })
-    }
-  }
-
-  // ─── Search re-index on rename/move (task 0843) ──────
-  // The on-upload `indexFile` path never sees later renames/moves, so without
-  // this the search index keeps the OLD name / OLD path until a full rebuild.
-
-  // Build the search-index path string ("/A/B") for a destination folder by
-  // walking parents up the sync tree and decrypting each name. Returns "/" for
-  // the vault root. Best-effort: an unreadable ancestor is skipped.
-  const buildIndexPathForParent = useCallback(async (parentId: string | null): Promise<string> => {
-    const parts: string[] = []
-    let currentId = parentId
-    for (let depth = 0; depth < 50 && currentId; depth++) {
-      const node = sync.getNode(currentId)
-      if (!node) break
-      try {
-        const key = await getFileKey(node.id)
-        const { name } = await decryptFileMetadata(key, node.name_encrypted)
-        if (name && name !== 'Encrypted file') parts.unshift(name)
-      } catch { /* unreadable ancestor — skip */ }
-      currentId = node.parent_id ?? null
-    }
-    return parts.length ? `/${parts.join('/')}` : '/'
-  }, [sync, getFileKey])
-
-  // Re-index after a successful move: patch parent + recomputed path. Fire-and-
-  // forget; a miss self-heals on the next reconcileFromTree (drive-layout).
-  const reindexAfterMove = useCallback((ids: string[], destinationId: string | null) => {
-    void buildIndexPathForParent(destinationId).then((path) => {
-      for (const id of ids) void reindexFields(id, { parent: destinationId, path })
-    })
-  }, [buildIndexPathForParent, reindexFields])
-
-  // ─── Move handler ─────────────────────────────────
-
-  async function handleMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy') {
-    if (!moveFileId) return
-    try {
-      // rv-web198c P2-5: a move into a shared folder publishes its wraps.
-      await moveOwnerItems({ ids: [moveFileId], destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null })
-      reindexAfterMove([moveFileId], destinationId)
-      showToast({ icon: 'folder', title: 'File moved', description: 'Moved successfully.' })
-      fetchFiles()
-    } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Move failed',
-        description: err instanceof Error ? err.message : 'Could not move file.',
-        danger: true,
-      })
-    } finally {
-      setMoveFileId(null)
-    }
-  }
-
-  // ─── Rename handler ─────────────────────────────────
-
-  async function handleRenameConfirm(newName: string) {
-    if (!renameFileId) return
-    if (!isUnlocked || !cryptoReady) {
-      showToast({
-        icon: 'lock',
-        title: 'Vault is locked',
-        description: 'Unlock the vault before renaming files.',
-        danger: true,
-      })
-      return
-    }
-    try {
-      // rv-web198c P2-4: a guest's or member's row is renamed under ITS key,
-      // proven to open its current name; otherwise the rename is refused.
-      const fileKey = await renameKeyFor({
-        fileId: renameFileId,
-        file: files.find((f) => f.id === renameFileId),
-        viewerId: user?.user_id ?? null,
-        getFileKey,
-        getFileKeyForFile,
-        readName: readFileMetadata,
-      })
-      const enc = await encryptFilename(fileKey, newName)
-      const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      await updateFile(renameFileId, { name_encrypted: nameEncrypted })
-      void reindexFields(renameFileId, { name: newName })
-      showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })
-      fetchFiles()
-    } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Rename failed',
-        description: err instanceof Error ? err.message : 'Could not rename file.',
-        danger: true,
-      })
-    } finally {
-      setRenameFileId(null)
-    }
-  }
-
-  // ─── File action handler (from FileList context menu + double-click) ──
-
-  async function handleFileAction(action: string, file: DriveFile) {
-    switch (action) {
-      case 'open':
-        if (file.is_folder) handleFolderOpen(file)
-        else openPreview(file)
-        break
-      case 'preview':
-        if (!file.is_folder) openPreview(file)
-        break
-      case 'share':
-        setShareFileId(file.id)
-        break
-      case 'manage-shares':
-      // Legacy action id kept for any callers still passing 'copy-link'
-      // before the context-menu rename — funnels into the same modal.
-      case 'copy-link':
-        setManageSharesFileId(file.id)
-        // Refresh the share list so the modal opens with current data.
-        fetchMyShares()
-        break
-      case 'move':
-        setMoveFileId(file.id)
-        break
-      case 'rename':
-        if (!isUnlocked || !cryptoReady) {
-          showToast({ icon: 'lock', title: 'Vault is locked', description: 'Unlock the vault before renaming files.', danger: true })
-          return
-        }
-        setRenameFileId(file.id)
-        break
-      case 'star':
-      case 'unstar':
-        handleToggleStar(file.id)
-        break
-      case 'versions':
-        if (!file.is_folder) setVersionFileId(file.id)
-        break
-      case 'download':
-        // Folders have no blob of their own: package the subtree as a ZIP via
-        // the same path as selection + bulk Download (handleFileDownload()
-        // returns early for folders, so calling it here did nothing).
-        if (file.is_folder) handleBulkDownload([file.id])
-        else handleFileDownload(file)
-        break
-      case 'trash': {
-        // The root "Backups" folder holds device backups (task 0838) — gate it
-        // behind an explicit warning instead of the silent one-tap trash.
-        if (isBackupsRoot(file)) {
-          setBackupsDeleteRequest({ kind: 'single', file })
-          break
-        }
-        performSingleTrash(file)
-        break
-      }
-    }
-  }
-
-  // ─── Drop to folder handler ────────────────────────
-
-  async function handleDropToFolder(ids: string[], targetFolder: DriveFile, knownFolderName?: string) {
-    // Use the pre-decrypted name from the event if available (covers pinned
-    // folders that may not be in the current `files` list / decryptedNames map).
-    const targetName = knownFolderName || displayName(targetFolder) || 'folder'
-    try {
-      await moveOwnerItems({ ids, destinationId: targetFolder.id, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null })
-      reindexAfterMove(ids, targetFolder.id)
-      if (ids.length === 1) {
-        const movedFile = files.find((f) => f.id === ids[0])
-        const movedName = movedFile ? displayName(movedFile) : 'File'
-        showToast({ icon: 'folder', title: `Moved to ${targetName}`, description: movedName || undefined })
-      } else {
-        showToast({ icon: 'folder', title: `Moved ${ids.length} items to ${targetName}` })
-      }
-      fetchFiles()
-    } catch (err) {
-      showToast({ icon: 'x', title: 'Move failed', description: err instanceof Error ? err.message : 'Could not move files.', danger: true })
-    }
-  }
-
-  // Listen for sidebar pinned-folder drops dispatched from quick-access.tsx.
-  // Sidebar uses dnd-kit for sortable reordering, so it can't share file-list's
-  // native HTML5 dnd state — instead it fires a window event with file ids and
-  // a target folder id, and we look up the folder + run the same move flow.
-  useEffect(() => {
-    function onDrop(e: Event) {
-      const ce = e as CustomEvent<{ folderId: string; fileIds: string[]; folderName?: string }>
-      const detail = ce.detail
-      if (!detail?.folderId || !Array.isArray(detail.fileIds)) return
-      const target = files.find((f) => f.id === detail.folderId)
-      if (target) {
-        handleDropToFolder(detail.fileIds, target, detail.folderName)
-        return
-      }
-      // Pinned folder may not be in the current `files` list — fetch it.
-      getFile(detail.folderId)
-        .then((folder) => handleDropToFolder(detail.fileIds, folder, detail.folderName))
-        .catch(() => {
-          showToast({ icon: 'x', title: 'Move failed', description: 'Could not load target folder.', danger: true })
-        })
-    }
-    window.addEventListener('beebeeb:drop-into-folder', onDrop)
-    return () => window.removeEventListener('beebeeb:drop-into-folder', onDrop)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files])
-
-  // ─── Bulk action handlers ────────────────────────────
-
-  async function handleBulkTrash(ids: string[]) {
-    // If the selection includes the Backups root, gate the whole batch behind
-    // the warning (task 0838). Resolve immediately — the dialog drives the rest.
-    const backupsRoot = files.find((f) => ids.includes(f.id) && isBackupsRoot(f))
-    if (backupsRoot) {
-      setBackupsDeleteRequest({ kind: 'bulk', ids })
-      return
-    }
-    return performBulkTrash(ids)
-  }
-
-  async function performBulkTrash(ids: string[]) {
-    const count = ids.length
-    setTrashingIds(new Set(ids))
-    return new Promise<void>((resolve) => {
-      setTimeout(async () => {
-        try {
-          await bulkTrashFiles(ids)
-          for (const id of ids) unindexFile(id)
-          // Drop any trashed folders from Quick Access (no-op for unpinned ids).
-          unpinFolders(ids)
-          showToast({ icon: 'trash', title: 'Moved to trash', description: `${count} file${count !== 1 ? 's' : ''} moved to trash` })
-          fetchFiles()
-        } catch (err) {
-          showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
-        } finally {
-          setTrashingIds(new Set())
-          resolve()
-        }
-      }, 200)
-    })
-  }
-
-  async function handleBulkMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy') {
-    const ids = bulkMoveIds
-    const count = ids.length
-    try {
-      await moveOwnerItems({ ids, destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null })
-      reindexAfterMove(ids, destinationId)
-      showToast({ icon: 'folder', title: 'Files moved', description: `${count} file${count !== 1 ? 's' : ''} moved successfully.` })
-      fetchFiles()
-    } catch (err) {
-      showToast({ icon: 'x', title: 'Move failed', description: err instanceof Error ? err.message : 'Could not move files.', danger: true })
-    } finally {
-      setBulkMoveOpen(false)
-      setBulkMoveIds([])
-    }
-  }
-
-  function handleBulkShare(ids: string[]) {
-    if (ids.length === 1) {
-      setShareFileId(ids[0])
-      return
-    }
-    // Bundle share (task 0417): N>1 files → ONE anonymous link over the ordered
-    // set. Folders cannot be bundle items (a bundle is a flat set of files), so
-    // reject a selection containing any folder before opening the dialog.
-    const selected = files.filter((f) => ids.includes(f.id))
-    if (selected.some((f) => f.is_folder)) {
-      showToast({ icon: 'share', title: 'Folders can’t be bundled', description: 'A multi-file share link covers files only. Deselect folders and try again.' })
-      return
-    }
-    if (selected.length < 2) {
-      showToast({ icon: 'share', title: 'Nothing to share', description: 'Select at least one file to share.' })
-      return
-    }
-    setBundleFileIds(ids)
-  }
-
-  async function handleBulkDownload(ids: string[]) {
-    const selectedItems = files.filter((f) => ids.includes(f.id))
-    if (selectedItems.length === 0) {
-      showToast({ icon: 'download', title: 'Nothing to download', description: 'Select at least one file to download.' })
-      return
-    }
-
-    // Single non-folder file → regular download (no zip overhead)
-    if (selectedItems.length === 1 && !selectedItems[0].is_folder) {
-      await handleFileDownload(selectedItems[0])
-      return
-    }
-
-    // Check size warning before starting
-    const nonFolderItems = selectedItems.filter(f => !f.is_folder)
-    const estimatedBytes = nonFolderItems.reduce((s, f) => s + (f.size_bytes ?? 0), 0)
-    if (estimatedBytes > ZIP_SIZE_WARNING_BYTES) {
-      showToast({
-        icon: 'cloud',
-        title: 'Large download',
-        description: 'Total size exceeds 1 GB — this may take a while.',
-      })
-    }
-
-    // Multi-file or folder → ZIP
-    const total = selectedItems.length
-    showToast({ icon: 'download', title: `Creating ZIP…`, description: `Downloading ${total} item${total !== 1 ? 's' : ''}` })
-    setBulkZipProgress({ done: 0, total })
-
-    try {
-      const { errorCount } = await downloadAsZip(
-        selectedItems,
-        getFileKeyForFile,
-        {
-          onProgress: (done, tot) => setBulkZipProgress({ done, total: tot }),
-          zipFilename: `beebeeb-files-${new Date().toISOString().slice(0, 10)}.zip`,
-        },
-      )
-      if (errorCount > 0) {
-        showToast({
-          icon: 'download',
-          title: 'ZIP downloaded with errors',
-          description: `${errorCount} file${errorCount !== 1 ? 's' : ''} failed — see _errors.txt inside the zip.`,
-          danger: true,
-        })
-      } else {
-        showToast({ icon: 'download', title: 'ZIP downloaded', description: `${total} item${total !== 1 ? 's' : ''} packaged successfully.` })
-      }
-    } catch (err) {
-      showToast({
-        icon: 'download',
-        title: 'ZIP failed',
-        description: err instanceof Error ? err.message : 'Could not create the archive.',
-        danger: true,
-      })
-    } finally {
-      setBulkZipProgress(null)
-    }
-  }
-
+  const {
+    displayName,
+    handleCreateFolder,
+    handleCreateDocument,
+    handleAcceptFolderSuggestion,
+    handleDismissFolderSuggestion,
+    isBackupsRoot,
+    summarizeBackups,
+    performSingleTrash,
+    handleFolderOpen,
+    handleBreadcrumbNav,
+    handleCancelUpload,
+    buildDetailsMeta,
+    handleToggleStar,
+  } = useDriveCommands({
+    keys,
+    search,
+    driveData,
+    sync,
+    user,
+    showToast,
+    navigate,
+    openPreview,
+    fetchFiles,
+    markTourStepDone,
+    refreshOnboarding,
+    dismissSuggestion,
+    lastResolvedFolderRef,
+    files,
+    setFiles,
+    externalDecryptedNames,
+    breadcrumbs,
+    setBreadcrumbs,
+    currentParentId,
+    selectedFileId,
+    setFileActivity,
+    folderSuggestion,
+    setFolderSuggestion,
+    setSuggestionCreating,
+    setPreviewEditFileId,
+    setTrashingIds,
+    setStarPulseId,
+    setUploads,
+    uploadAbortRef,
+    uploadFilesRef,
+  })
+  const {
+    handleMoveConfirm,
+    handleRenameConfirm,
+    handleFileAction,
+    handleDropToFolder,
+    handleBulkTrash,
+    performBulkTrash,
+    handleBulkMoveConfirm,
+    handleBulkShare,
+    handleBulkDownload,
+  } = useDriveActions({
+    keys,
+    search,
+    driveData,
+    sync,
+    user,
+    showToast,
+    files,
+    moveFileId,
+    renameFileId,
+    bulkMoveIds,
+    setMoveFileId,
+    setRenameFileId,
+    setVersionFileId,
+    setShareFileId,
+    setManageSharesFileId,
+    setBundleFileIds,
+    setBulkMoveIds,
+    setBulkMoveOpen,
+    setBulkZipProgress,
+    setTrashingIds,
+    setBackupsDeleteRequest,
+    displayName,
+    handleFolderOpen,
+    handleToggleStar,
+    performSingleTrash,
+    handleFileDownload,
+    openPreview,
+    isBackupsRoot,
+    fetchFiles,
+    fetchMyShares,
+  })
   // ─── Keyboard shortcuts ─────────────────────────────
 
   useKeyboardShortcuts({
@@ -2716,7 +898,9 @@ export function Drive() {
   const bundleFiles = bundleFileIds
     .map((id) => files.find((f) => f.id === id))
     .filter((f): f is DriveFile => !!f && !f.is_folder)
-    .map((f) => ({ id: f.id, name: displayName(f), size: f.size_bytes }))
+    // The row travels with each entry: a bundle must wrap the key that opens
+    // it, not an id-derived one (2326 review2 P2-2).
+    .map((f) => ({ id: f.id, name: displayName(f), size: f.size_bytes, file: f }))
 
   // Task 1700: while the sync client exists but its tree coverage is not
   // complete, an empty list is not proof of an empty vault — keep the boot
@@ -2731,679 +915,220 @@ export function Drive() {
       <HiddenFolderInput />
       <HiddenResumeInput />
       {/* Top bar */}
-        <div className="px-3 md:px-5 py-2.5 border-b border-line flex items-center gap-2 md:gap-3 flex-wrap md:flex-nowrap">
-          {/* Breadcrumbs */}
-          <Breadcrumb items={breadcrumbs} onNavigate={handleBreadcrumbNav} />
+      {/* Top bar: breadcrumbs, presence, search, new/upload. */}
+      <DriveTopBar
+        breadcrumbs={breadcrumbs}
+        onNavigate={handleBreadcrumbNav}
+        folderId={currentParentId ?? null}
+        sharedFolderIds={new Set(myShares.map((s) => s.file_id))}
+        currentUserId={user?.user_id ?? null}
+        officeAvailable={officeAvailable}
+        frozen={isFrozen}
+        uploadMenuOpen={uploadMenuOpen}
+        onToggleUploadMenu={() => setUploadMenuOpen((v) => !v)}
+        onNewFolder={openNewFolderDialog}
+        onNewDocument={setNewDocType}
+        onUpload={browse}
+        onUploadFolder={browseFolder}
+      />
 
-          {/* Presence avatars — shown when the current folder is shared */}
-          {currentParentId && (
-            <PresenceAvatars
-              folderId={
-                myShares.some((s) => s.file_id === currentParentId)
-                  ? currentParentId
-                  : null
-              }
-              currentUserId={user?.user_id ?? null}
-            />
-          )}
+        <DriveBanners
+          pausedUploads={pausedUploads}
+          onResumeSelect={browseResume}
+          onDismissPaused={() => {
+            for (const u of pausedUploads) removeUploadState(u.fileId)
+            setPausedUploads([])
+          }}
+          loadError={loadError}
+          onRetryLoad={fetchFiles}
+          dedupWarning={dedupWarning}
+          onDedupUpload={() => {
+            if (!dedupWarning) return
+            const { file, hash, otherFiles } = dedupWarning
+            setDedupWarning(null)
+            // Mark as already-acknowledged so it won't re-trigger
+            recordUpload(hash, file.name)
+            // Queue this file directly (skip dedup for it — already confirmed)
+            queueResolvedUploads([{ file }])
+            // Check remaining files through the normal pipeline
+            if (otherFiles.length > 0) void handleFilesSelected(otherFiles)
+          }}
+          onDedupSkip={() => {
+            if (!dedupWarning) return
+            const { otherFiles } = dedupWarning
+            setDedupWarning(null)
+            // Skip this file and continue with remaining
+            if (otherFiles.length > 0) void handleFilesSelected(otherFiles)
+          }}
+          storageUsage={storageUsage}
+          accountState={driveAccountDocument?.account?.state}
+          subscription={drivePlanDetails.subscription}
+          onUpgrade={() => setShowUpgradeNudge(true)}
+          incomingInviteCount={incomingInviteCount}
+          pendingApprovalCount={pendingApprovalCount}
+          pendingSharesDismissed={pendingSharesDismissed}
+          onDismissPendingShares={() => setPendingSharesDismissed(true)}
+          onViewPendingShares={() => navigate('/shared?tab=pending')}
+          folderSuggestion={folderSuggestion}
+          suggestionCreating={suggestionCreating}
+          isRoot={!currentParentId}
+          onAcceptSuggestion={handleAcceptFolderSuggestion}
+          onDismissSuggestion={handleDismissFolderSuggestion}
+        />
 
-          {/* Search — opens the command palette (task 0842). Mobile collapses to
-              an icon button; desktop shows a field-styled button with the ⌘K hint
-              inside on the right (task 0841). ⌘K itself is handled globally. */}
-          <button
-            type="button"
-            aria-label="Search files and folders"
-            aria-keyshortcuts={isMac ? 'Meta+K' : 'Control+K'}
-            onClick={() => window.dispatchEvent(new Event('beebeeb:open-command-palette'))}
-            className="ml-auto md:hidden inline-flex items-center justify-center w-8 h-8 rounded-md border border-line bg-paper text-ink-3 hover:text-ink hover:bg-paper-2 transition-colors"
-          >
-            <Icon name="search" size={14} />
-          </button>
-          <button
-            type="button"
-            aria-label="Search files and folders"
-            aria-keyshortcuts={isMac ? 'Meta+K' : 'Control+K'}
-            onClick={() => window.dispatchEvent(new Event('beebeeb:open-command-palette'))}
-            className="hidden md:flex ml-auto items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1.5 w-[260px] text-left hover:bg-paper-2 hover:border-line-2 transition-colors group"
-          >
-            <Icon name="search" size={13} className="text-ink-4 shrink-0" />
-            <span className="flex-1 text-sm text-ink-4 truncate">Search files and folders...</span>
-            <kbd className="inline-flex items-center self-center gap-0.5 px-1.5 py-[3px] text-[10px] leading-none font-mono text-ink-4 bg-paper-2 border border-line rounded shrink-0">
-              {isMac ? <><span className="text-[11px] leading-none">⌘</span>K</> : 'Ctrl+K'}
-            </kbd>
-          </button>
+        <DriveFileList
+          files={files}
+          loading={loading}
+          syncHydrating={syncHydrating}
+          currentParentId={currentParentId}
+          officeAvailable={officeAvailable}
+          isFrozen={isFrozen}
+          onUpload={browse}
+          onFiles={handleFilesSelected}
+          onFolderFiles={handleFolderFilesSelected}
+          onNewFolder={openNewFolderDialog}
+          onNewDocument={setNewDocType}
+          onNavigateFolder={handleFolderOpen}
+          selectedFileId={selectedFileId}
+          onSelectFile={(file) => file && setSelectedFileId(file.id)}
+          onSelectionChange={setExternalSelectedIds}
+          onDecryptedNamesChange={setExternalDecryptedNames}
+          onFileAction={handleFileAction}
+          onToggleStar={handleToggleStar}
+          onDropToFolder={handleDropToFolder}
+          onBulkTrash={handleBulkTrash}
+          onBulkMove={(ids) => { setBulkMoveIds(ids); setBulkMoveOpen(true) }}
+          onBulkShare={handleBulkShare}
+          onBulkDownload={handleBulkDownload}
+          bulkZipProgress={bulkZipProgress}
+          trashingIds={trashingIds}
+          starPulseId={starPulseId}
+          recentlyUploaded={recentlyUploaded}
+          onShowTrustDetails={(file) => setTrustFileId(file.id)}
+          myShares={myShares}
+          folderViewerCounts={folderViewerCounts}
+          uploads={uploads}
+          onCancelUpload={handleCancelUpload}
+          onRetryUpload={handleRetryUpload}
+          unlocked={isUnlocked}
+          hasCryptoError={!!cryptoError}
+          syncedAgo={syncedAgo}
+        />
 
-          {/* New + Upload */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            <NewMenu
-              officeAvailable={officeAvailable}
-              onNewFolder={openNewFolderDialog}
-              onNewDocument={setNewDocType}
-              disabled={isFrozen}
-              disabledReason="Account is frozen"
-            />
-            <BBButton size="sm" onClick={browse} className="gap-1.5" aria-label="Upload files" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined} data-tour="upload">
-              <Icon name="upload" size={13} /> <span className="hidden sm:inline" aria-hidden="true">Upload</span>
-            </BBButton>
-            <BBButton size="sm" onClick={browseFolder} className="hidden sm:inline-flex gap-1.5" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined}>
-              <Icon name="folder" size={13} /> Upload folder
-            </BBButton>
-            {/* Mobile-only overflow: surfaces "Upload folder" below sm where the
-                dedicated button is hidden. Keeps the toolbar from getting wider. */}
-            <div className="relative sm:hidden">
-              <button
-                type="button"
-                onClick={() => setUploadMenuOpen((v) => !v)}
-                disabled={isFrozen}
-                aria-label="More upload options"
-                aria-haspopup="menu"
-                aria-expanded={uploadMenuOpen}
-                title={isFrozen ? 'Account is frozen' : undefined}
-                className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-line bg-paper text-ink-2 hover:text-ink hover:bg-paper-2 transition-colors disabled:opacity-50"
-              >
-                <Icon name="chevron-down" size={11} />
-              </button>
-              {uploadMenuOpen && (
-                <>
-                  <div className="fixed inset-0 z-30" onClick={() => setUploadMenuOpen(false)} />
-                  <div
-                    role="menu"
-                    className="absolute right-0 top-full mt-1 z-40 bg-paper border border-line-2 rounded-md shadow-2 py-1 min-w-[180px]"
-                  >
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => { setUploadMenuOpen(false); browseFolder() }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-ink-2 hover:bg-paper-2 hover:text-ink transition-colors"
-                    >
-                      <Icon name="folder" size={11} />
-                      Upload folder
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-        </div>
-
-        {/* Resume banner */}
-        {pausedUploads.length > 0 && (
-          <div className="px-5 py-2.5 border-b border-amber/30 bg-amber-bg/40 flex items-center gap-3 text-sm">
-            <Icon name="upload" size={14} className="text-amber-deep shrink-0" />
-            <span className="text-ink">
-              {pausedUploads.length === 1
-                ? `1 upload paused`
-                : `${pausedUploads.length} uploads paused`}
-              {' -- '}
-              <span className="text-ink-3">
-                {pausedUploads.map((u) => u.fileName).join(', ')}
-              </span>
-            </span>
-            <BBButton
-              size="sm"
-              variant="amber"
-              className="ml-auto gap-1.5"
-              onClick={browseResume}
-            >
-              Select file to resume
-            </BBButton>
-            <BBButton
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                for (const u of pausedUploads) {
-                  removeUploadState(u.fileId)
-                }
-                setPausedUploads([])
-              }}
-            >
-              Dismiss
-            </BBButton>
-          </div>
-        )}
-
-        {/* Offline banner now rendered by DriveLayout via useDriveData().isOffline. */}
-
-        {/* Inline failure + retry — the toast alone left the page empty. */}
-        {loadError && (
-          <div className="px-5 py-2 border-b border-red/30 bg-red/5 flex items-center justify-between gap-3 text-[12px] text-red">
-            <div className="flex items-center gap-2 min-w-0">
-              <Icon name="x" size={13} className="shrink-0" />
-              <span className="truncate">Couldn't load files. {loadError}</span>
-            </div>
-            <BBButton size="sm" variant="default" onClick={fetchFiles}>
-              Try again
-            </BBButton>
-          </div>
-        )}
-
-        {/* Duplicate file warning banner */}
-        {dedupWarning && (
-          <div className="px-5 py-2.5 border-b border-amber/40 bg-amber-bg/50 flex items-start gap-3 text-sm">
-            <Icon name="shield" size={14} className="text-amber-deep shrink-0 mt-0.5" />
-            <span className="flex-1 text-ink">
-              <span className="font-medium">
-                &apos;{dedupWarning.file.name}&apos;
-              </span>{' '}
-              looks like a file you already uploaded
-              {dedupWarning.existingName !== dedupWarning.file.name && (
-                <> (as &apos;{dedupWarning.existingName}&apos;)</>
-              )}
-              . Upload anyway?
-            </span>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <BBButton
-                size="sm"
-                variant="amber"
-                onClick={() => {
-                  const { file, hash, otherFiles } = dedupWarning
-                  setDedupWarning(null)
-                  // Mark as already-acknowledged so it won't re-trigger
-                  recordUpload(hash, file.name)
-                  // Queue this file directly (skip dedup for it — already confirmed)
-                  queueResolvedUploads([{ file }])
-                  // Check remaining files through the normal pipeline
-                  if (otherFiles.length > 0) void handleFilesSelected(otherFiles)
-                }}
-              >
-                Upload
-              </BBButton>
-              <BBButton
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  const { otherFiles } = dedupWarning
-                  setDedupWarning(null)
-                  // Skip this file and continue with remaining
-                  if (otherFiles.length > 0) void handleFilesSelected(otherFiles)
-                }}
-              >
-                Skip
-              </BBButton>
-            </div>
-          </div>
-        )}
-
-        {/* Storage-full banner — always visible when quota is hit */}
-        {/* Task 1757: not after a trial that ended over the allowance: the account banner at the top
-            already says what is read-only, until when, and how to trim; "Storage full, upgrade"
-            beside it would be a second, vaguer answer to the same question. */}
-        {storageUsage &&
-          storageUsage.plan_limit_bytes > 0 &&
-          storageUsage.used_bytes >= storageUsage.plan_limit_bytes &&
-          driveAccountDocument?.account?.state !== 'trial_ended' && (
-          <StorageFullBanner
-            currentPlan={storageUsage.plan_name}
-            onUpgrade={() => setShowUpgradeNudge(true)}
-            subscription={drivePlanDetails.subscription}
-          />
-        )}
-
-        {/* Pending shares banner */}
-        {!pendingSharesDismissed && (incomingInviteCount > 0 || pendingApprovalCount > 0) && (
-          <div className="px-5 py-2.5 border-b border-amber/30 border-l-4 border-l-amber bg-amber-bg flex flex-col gap-1.5 text-sm">
-            {incomingInviteCount > 0 && (
-              <div className="flex items-center gap-3">
-                <Icon name="share" size={14} className="text-amber-deep shrink-0" />
-                <span className="text-ink">
-                  You have {incomingInviteCount} file share{incomingInviteCount !== 1 ? 's' : ''} waiting
-                </span>
-                <BBButton
-                  size="sm"
-                  variant="amber"
-                  className="ml-auto gap-1.5"
-                  onClick={() => navigate('/shared?tab=pending')}
-                >
-                  View
-                </BBButton>
-                {pendingApprovalCount === 0 && (
-                  <button
-                    onClick={() => setPendingSharesDismissed(true)} aria-label="Dismiss notification" type="button"
-                    className="p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
-                  >
-                    <Icon name="x" size={14} />
-                  </button>
-                )}
-              </div>
-            )}
-            {pendingApprovalCount > 0 && (
-              <div className="flex items-center gap-3">
-                <Icon name="shield" size={14} className="text-amber-deep shrink-0" />
-                <span className="text-ink">
-                  {pendingApprovalCount} share{pendingApprovalCount !== 1 ? 's' : ''} waiting for your approval
-                </span>
-                <BBButton
-                  size="sm"
-                  variant="amber"
-                  className="ml-auto gap-1.5"
-                  onClick={() => navigate('/shared?tab=pending')}
-                >
-                  Review
-                </BBButton>
-                {incomingInviteCount === 0 && (
-                  <button
-                    onClick={() => setPendingSharesDismissed(true)} aria-label="Dismiss notification" type="button"
-                    className="p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
-                  >
-                    <Icon name="x" size={14} />
-                  </button>
-                )}
-              </div>
-            )}
-            {incomingInviteCount > 0 && pendingApprovalCount > 0 && (
-              <div className="flex justify-end -mt-1">
-                <button
-                  onClick={() => setPendingSharesDismissed(true)} aria-label="Dismiss notification" type="button"
-                  className="p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
-                >
-                  <Icon name="x" size={14} />
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Smart folder suggestion banner */}
-        {folderSuggestion && !currentParentId && (
-          <div className="px-5 py-3 border-b border-amber/30 border-l-4 border-l-amber bg-paper-2 flex items-center gap-3 text-sm">
-            <Icon name="folder" size={14} className="text-amber-deep shrink-0" />
-            <span className="flex-1 text-ink">
-              {folderSuggestion.type === 'images'
-                ? `You have ${folderSuggestion.count} images in your root folder. Create a Photos folder and move them there?`
-                : `You have ${folderSuggestion.count} PDFs in your root folder. Create a Documents folder and move them there?`}
-            </span>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <BBButton
-                size="sm"
-                variant="amber"
-                disabled={suggestionCreating}
-                onClick={handleAcceptFolderSuggestion}
-              >
-                {suggestionCreating
-                  ? 'Creating…'
-                  : folderSuggestion.type === 'images'
-                    ? 'Create Photos folder'
-                    : 'Create Documents folder'}
-              </BBButton>
-              <BBButton
-                size="sm"
-                variant="ghost"
-                disabled={suggestionCreating}
-                onClick={handleDismissFolderSuggestion}
-              >
-                Dismiss
-              </BBButton>
-            </div>
-          </div>
-        )}
-
-        {/* File list with upload zone. flex-1 + flex-col lets UploadZone fill the
-            remaining viewport height so dragging files to the empty area below
-            the list still triggers the drop zone. */}
-        <div className="flex-1 flex flex-col min-h-0">
-        <UploadZone onFiles={handleFilesSelected} onFolderFiles={handleFolderFilesSelected}>
-          <FileList
-            files={files}
-            loading={loading || syncHydrating}
-            parentId={currentParentId ?? null}
-            emptyState={
-              currentParentId ? (
-                <div className="flex flex-col items-center justify-center h-full text-center py-20">
-                  <div
-                    className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-                    style={{ background: 'var(--color-amber-bg)', border: '1.5px dashed var(--color-line-2)' }}
-                  >
-                    <Icon name="folder" size={24} className="text-amber-deep" />
-                  </div>
-                  <h2 className="text-[15px] font-semibold text-ink mb-1.5">This folder is empty</h2>
-                  <p className="text-[13px] text-ink-3 max-w-[340px] leading-relaxed mb-5">
-                    Drag files here or use the buttons below to add content to this folder.
-                  </p>
-                  <div className="flex gap-2">
-                    <BBButton size="md" variant="amber" onClick={browse} className="gap-1.5">
-                      <Icon name="upload" size={13} /> Upload files
-                    </BBButton>
-                    <NewMenu
-                      officeAvailable={officeAvailable}
-                      onNewFolder={openNewFolderDialog}
-                      onNewDocument={setNewDocType}
-                      disabled={isFrozen}
-                      disabledReason="Account is frozen"
-                      variant="ghost"
-                      size="md"
-                      align="center"
-                      testIdPrefix="empty-new-menu"
-                    />
-                  </div>
-                </div>
-              ) : (
-                <EmptyDrive
-                  onUpload={browse}
-                  onCreateFolder={openNewFolderDialog}
-                  // Task 1918 round 4: after an erase the drive is empty and everything is in the
-                  // trash; offer it all back here, where the owner looks first.
-                  notice={<RestoreFromEraseOffer className="mb-6" />}
-                  newMenu={
-                    <NewMenu
-                      officeAvailable={officeAvailable}
-                      onNewFolder={openNewFolderDialog}
-                      onNewDocument={setNewDocType}
-                      disabled={isFrozen}
-                      disabledReason="Account is frozen"
-                      variant="ghost"
-                      size="lg"
-                      align="center"
-                      testIdPrefix="empty-new-menu"
-                    />
-                  }
-                />
-              )
-            }
-            onNavigateFolder={handleFolderOpen}
-            selectedFileId={selectedFileId}
-            onSelectFile={(file) => file && setSelectedFileId(file.id)}
-            onSelectionChange={setExternalSelectedIds}
-            onDecryptedNamesChange={setExternalDecryptedNames}
-            onFileAction={handleFileAction}
-            onToggleStar={handleToggleStar}
-            onDropToFolder={handleDropToFolder}
-            onBulkTrash={handleBulkTrash}
-            onBulkMove={(ids) => { setBulkMoveIds(ids); setBulkMoveOpen(true) }}
-            onBulkShare={handleBulkShare}
-            onBulkDownload={handleBulkDownload}
-            bulkZipProgress={bulkZipProgress}
-            trashingIds={trashingIds}
-            starPulseId={starPulseId}
-            recentlyUploadedIds={recentlyUploaded}
-            onShowTrustDetails={(file) => setTrustFileId(file.id)}
-            myShares={myShares}
-            folderViewerCounts={folderViewerCounts}
-            uploadCards={
-              <UploadCards
-                uploads={uploads}
-                onCancel={handleCancelUpload}
-                onRetry={handleRetryUpload}
-              />
-            }
-          />
-        </UploadZone>
-        </div>
-
-        {/* Status bar */}
-        <div className={FILE_STATUS_BAR}>
-          <span className="font-mono">{files.length} item{files.length !== 1 ? 's' : ''}</span>
-          <span>·</span>
-          <EncryptionStatus unlocked={isUnlocked} error={!!cryptoError} />
-          <span className="ml-auto flex items-center gap-1.5">
-            <Icon name="cloud" size={12} />
-            Synced {syncedAgo}s ago
-          </span>
-        </div>
       {/* ─── Overlays ────────────────────────── */}
-      <NewFolderDialog
-        open={folderDialogOpen}
-        onClose={() => setFolderDialogOpen(false)}
-        onCreate={handleCreateFolder}
-      />
-      <NewDocumentDialog
-        type={newDocType}
-        existingNames={files.map((f) => externalDecryptedNames[f.id]).filter((n): n is string => !!n)}
-        // Every sibling name must be known before a name can be checked: the
-        // server cannot catch a clash between encrypted names (PR #117
-        // review). `undefined` = still decrypting; `null` = failed, which
-        // can never resolve, so it does not block.
+      <DriveCreationOverlays
+        folderDialogOpen={folderDialogOpen}
+        onCloseFolderDialog={() => setFolderDialogOpen(false)}
+        onCreateFolder={handleCreateFolder}
+        newDocType={newDocType}
+        existingDocNames={files.map((f) => externalDecryptedNames[f.id]).filter((n): n is string => !!n)}
         namesReady={!loading && files.every((f) => externalDecryptedNames[f.id] !== undefined)}
-        onClose={() => setNewDocType(null)}
-        onCreate={handleCreateDocument}
+        onCloseNewDocument={() => setNewDocType(null)}
+        onCreateDocument={handleCreateDocument}
+        backupsDeleteRequest={backupsDeleteRequest}
+        files={files}
+        isBackupsRoot={isBackupsRoot}
+        summarizeBackups={summarizeBackups}
+        onCancelBackups={() => setBackupsDeleteRequest(null)}
+        onConfirmBackups={(req) => {
+          setBackupsDeleteRequest(null)
+          if (req.kind === 'single') performSingleTrash(req.file)
+          else performBulkTrash(req.ids)
+        }}
+        pendingConflict={pendingConflict}
+        onConflictReplace={handleConflictReplace}
+        onConflictKeepBoth={handleConflictKeepBoth}
+        onConflictCancel={handleConflictCancel}
       />
 
-      {/* Extra guard before trashing the device-backup root (task 0838) */}
-      {backupsDeleteRequest && (() => {
-        const backupsId =
-          backupsDeleteRequest.kind === 'single'
-            ? backupsDeleteRequest.file.id
-            : files.find((f) => backupsDeleteRequest.ids.includes(f.id) && isBackupsRoot(f))?.id ?? null
-        const summary = backupsId ? summarizeBackups(backupsId) : { deviceCount: 0, itemCount: 0 }
-        return (
-          <DeleteBackupsDialog
-            open
-            deviceCount={summary.deviceCount}
-            itemCount={summary.itemCount}
-            onCancel={() => setBackupsDeleteRequest(null)}
-            onConfirm={() => {
-              const req = backupsDeleteRequest
-              setBackupsDeleteRequest(null)
-              if (req.kind === 'single') performSingleTrash(req.file)
-              else performBulkTrash(req.ids)
-            }}
-          />
-        )
-      })()}
-
-      {/* Duplicate-file conflict dialog — shown before uploading when names collide */}
-      <DuplicateFileDialog
-        open={pendingConflict !== null}
-        conflicts={pendingConflict?.conflicts ?? []}
-        onReplace={handleConflictReplace}
-        onKeepBoth={handleConflictKeepBoth}
-        onCancel={handleConflictCancel}
-      />
-
-      {/* Upload progress — inline cards inside the file list (spec 024 §4).
-          The floating UploadProgress panel is replaced by UploadCards rendered
-          via the FileList uploadCards prop. Paused-upload summary is still shown
-          in the status bar (see below). */}
-
-      <FileDetailsPanel
-        open={selectedFile !== null}
-        onClose={() => setSelectedFileId(null)}
-        file={selectedFile ? buildDetailsMeta(selectedFile) : null}
-        activity={fileActivity}
-        onDownload={() => {
-          if (!selectedFile) return
-          if (selectedFile.is_folder) handleBulkDownload([selectedFile.id])
-          else handleFileDownload(selectedFile)
+      <DriveFileOverlays
+        selectedFile={selectedFile}
+        onCloseDetails={() => setSelectedFileId(null)}
+        buildDetailsMeta={buildDetailsMeta}
+        fileActivity={fileActivity}
+        onDownloadSelected={(file) => {
+          if (file.is_folder) handleBulkDownload([file.id])
+          else void handleFileDownload(file)
         }}
-        onShare={() => {
-          if (selectedFile) {
-            setShareFileId(selectedFile.id)
-            setSelectedFileId(null)
-          }
+        onShareSelected={(file) => {
+          setShareFileId(file.id)
+          setSelectedFileId(null)
         }}
-        onStar={() => selectedFile && handleToggleStar(selectedFile.id)}
-        isStarred={selectedFile?.is_starred ?? false}
-        onMove={() => {
-          if (selectedFile) {
-            setMoveFileId(selectedFile.id)
-            setSelectedFileId(null)
-          }
+        onStarSelected={(file) => void handleToggleStar(file.id)}
+        onMoveSelected={(file) => {
+          setMoveFileId(file.id)
+          setSelectedFileId(null)
         }}
-        onTrash={() => {
-          if (selectedFile) {
-            handleFileAction('trash', selectedFile)
-            setSelectedFileId(null)
-          }
+        onTrashSelected={(file) => {
+          handleFileAction('trash', file)
+          setSelectedFileId(null)
         }}
-        onVersionHistory={() => {
-          if (selectedFile && !selectedFile.is_folder) {
-            setVersionFileId(selectedFile.id)
-            setSelectedFileId(null)
-          }
+        onVersionHistorySelected={(file) => {
+          if (file.is_folder) return
+          setVersionFileId(file.id)
+          setSelectedFileId(null)
         }}
-        onPreview={() => {
-          if (selectedFile && !selectedFile.is_folder) {
-            openPreview(selectedFile)
-            setSelectedFileId(null)
-          }
+        onPreviewSelected={(file) => {
+          if (file.is_folder) return
+          openPreview(file)
+          setSelectedFileId(null)
         }}
-        onNoteUpdated={(fid, enc) => {
+        onNoteUpdated={(fileId, encrypted) => {
           setFiles((prev) =>
-            prev.map((f) => (f.id === fid ? { ...f, note_encrypted: enc } : f)),
+            prev.map((f) => (f.id === fileId ? { ...f, note_encrypted: encrypted } : f)),
           )
         }}
+        previewFile={previewFile}
+        externalDecryptedNames={externalDecryptedNames}
+        previewEditFileId={previewEditFileId}
+        onClosePreview={() => {
+          setPreviewEditFileId(null)
+          closePreview()
+        }}
+        files={files}
+        onOpenPreview={openPreview}
+        onDeletePreview={performSingleTrash}
+        trustFileId={trustFileId}
+        onCloseTrust={() => setTrustFileId(null)}
+        displayName={displayName}
+        shareFileId={shareFileId}
+        shareFile={shareFile}
+        onCloseShare={() => setShareFileId(null)}
+        onShareCreated={() => {
+          // Advance onboarding context (first_share_done might now be true)
+          void refreshOnboarding()
+          // Refresh share indicators on file rows.
+          void fetchMyShares()
+        }}
+        bundleFiles={bundleFiles}
+        onCloseBundle={() => setBundleFileIds([])}
+        manageSharesFileId={manageSharesFileId}
+        onCloseManageShares={() => setManageSharesFileId(null)}
+        myShares={myShares}
+        currentParentId={currentParentId ?? null}
+        onCreateNewShare={(file) => setShareFileId(file.id)}
+        onSharesRevoked={() => { void fetchMyShares() }}
+        moveFileId={moveFileId}
+        moveFile={moveFile}
+        onCloseMove={() => setMoveFileId(null)}
+        onMoveConfirm={handleMoveConfirm}
+        bulkMoveOpen={bulkMoveOpen}
+        bulkMoveIds={bulkMoveIds}
+        onCloseBulkMove={() => { setBulkMoveOpen(false); setBulkMoveIds([]) }}
+        onBulkMoveConfirm={handleBulkMoveConfirm}
+        renameFileId={renameFileId}
+        renameFile={renameFile}
+        onCloseRename={() => setRenameFileId(null)}
+        onRenameConfirm={handleRenameConfirm}
+        renameSiblingNames={renameSiblingNames}
+        versionFileId={versionFileId}
+        onCloseVersionHistory={() => setVersionFileId(null)}
+        onVersionRestored={fetchFiles}
       />
 
-      {/* Full-screen file preview overlay */}
-      {previewFile && (() => {
-        const previewIdx = files.findIndex((f) => f.id === previewFile.id)
-        const hasPrev = previewIdx > 0
-        const hasNext = previewIdx < files.length - 1
-        return (
-          <FilePreview
-            file={previewFile}
-            decryptedName={externalDecryptedNames[previewFile.id] ?? undefined}
-            onClose={() => {
-              setPreviewEditFileId(null)
-              closePreview()
-            }}
-            startInEditMode={previewEditFileId === previewFile.id}
-            folderId={currentParentId ?? undefined}
-            onDelete={(f) => performSingleTrash(f)}
-            hasPrev={hasPrev}
-            hasNext={hasNext}
-            onPrev={hasPrev ? () => openPreview(files[previewIdx - 1]) : undefined}
-            onNext={hasNext ? () => openPreview(files[previewIdx + 1]) : undefined}
-          />
-        )
-      })()}
-
-      <TrustDetailsPanel
-        open={trustFileId !== null}
-        onClose={() => setTrustFileId(null)}
-        file={(() => {
-          const f = files.find((x) => x.id === trustFileId)
-          if (!f) return null
-          const trust: TrustFile = {
-            id: f.id,
-            name: displayName(f),
-            sizeBytes: f.size_bytes,
-            createdAt: f.created_at,
-            cipher: 'AES-256-GCM',
-            region: 'Europe',
-            country: fileStorageCountry(f) ?? undefined,
-          }
-          return trust
-        })()}
-      />
-
-      {shareFile && (
-        <ShareDialog
-          open={shareFileId !== null}
-          onClose={() => setShareFileId(null)}
-          fileId={shareFile.id}
-          fileName={displayName(shareFile)}
-          fileSize={shareFile.size_bytes}
-          isFolder={shareFile.is_folder}
-          onShareCreated={() => {
-            // Advance onboarding context (first_share_done might now be true)
-            void refreshOnboarding()
-            // Refresh share indicators on file rows.
-            void fetchMyShares()
-          }}
-        />
-      )}
-
-      {/* Bundle share dialog (task 0417): ONE link over the selected file set. */}
-      {bundleFiles.length > 1 && (
-        <ShareDialog
-          open={true}
-          onClose={() => setBundleFileIds([])}
-          fileId={bundleFiles[0].id}
-          fileName={bundleFiles[0].name}
-          fileSize={bundleFiles[0].size}
-          bundleFiles={bundleFiles}
-          onShareCreated={() => {
-            void refreshOnboarding()
-            void fetchMyShares()
-          }}
-        />
-      )}
-
-      {manageSharesFileId && (() => {
-        const file = files.find((f) => f.id === manageSharesFileId)
-        if (!file) return null
-        return (
-          <ShareInfoModal
-            isOpen={true}
-            onClose={() => setManageSharesFileId(null)}
-            fileId={file.id}
-            fileName={displayName(file)}
-            myShares={myShares}
-            onCreateNew={() => setShareFileId(file.id)}
-            onRevoked={() => { void fetchMyShares() }}
-          />
-        )
-      })()}
-
-      {moveFile && (
-        <MoveModal
-          open={moveFileId !== null}
-          onClose={() => setMoveFileId(null)}
-          items={[{
-            id: moveFile.id,
-            name: displayName(moveFile),
-            isFolder: moveFile.is_folder,
-          }]}
-          mode="move"
-          onConfirm={handleMoveConfirm}
-        />
-      )}
-
-      {bulkMoveOpen && bulkMoveIds.length > 0 && (
-        <MoveModal
-          open={bulkMoveOpen}
-          onClose={() => { setBulkMoveOpen(false); setBulkMoveIds([]) }}
-          items={files
-            .filter((f) => bulkMoveIds.includes(f.id))
-            .map((f) => ({
-              id: f.id,
-              name: displayName(f),
-              isFolder: f.is_folder,
-            }))}
-          mode="move"
-          onConfirm={handleBulkMoveConfirm}
-        />
-      )}
-
-      <RenameDialog
-        open={renameFileId !== null}
-        onClose={() => setRenameFileId(null)}
-        currentName={renameFile ? displayName(renameFile) : ''}
-        onRename={handleRenameConfirm}
-        existingNames={renameSiblingNames}
-      />
-
-      {versionFileId && (() => {
-        const f = files.find((x) => x.id === versionFileId)
-        return (
-          <VersionHistory
-            open={true}
-            onClose={() => setVersionFileId(null)}
-            fileId={versionFileId}
-            fileName={f ? displayName(f) : ''}
-            nameEncrypted={f?.name_encrypted ?? ''}
-            mimeType={f?.mime_type ?? undefined}
-            onVersionRestored={fetchFiles}
-          />
-        )
-      })()}
-
-      <WelcomeTour
-        open={tourOpen}
-        // Task 1526: without this the tour's "Upload a file" step had no
-        // handler (the step has no href) and the button did nothing.
-        onUpload={browse}
-        completedSteps={tourCompletedForDisplay}
-        // Task 1527: used only by the 'share'/'device' steps now (no cheap
-        // real-state signal exists for either) to hide the board while the
-        // user acts on the destination page — never sets seen:true, so it
-        // reappears on the next drive mount. The 'upload' step is marked
-        // done from queueResolvedUploads instead; the 'security' step is
-        // derived live from user.totp_enabled (tourCompletedForDisplay,
-        // above) and never reaches here.
-        onCompleteStep={(id) => markTourStepDone(id, { hideBoard: true })}
-        onClose={() => {
+      <DriveGuideOverlays
+        tourOpen={tourOpen}
+        onCloseTour={() => {
           setTourOpen(false)
           // Skip for now / Close is one of the two places allowed to set
           // seen:true (task 1527 fix-round) — update the mirror ref too so
@@ -3415,47 +1140,18 @@ export function Drive() {
             completed: [...tourCompleted],
           }).catch(() => {})
         }}
+        onUpload={browse}
+        tourCompletedForDisplay={tourCompletedForDisplay}
+        markTourStepDone={markTourStepDone}
+        showUpgradeNudge={showUpgradeNudge}
+        storageUsage={storageUsage}
+        subscription={drivePlanDetails.subscription ?? null}
+        onCloseUpgrade={() => setShowUpgradeNudge(false)}
+        previewOpen={previewFile !== null}
+        showShortcuts={showShortcuts}
+        onToggleShortcuts={() => setShowShortcuts((v) => !v)}
+        onCloseShortcuts={() => setShowShortcuts(false)}
       />
-
-      {/* First-run spotlight tour — 3 steps: upload, share, mobile */}
-      <OnboardingTour />
-
-      {/* Upgrade nudge modal — shown at >= 80% quota, once per session */}
-      {showUpgradeNudge && storageUsage && (
-        <UpgradeNudgeModal
-          usedBytes={storageUsage.used_bytes}
-          quotaBytes={storageUsage.plan_limit_bytes}
-          currentPlan={storageUsage.plan_name}
-          subscription={drivePlanDetails.subscription}
-          onClose={() => setShowUpgradeNudge(false)}
-        />
-      )}
-
-      {/* Keyboard shortcuts help button — bottom-right FAB.
-          Hidden while a file preview is open: it's `position: fixed`
-          (viewport-relative, z-40) so it floats ABOVE the preview overlay
-          (z-30) regardless of DOM nesting — inside the task-1563 editor,
-          whose status bar spans the full width with no right rail to push
-          it clear, this opaque circle visually painted over the status
-          bar's rightmost text ("saved as version N · HH:MM" truncated to
-          "versi…", task 1563 PR #103 review). The preview is already a
-          full-screen surface with its own back control, so the global
-          shortcuts FAB has nothing useful to float over here anyway. */}
-      {!previewFile && (
-        <button
-          type="button"
-          aria-label="Keyboard shortcuts"
-          title="Keyboard shortcuts (?)"
-          onClick={() => setShowShortcuts((v) => !v)}
-          className="hidden sm:flex fixed right-5 z-40 items-center justify-center w-8 h-8 rounded-full bg-paper border border-line-2 shadow-2 text-ink-3 hover:text-ink hover:border-line hover:shadow-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
-          style={{ bottom: 'max(1.25rem, env(safe-area-inset-bottom, 1.25rem))' }}
-        >
-          <span className="text-sm font-mono font-semibold leading-none select-none">?</span>
-        </button>
-      )}
-
-      {/* Shortcuts cheatsheet — also opens on '?' key via GlobalShortcuts in app.tsx */}
-      <ShortcutsCheatsheet open={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </DriveLayout>
   )
 }

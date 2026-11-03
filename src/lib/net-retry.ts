@@ -1,3 +1,4 @@
+// Retries a network call with backoff only for transport errors.
 import { ApiError } from './api'
 
 const NETWORK_RETRY_MAX_ATTEMPTS = 3

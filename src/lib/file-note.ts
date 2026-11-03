@@ -16,7 +16,9 @@
 //     not yet on this core keep opening it). The pin is read with core's FILE
 //     reader for folders too: never chosen by the server's `is_folder` flag.
 
+import { updateFile } from './api'
 import { decryptNote, encryptNoteFor, readFileMetadata, UnverifiedFileMetadataError } from './crypto'
+import { assertCurrentVersionWritable, type WriteTarget } from './owner-write-guard'
 
 /** The file or folder a note belongs to, as the details panel knows it. */
 export interface NoteOwner {
@@ -56,3 +58,37 @@ export async function sealFileNote(fileKey: Uint8Array, text: string, owner: Not
 /** What the details panel shows when a note cannot be sealed for this item. */
 export const UNVERIFIED_NOTE_OWNER_COPY =
   "Note not saved. This item's name could not be verified, so the note's encryption key cannot be chosen safely."
+
+/**
+ * SF-0002 round 2 (W4): write (or clear, with empty text) the note of an
+ * existing file or folder. The write-time read-only check runs first, so a
+ * row whose current version is upper_repair-sealed gets no note write even
+ * when it was never opened; nothing is PATCHed. Returns the stored value, or
+ * null when the note was cleared.
+ */
+export async function writeFileNote(args: {
+  target: WriteTarget
+  text: string
+  owner: NoteOwner
+  masterKey: Uint8Array | undefined
+  /** The account the resident key belongs to (`useKeys().getResidentUserId()`). */
+  residentUserId: string | null
+  getFileKey: (fileId: string) => Promise<Uint8Array>
+}): Promise<string | null> {
+  const { target } = args
+  await assertCurrentVersionWritable(target, args.masterKey, { viewerId: args.residentUserId })
+  if (args.text.trim() === '') {
+    // Send empty string to clear — JSON null is deserialized as "absent" by
+    // the server's serde (Option<String>), so it would be a no-op.
+    await updateFile(target.id, { note_encrypted: '' })
+    return null
+  }
+  const fileKey = await args.getFileKey(target.id)
+  // Sealed by core under the rule of THIS item's recorded pin, read from its
+  // authenticated metadata (files and folders alike: the server's folder flag
+  // never picks the key); an unreadable pin throws and nothing is written
+  // (task 1943, core 1908 round 5).
+  const stored = await sealFileNote(fileKey, args.text, args.owner)
+  await updateFile(target.id, { note_encrypted: stored })
+  return stored
+}

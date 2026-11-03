@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import * as wasm from 'beebeeb-wasm'
 import fixture from './fixtures/request-upload-v1.json'
-import { serializeEncryptedBlob } from '../src/lib/crypto'
 
 const bytes = (s:string) => new Uint8Array(Buffer.from(s,'base64'))
 const empty = new Uint8Array()
@@ -18,7 +17,17 @@ for (const file of fixture.files) {
     const key = wasm.open_request_upload(privateKey,bytes(file.sender_ephemeral_pubkey),empty,bytes(file.wrapped_content_key))
     expect(Buffer.from(key).toString('base64')).toBe(file.contentKey)
     const metadata = JSON.parse(file.name_encrypted)
-    expect(serializeEncryptedBlob(new Uint8Array(metadata.nonce),new Uint8Array(metadata.ciphertext))).toBe(file.name_encrypted)
+    // The fixture stores the v1 numeric-array envelope. Core's reader opens it,
+    // and core's (frozen) writer re-encodes those bytes to the canonical base64
+    // form web now writes — a different string for the same bytes.
+    const decoded = wasm.decodeMetadataEnvelope(file.name_encrypted) as { nonce: Uint8Array; ciphertext: Uint8Array }
+    expect(Array.from(decoded.nonce)).toEqual(metadata.nonce)
+    expect(Array.from(decoded.ciphertext)).toEqual(metadata.ciphertext)
+    const canonical = wasm.encodeMetadataEnvelope(decoded.nonce, decoded.ciphertext)
+    expect(canonical).toBe(JSON.stringify({ ciphertext: Buffer.from(decoded.ciphertext).toString('base64'), nonce: Buffer.from(decoded.nonce).toString('base64') }))
+    const redecoded = wasm.decodeMetadataEnvelope(canonical) as { nonce: Uint8Array; ciphertext: Uint8Array }
+    expect(Array.from(redecoded.nonce)).toEqual(metadata.nonce)
+    expect(Array.from(redecoded.ciphertext)).toEqual(metadata.ciphertext)
     expect(JSON.parse(wasm.decrypt_metadata(key,new Uint8Array(metadata.nonce),new Uint8Array(metadata.ciphertext)))).toEqual({name:file.name,mime_type:file.mime})
     const frame = bytes(file.frame)
     const plaintext = wasm.decrypt_chunk(key,frame.slice(0,12),frame.slice(12))

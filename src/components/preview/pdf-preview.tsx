@@ -1,3 +1,4 @@
+// The PDF preview.
 import { useEffect, useMemo } from 'react'
 
 interface PdfPreviewProps {

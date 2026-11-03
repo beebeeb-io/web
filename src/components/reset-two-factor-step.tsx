@@ -1,3 +1,4 @@
+// The 2FA-reset step and its sign-in-required variant.
 import { useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { AuthShell } from './auth-shell'

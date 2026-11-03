@@ -1,19 +1,25 @@
+// The move dialog: pick a destination folder for the selected items.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { listFiles } from '../lib/api'
-import { createOwnerFolder } from '../lib/owner-upload-key'
+import { createNamedOwnerFolder, folderCreateFailureToast } from '../lib/new-folder'
+import { useToast } from './toast'
 import { useKeys } from '../lib/key-context'
-import { decryptFileMetadata, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
+import { decryptFileMetadata, encryptFilename } from '../lib/crypto'
+import { isSharedRootById, pickerFolderLabel } from '../lib/display-markers'
 
 interface MoveModalProps {
   open: boolean
   onClose: () => void
   items: { id: string; name: string; isFolder: boolean }[]
   mode?: 'move' | 'copy'
-  onConfirm: (destinationId: string | null, mode: 'move' | 'copy') => void
+  /** `pickerRootId` is the shared root the picker showed for the destination
+   * (or null when it showed none): L15 (b)3's answer, and the only thing that
+   * lets the move publish wraps. */
+  onConfirm: (destinationId: string | null, mode: 'move' | 'copy', pickerRootId: string | null) => void
 }
 
 interface FolderNode {
@@ -31,7 +37,8 @@ export function MoveModal({
   mode: initialMode = 'move',
   onConfirm,
 }: MoveModalProps) {
-  const { getFileKey, getMasterKey, isUnlocked } = useKeys()
+  const { getFileKey, getMasterKey, isUnlocked, cryptoReady } = useKeys()
+  const { showToast } = useToast()
   const [folders, setFolders] = useState<FolderNode[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -127,27 +134,25 @@ export function MoveModal({
     setCreatingFolder(true)
     try {
       const parentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
-      const folderId = crypto.randomUUID()
-      let nameEncrypted = name
-      let nameKey: Uint8Array | undefined
-      if (isUnlocked) {
-        nameKey = await getFileKey(folderId)
-        const enc = await encryptFilename(nameKey, name)
-        nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      }
-      // Inside a shared folder its name-key wrap is published too.
-      const created = await createOwnerFolder({
-        nameEncrypted,
+      // The name is sealed under the key of an id minted for this folder
+      // before anything is sent; with the vault locked nothing is sent
+      // (src/lib/new-folder.ts). Inside a shared folder its name-key wrap is
+      // published too.
+      const created = await createNamedOwnerFolder({
+        name,
         parentId,
-        folderId,
-        nameKey,
-        masterKey: nameKey ? getMasterKey() : undefined,
+        vaultReady: isUnlocked && cryptoReady,
+        getFileKey: (id) => getFileKey(id),
+        getMasterKey,
+        seal: encryptFilename,
       })
       setDecryptedNames((prev) => ({ ...prev, [created.id]: name }))
       setSearch('')
       fetchFolders(parentId)
     } catch (err) {
-      console.error('[MoveModal] Failed to create folder:', err)
+      // Shown, as on every other create path: a failed create (the changed-id
+      // abort included) must not look like nothing happened.
+      showToast(folderCreateFailureToast(err))
       setSearch('')
     } finally {
       setCreatingFolder(false)
@@ -156,7 +161,14 @@ export function MoveModal({
 
   const handleConfirm = (actionMode: 'move' | 'copy') => {
     const destinationId = selectedId ?? breadcrumbs[breadcrumbs.length - 1]?.id ?? null
-    onConfirm(destinationId, actionMode)
+    // L15 (b)3: the shared root this picker actually showed for the chosen
+    // destination — the selected row or any folder on the current breadcrumb
+    // trail. Its absence is an answer too: nothing is sealed under a guess.
+    const pickerRootId =
+      [selectedId, ...breadcrumbs.map((crumb) => crumb.id).reverse()].find(
+        (id): id is string => !!id && isSharedRootById(id),
+      ) ?? null
+    onConfirm(destinationId, actionMode, pickerRootId)
     onClose()
   }
 
@@ -232,13 +244,15 @@ export function MoveModal({
                   <Icon name="chevron-right" size={11} className="text-ink-4" />
                 )}
                 {isLast ? (
-                  <span className="font-semibold text-ink">{crumb.name}</span>
+                  <span className="font-semibold text-ink">
+                    {crumb.id ? pickerFolderLabel(crumb.id, crumb.name) : crumb.name}
+                  </span>
                 ) : (
                   <button
                     onClick={() => handleBreadcrumbNav(i)}
                     className="text-amber-deep font-medium hover:underline cursor-pointer"
                   >
-                    {crumb.name}
+                    {crumb.id ? pickerFolderLabel(crumb.id, crumb.name) : crumb.name}
                   </button>
                 )}
               </span>
@@ -309,7 +323,7 @@ export function MoveModal({
                   <span
                     className={`flex-1 text-[13px] ${isSelected ? 'font-semibold' : ''}`}
                   >
-                    {displayName(folder)}
+                    {pickerFolderLabel(folder.id, displayName(folder))}
                   </span>
                   {isMoved ? (
                     <span className="text-[10.5px] text-ink-4 whitespace-nowrap">

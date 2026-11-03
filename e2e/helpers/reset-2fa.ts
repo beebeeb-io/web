@@ -1,3 +1,4 @@
+// Fixtures and helpers for the 2FA-reset E2E specs (accounts, TOTP, wrong codes).
 import { test, expect, type Browser, type Page } from '@playwright/test'
 import crypto from 'crypto'
 import { signupAndUnlock, uniqueEmail } from './signup'

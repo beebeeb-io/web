@@ -1,3 +1,4 @@
+// The settings page shell: nav, header, and row primitives.
 import { Fragment, type ReactNode, useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Icon } from '@beebeeb/shared'

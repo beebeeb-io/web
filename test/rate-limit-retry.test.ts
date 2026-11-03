@@ -1,5 +1,13 @@
 import { describe, expect, test, beforeEach, beforeAll, afterAll, mock } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
+import { ensureRetryWasm } from '../packages/shared/src/api/retry'
+
+// parseRetryAfterHeader() reads the header through core (beebeeb-wasm). The
+// module-load init can lose the race to the first test on a loaded runner;
+// wait for it so 86400s is parsed as 86400s, not the "no header" fallback.
+beforeAll(async () => {
+  await ensureRetryWasm()
+})
 
 // Mock the token module so request() doesn't touch localStorage.
 // Task 1590: scoped + complete (real exports spread under the overrides,

@@ -1,3 +1,4 @@
+// The create-share dialog: link options, recipients, and permissions.
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'
@@ -14,6 +15,7 @@ import {
   approveInvite,
   revokeShare,
   listAllFiles,
+  type DriveFile,
   type ShareInfo,
   type ShareOptions,
   type CreateBundleShareRequest,
@@ -47,11 +49,17 @@ import { ensureOwnerFolderKey } from '../lib/folder-link-create'
 import { useKeys } from '../lib/key-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { isTypedRefusal } from '../lib/no-card-trial'
+import { contentKeyBytes } from '../lib/request-row'
+import { resolveBundleSelections, type BundleShareFile } from '../lib/bundle-share'
 import { buildFullShareLink } from '../lib/share-full-link'
 import { SHARED_FOLDERS_FLAG } from '../lib/flags'
 import { sharedFoldersEnabledForWrite, useFeatureFlag } from '../lib/use-feature-flag'
 import { FOLDER_NEEDS_UPGRADE } from '../lib/folder-upgrade'
 import { FolderSharePanel } from './folder-share/folder-share-panel'
+import { FolderSnapshotNotes } from './share/folder-snapshot-notes'
+import { assertShareableRow, shareFileKey, FileCannotBeSharedError } from '../lib/share-file-key'
+import { folderSkipReason } from '../lib/share-missing-items'
+import { EXPIRY_OPTIONS, MAX_OPENS_OPTIONS } from '../lib/share-options'
 
 interface ShareDialogProps {
   open: boolean
@@ -61,38 +69,26 @@ interface ShareDialogProps {
   fileSize: number
   isFolder?: boolean
   /**
+   * The listed row. With it, a single-file link or invite wraps the key that
+   * opens THIS row (SF-0002 W8), not the plain derivation. Owner pages pass it.
+   */
+  file?: DriveFile
+  /**
    * Bundle shares (task 0417): the ordered set of files selected for a single
    * "Share with Beebeeb" link. When present with MORE THAN ONE entry, the Link
    * tab mints ONE bundle link covering all of them (an explicit branch in
    * handleGenerate — it does NOT fall through the single-file/folder paths,
    * which would share only one item's key). One file (or absent) → single-file.
-   * Each entry must be a real file (folders are not bundle items).
+   * Each entry must be a real file (folders are not bundle items) and carries
+   * its row so the bundle can resolve the key that opens it, never a derived
+   * one (2326 review2 P2-2: a request row is refused).
    */
-  bundleFiles?: Array<{ id: string; name: string; size: number }>
+  bundleFiles?: BundleShareFile[]
   /** Fires once a share link is successfully created. Used by the first-share onboarding tour. */
   onShareCreated?: (info: { fileId: string; shareUrl: string }) => void
 }
 
 type ShareMode = 'link' | 'invite'
-type ExpiryOption = { label: string; hours: number | null }
-type MaxOpensOption = { label: string; value: number | null }
-
-const EXPIRY_OPTIONS: ExpiryOption[] = [
-  { label: '1 hour', hours: 1 },
-  { label: '24 hours', hours: 24 },
-  { label: '7 days', hours: 168 },
-  { label: '30 days', hours: 720 },
-  { label: 'Never', hours: null },
-]
-
-const MAX_OPENS_OPTIONS: MaxOpensOption[] = [
-  { label: '1', value: 1 },
-  { label: '3', value: 3 },
-  { label: '5', value: 5 },
-  { label: '10', value: 10 },
-  { label: 'Unlimited', value: null },
-]
-
 
 function Dropdown<T extends { label: string }>({
   options,
@@ -220,16 +216,18 @@ function parseRateLimitError(error: unknown): RateLimitInfo | null {
 
 function InviteForm({
   fileId,
+  file,
   isFolder,
   onSuccess,
   onRateLimitFeedback,
 }: {
   fileId: string
+  file?: DriveFile
   isFolder?: boolean
   onSuccess: (email: string) => void
   onRateLimitFeedback: () => void
 }) {
-  const { getMasterKey, getFileKey } = useKeys()
+  const { getMasterKey, getFileKey, getFileKeyForFile } = useKeys()
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -319,13 +317,19 @@ function InviteForm({
           zeroize(folderKey)
         }
       } else {
-        // Single file sharing flow
+        // Single file sharing flow. 2326 review2 P3-3: a request row has no key
+        // a recipient could ever open, so refuse with the L15 copy BEFORE an
+        // invite exists (the key lookup below only runs for a claimed invite,
+        // and its refusal used to be swallowed by the approval catch).
+        assertShareableRow(file)
         const result = await createInvite(fileId, recipientEmail)
 
         if (result.recipient_public_key && result.status === 'claimed') {
           try {
             const masterKey = getMasterKey()
-            const fileKey = await getFileKey(fileId)
+            // SF-0002 W8: the key that opens this row (a repaired row's is not
+            // the plain derivation), so the recipient's copy opens it.
+            const fileKey = await shareFileKey(fileId, { file, getFileKey, getFileKeyForFile })
             const recipientPubKey = fromBase64(result.recipient_public_key)
 
             const { encryptedFileKey, nonce } = await encryptFileKeyForSharing(
@@ -353,13 +357,13 @@ function InviteForm({
       if (rateLimit) {
         setRateLimitInfo(rateLimit)
       } else {
-        setError(userFriendlyError(e))
+        setError(e instanceof FileCannotBeSharedError ? e.message : userFriendlyError(e))
       }
     } finally {
       setLoading(false)
       setProgress(null)
     }
-  }, [email, fileId, isFolder, onSuccess, getMasterKey, getFileKey])
+  }, [email, fileId, file, isFolder, onSuccess, getMasterKey, getFileKey, getFileKeyForFile])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -507,7 +511,7 @@ function InviteSuccess({
 
 // ─── Main dialog ─────────────────────────────────────
 
-function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFolder, bundleFiles, onShareCreated }: ShareDialogProps) {
+function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFolder, file, bundleFiles, onShareCreated }: ShareDialogProps) {
   // getFileKeyForFile (task 2238 review): resolves a row's FileKey whether it is
   // derived from the master key or sealed under a file-request content key.
   const { getFileKey, getFileKeyForFile, getMasterKey, isUnlocked } = useKeys()
@@ -596,13 +600,16 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
       try {
         const scan = await collectFolderBundle(fileId, {
           listChildren: (folderId) => listAllFiles(folderId, { trashed: false }),
+          // L15/2326: a request row has no wrappable key; it is listed as
+          // "can't be shared" and the rest of the folder still shares.
+          skipReason: folderSkipReason,
           decryptName: async (node) => {
             // Legacy plaintext names (iOS before 930c61a) are used verbatim.
             if (!node.name_encrypted.startsWith('{')) return node.name_encrypted
-            // getFileKeyForFile, not getFileKey: a row received through a file
-            // request is sealed under a random content key, so the id-derived
-            // key would fail (or decrypt nothing) for exactly those items.
-            const fileKey = await getFileKeyForFile(node)
+            // getFileKeyForFile, not getFileKey: a row added to a shared folder
+            // or repaired from the iOS convention does not open under the plain
+            // id-derived key.
+            const fileKey = contentKeyBytes(await getFileKeyForFile(node))
             try {
               const [row] = await decryptManyNames([
                 { id: node.id, fileKey, nameEncrypted: node.name_encrypted },
@@ -665,12 +672,19 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
               folderFiles.map(async (f, i) => ({
                 fileId: f.fileId,
                 position: i,
-                fileKey: await getFileKeyForFile(f.file),
+                fileKey: contentKeyBytes(await getFileKeyForFile(f.file)),
               })),
             )
           : null
-        const selections =
-          folderSelections ?? bundleFiles!.map((f, i) => ({ fileId: f.id, position: i }))
+        // 2326 review2 P2-2: a flat multi-select bundle resolves each item's
+        // key through the key context and REFUSES the whole bundle when any
+        // selection is a request row (L15 "can't be shared"). An id-only
+        // selection would fall back to `deriveFileKey` and publish an item
+        // nobody can open.
+        const bundleSelections = folderSelections
+          ? null
+          : await resolveBundleSelections(bundleFiles!, getFileKeyForFile)
+        const selections = folderSelections ?? bundleSelections!
         if (selections.length === 0) {
           setError('Nothing to share yet')
           setLoading(false)
@@ -688,7 +702,7 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
           ;({ items, keyForUrl, ownerWrappedKey } = await prepareBundleShareItems(masterKey, selections))
         } finally {
           // Supplied keys are ours to clear (the helper never zeroizes them).
-          for (const sel of folderSelections ?? []) sel.fileKey.fill(0)
+          for (const sel of selections) sel.fileKey.fill(0)
         }
 
         const buildRequest = async (): Promise<CreateBundleShareRequest> => {
@@ -728,7 +742,9 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
         return
       }
 
-      const fileKey = await getFileKey(fileId)
+      // SF-0002 W8: wrap the key that opens this row (a repaired row's is not
+      // the plain derivation, so a link built on that would be dead).
+      const fileKey = await shareFileKey(fileId, { file, getFileKey, getFileKeyForFile })
 
       // ── Double-encrypted mode (the only mode, task 0538) ─────────────────
       // 1. Generate K_c client-side (never leaves the browser).
@@ -783,11 +799,11 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
         onShareCreated({ fileId, shareUrl: url })
       }
     } catch (e) {
-      setError(userFriendlyError(e))
+      setError(e instanceof FileCannotBeSharedError ? e.message : userFriendlyError(e))
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, isBundle, bundleFiles, folderMode, folderFiles, getFileKey, getFileKeyForFile, getMasterKey, onShareCreated])
+  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, isBundle, bundleFiles, folderMode, folderFiles, file, getFileKey, getFileKeyForFile, getMasterKey, onShareCreated])
 
   const generatePassphrase = useCallback(() => {
     // 8 random alphanumeric characters — easy to type, hard to guess
@@ -1120,25 +1136,8 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
                     {/* Task 2238 — a folder link is a snapshot of the files
                         below it: flat, immutable, capped (bundle spec 0417). */}
                     {folderMode && (
-                      <div
-                        className="border border-line-2 rounded-lg bg-paper-2 px-3.5 py-3 mb-3"
-                        role="status"
-                        data-testid="folder-snapshot-note"
-                      >
-                        <p className="text-[12px] text-ink-2 leading-relaxed">
-                          {folderScanError
-                            ? `Could not read this folder: ${folderScanError}`
-                            : folderScan === null
-                            ? 'Counting the files in this folder…'
-                            : folderScan.files.length === 0
-                            ? 'Nothing to share yet'
-                            : folderScan.overCap
-                            ? `This folder has more than ${FOLDER_BUNDLE_MAX_ITEMS} files. A link covers up to ${FOLDER_BUNDLE_MAX_ITEMS}; select the files you want and share them together.`
-                            : `Shares the ${folderScan.files.length} files in this folder and its subfolders as they are now. Files added later won't appear.`}
-                        </p>
-                      </div>
+                      <FolderSnapshotNotes scan={folderScan} error={folderScanError} />
                     )}
-
                     <BBButton
                       variant="amber"
                       size="lg"
@@ -1154,6 +1153,7 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
                   /* Invite form */
                   <InviteForm
                     fileId={fileId}
+                    file={file}
                     isFolder={isFolder}
                     onSuccess={(email) => setInviteDone(email)}
                     onRateLimitFeedback={() => setFeedbackOpen(true)}

@@ -1,3 +1,4 @@
+// The /two-factor-setup route: enrol TOTP.
 import QRCode from 'qrcode'
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'

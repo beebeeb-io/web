@@ -1,3 +1,4 @@
+// Design-sync preview of Icon for the Claude Design project.
 import { Icon } from '@beebeeb/shared'
 
 const ALL = [

@@ -1,3 +1,4 @@
+// The onboarding frame and its shared error/spinner/footer pieces.
 import type { ReactNode } from 'react'
 import { AuthShell } from '../auth-shell'
 

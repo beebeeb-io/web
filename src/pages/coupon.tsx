@@ -1,3 +1,4 @@
+// The /coupon route: redeem a coupon code.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ApiError, BBButton, Icon } from '@beebeeb/shared'

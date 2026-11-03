@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 1520 signup no pilot key spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

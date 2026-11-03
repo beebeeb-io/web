@@ -56,7 +56,7 @@ const {
   SharedSearchIndex,
   loadSharedIndex,
   pushSharedIndexDelta,
-  rebuildSharedIndexFromListing,
+  assembleVerifiedSharedIndex,
 } = await import('../src/lib/shared-folder-index')
 const { publicIndexTransport, ownerIndexTransport, IndexVersionConflictError } = await import(
   '../src/lib/shared-folder-index-shards'
@@ -131,7 +131,7 @@ describe('loadSharedIndex', () => {
 describe('pushSharedIndexDelta', () => {
   test('a new page is written with if_version 0', async () => {
     const sends: { coord: ShardCoord; ifVersion: number }[] = []
-    const index = new SharedSearchIndex(fakeProxy() as never, 64)
+    const index = new SharedSearchIndex(fakeProxy() as never, 64, [])
     const result = await pushSharedIndexDelta({
       transport: transportWith({
         putShard: async (shard, ifVersion) => {
@@ -158,7 +158,7 @@ describe('pushSharedIndexDelta', () => {
           return { bucket: shard.bucket, page: shard.page, version: 5 }
         },
       }),
-      index: new SharedSearchIndex(fakeProxy() as never, 64),
+      index: new SharedSearchIndex(fakeProxy() as never, 64, []),
       folderKey,
       dirtyBuckets: [2],
     })
@@ -175,7 +175,7 @@ describe('pushSharedIndexDelta', () => {
           throw new IndexVersionConflictError(9)
         },
       }),
-      index: new SharedSearchIndex(fakeProxy() as never, 64),
+      index: new SharedSearchIndex(fakeProxy() as never, 64, []),
       folderKey,
       dirtyBuckets: [5],
     })
@@ -185,13 +185,13 @@ describe('pushSharedIndexDelta', () => {
   })
 })
 
-describe('rebuildSharedIndexFromListing', () => {
+describe('assembleVerifiedSharedIndex', () => {
   test('stops at the bound and reports the overflow', async () => {
     const entries = Array.from({ length: SEARCH_INDEX_MAX_ENTRIES + 1 }, (_, i) => ({
       fileId: `id-${i}`,
       name: `name-${i}`,
     }))
-    const result = await rebuildSharedIndexFromListing({ entries })
+    const result = await assembleVerifiedSharedIndex({ entries })
     expect(result.truncated).toBe(true)
   })
 
@@ -200,7 +200,7 @@ describe('rebuildSharedIndexFromListing', () => {
       fileId: `id-${i}`,
       name: `name-${i}`,
     }))
-    const result = await rebuildSharedIndexFromListing({ entries })
+    const result = await assembleVerifiedSharedIndex({ entries })
     expect(result.truncated).toBe(false)
   })
 })

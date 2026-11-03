@@ -1,3 +1,4 @@
+// Standalone Playwright config for the checkout confirmation resilience 0957 spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 import path from 'path'
 

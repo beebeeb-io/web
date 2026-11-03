@@ -1,11 +1,13 @@
 /**
  * The encrypted upload of "Welcome to Beebeeb.md" (task 1037 split — see
  * `welcome-file.ts` for when it runs). Same pipeline as any drive upload:
- * `encryptedUpload` with the master key; the per-file key is derived in core
- * from the server-assigned file id.
+ * `encryptedUpload` with the master key, under an id this client mints; the
+ * per-file key is derived in core from that id (L13: the upload aborts if the
+ * server answers with any other).
  */
 
 import { encryptedUpload } from './encrypted-upload'
+import { ownedItem } from './owned-item'
 import { deriveFileKey } from './crypto'
 import { getPreference, setPreference } from './api'
 import { WELCOME_FILE_NAME, WELCOME_FILE_PREF, ensureDeferredWelcomeFile, welcomeFileContent } from './welcome-file'
@@ -14,7 +16,9 @@ export async function uploadWelcomeFile(masterKey: Uint8Array): Promise<void> {
   const file = new File([new TextEncoder().encode(welcomeFileContent())], WELCOME_FILE_NAME, {
     type: 'text/markdown',
   })
-  const fileId = crypto.randomUUID()
+  // F9: the create's id is core's; its tag travels with the upload.
+  const newItemId = await ownedItem.mint(masterKey, 'owner')
+  const fileId = newItemId.idText
   const fileKey = await deriveFileKey(masterKey, fileId)
   await encryptedUpload(
     file,
@@ -26,7 +30,7 @@ export async function uploadWelcomeFile(masterKey: Uint8Array): Promise<void> {
     undefined,
     undefined,
     undefined,
-    (serverFileId) => deriveFileKey(masterKey, serverFileId),
+    { newItemId },
   )
 }
 

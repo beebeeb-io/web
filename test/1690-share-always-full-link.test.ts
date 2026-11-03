@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
+import { loadWasm } from './helpers/wasm-crypto-mirror'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -24,6 +25,9 @@ import { fileURLToPath } from 'node:url'
 function read(relPath: string): string {
   return readFileSync(fileURLToPath(new URL(`../${relPath}`, import.meta.url)), 'utf-8')
 }
+
+// The builders are synchronous over core's wasm grammar: load it once.
+beforeAll(loadWasm)
 
 const dialog = read('src/components/share-dialog.tsx')
 // The helper exists only once the split presentation is removed; before that,
@@ -64,11 +68,18 @@ describe.skipIf(helper === null)('share-dialog.tsx copies only full links (1690)
     expect(dialog).not.toMatch(/copyToClipboard\((shareUrl|decryptionKey)\b/)
   })
 
-  test('the #key= fragment lives in the shared builder, 1531 semantics intact', () => {
+  test('the #key= fragment lives in the shared builder, 1531 semantics intact', async () => {
     expect(helper).not.toBeNull()
-    expect(helper!).toContain('#key=${encodeURIComponent(')
-    // The builder never strips or truncates the fragment: it must be the LAST
-    // thing appended to the URL.
-    expect(helper!.trimEnd().endsWith('}')).toBe(true)
+    // W-P3-7 moved the grammar into core (beebeeb_core::share_link, pinned by
+    // test/w-p3-7-share-link.test.ts): this module delegates to it and never
+    // rebuilds the fragment itself.
+    expect(helper!).toContain('coreBuildShareLink(')
+    expect(helper!).not.toContain('#key=${')
+    // The builder never strips or truncates the fragment: it is the LAST thing
+    // in the link, percent-encoded exactly as before.
+    const { buildFullShareLink } = await import('../src/lib/share-full-link')
+    const key = 'the key/+=='
+    const built = buildFullShareLink('https://app.beebeeb.io', 'tok', key)
+    expect(built.endsWith(`#key=${encodeURIComponent(key)}`)).toBe(true)
   })
 })

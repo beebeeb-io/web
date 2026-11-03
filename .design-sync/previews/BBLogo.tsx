@@ -1,3 +1,4 @@
+// Design-sync preview of BBLogo for the Claude Design project.
 import { BBLogo } from '@beebeeb/shared'
 
 export const Sizes = () => (

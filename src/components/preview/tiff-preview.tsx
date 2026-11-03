@@ -1,3 +1,4 @@
+// The TIFF preview with browser-support fallback.
 import { useEffect, useState } from 'react'
 import { decodeTiffToPng } from '../../lib/tiff-decode-worker-client'
 import { ImagePreview } from './image-preview'

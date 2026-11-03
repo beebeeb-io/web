@@ -161,7 +161,7 @@ function fakePorts(overrides: Partial<CreateFolderLinkPorts> = {}) {
     generateShareToken: async () => 'tok_2237b',
     generateLinkId: () => crypto.randomUUID(),
     ...linkCrypto,
-    encryptLabel: async (_key: Uint8Array, label: string) => `enc:${label}`,
+    encryptLabel: async (_masterKey: Uint8Array, _shareId: string, label: string) => `enc:${label}`,
     fromBase64,
     toBase64,
     origin: () => 'https://app.example',

@@ -1,3 +1,4 @@
+// The shared frame around the split auth screens: context panel plus form column.
 import type { ReactNode, Ref } from 'react'
 import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'

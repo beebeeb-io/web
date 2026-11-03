@@ -2,7 +2,7 @@
  * Task 1605 — pure copy helpers for the never-paid-trial cancel/cap rules
  * (server PR #129). Mirrors the existing task-1604 test file's style.
  */
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import {
   isNeverPaidCancelledTrial,
   cancelledCardCopy,
@@ -11,7 +11,13 @@ import {
   trialCapExplainer,
   payNowButtonLabel,
 } from '../src/lib/trial-limits-copy'
-import { formatStorageSI } from '../src/lib/format'
+import { ensureWasm, formatStorageSI } from '../src/lib/format'
+
+// `formatStorageSI` is core's format ladder; the cap sentence is only correct
+// once wasm is loaded. This file initialises it itself so it is green alone.
+beforeAll(async () => {
+  await ensureWasm()
+})
 
 const ACCESS_UNTIL = '2026-10-13T00:00:00Z'
 const DELETION_AT = '2026-10-27T00:00:00Z'

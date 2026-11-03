@@ -1,3 +1,4 @@
+// Design-sync preview of BBChip for the Claude Design project.
 import { BBChip } from '@beebeeb/shared'
 
 export const Variants = () => (

@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 1743 return to app spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

@@ -1,3 +1,4 @@
+// The shared BBInput design-system text input.
 import { type InputHTMLAttributes, type ReactNode, useId } from 'react'
 import { Icon } from './icons'
 import type { IconName } from './icons'

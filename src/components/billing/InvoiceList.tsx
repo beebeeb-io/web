@@ -1,38 +1,14 @@
+// The VAT-compliant invoice list; each row downloads its PDF through the API.
 import { useState, useCallback } from 'react'
 import { BBButton } from '@beebeeb/shared'
-import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { downloadInvoicePdf, type BillingInvoice } from '../../lib/api'
-import { formatDocumentDate } from '../../lib/format'
+import { InvoiceTable, invoiceRow } from './InvoiceTable'
 
 interface InvoiceListProps {
   invoices: BillingInvoice[]
   /** Surface a download failure to the user (toast in the page that hosts this). */
   onError?: (message: string) => void
-}
-
-/** Format integer cents as a EUR amount, e.g. 3995 → "EUR 39.95". */
-function formatCents(cents: number): string {
-  if (!Number.isFinite(cents)) return 'EUR 0.00'
-  return `EUR ${(cents / 100).toFixed(2)}`
-}
-
-/** Human label for a VAT treatment, shown under the invoice amount. */
-function vatTreatmentLabel(treatment: string): string {
-  switch (treatment) {
-    case 'reverse_charge':
-      return 'Reverse charge (0%)'
-    case 'domestic':
-      return 'Domestic VAT'
-    case 'oss_destination':
-      return 'Destination VAT'
-    case 'out_of_scope':
-      return 'Outside EU VAT'
-    case 'micro_threshold_home':
-      return 'Home VAT'
-    default:
-      return treatment
-  }
 }
 
 /**
@@ -110,87 +86,11 @@ export function InvoiceList({ invoices, onError }: InvoiceListProps) {
             <span />
           </div>
 
-          {invoices.map((inv) => {
-            const isPaid = inv.status === 'paid'
-            const isUpcoming = inv.status === 'upcoming' || inv.status === 'open'
-            const statusLabel = inv.status.charAt(0).toUpperCase() + inv.status.slice(1)
-            const downloadButton = (
-              <BBButton
-                size="sm"
-                variant="ghost"
-                onClick={() => void handleDownload(inv)}
-                disabled={downloading === inv.id}
-                aria-label={`Download invoice ${inv.invoice_number}`}
-              >
-                {downloading === inv.id ? (
-                  <svg className="animate-spin h-3 w-3 text-ink-3" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                ) : (
-                  <Icon name="download" size={12} />
-                )}
-              </BBButton>
-            )
-            return (
-              <div
-                key={inv.id}
-                className="border-b border-line last:border-b-0 hover:bg-paper-2/50 transition-colors"
-              >
-                {/* Desktop / tablet: the original fixed-column table row (sm+). */}
-                <div
-                  className="hidden sm:grid gap-4 px-5 py-3 items-center"
-                  style={{ gridTemplateColumns: '1.4fr 1fr 120px 100px 40px' }}
-                >
-                  <span className="font-mono text-xs font-medium break-all">{inv.invoice_number}</span>
-                  <span className="text-[12.5px] text-ink-2">{formatDocumentDate(inv.invoice_date)}</span>
-                  <div className="min-w-0">
-                    <div className="font-mono text-xs font-semibold">
-                      {formatCents(inv.amount_gross_cents)}
-                    </div>
-                    <div className="text-[10.5px] text-ink-4 mt-0.5">
-                      {vatTreatmentLabel(inv.vat_treatment)}
-                    </div>
-                  </div>
-                  <span>
-                    <BBChip variant={isPaid ? 'green' : isUpcoming ? 'amber' : 'default'}>
-                      {statusLabel}
-                    </BBChip>
-                  </span>
-                  <div className="flex justify-end">{downloadButton}</div>
-                </div>
-
-                {/* Mobile: stacked card — no horizontal scroll. Number + amount in
-                    mono, status chip + per-row download stay reachable. */}
-                <div className="sm:hidden px-4 py-3.5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="font-mono text-xs font-medium break-all text-ink">
-                        {inv.invoice_number}
-                      </div>
-                      <div className="text-[12px] text-ink-3 mt-0.5">
-                        {formatDocumentDate(inv.invoice_date)}
-                      </div>
-                    </div>
-                    <div className="shrink-0 -mr-1.5 -mt-1">{downloadButton}</div>
-                  </div>
-                  <div className="flex items-end justify-between gap-3 mt-2.5">
-                    <div className="min-w-0">
-                      <div className="font-mono text-sm font-semibold text-ink">
-                        {formatCents(inv.amount_gross_cents)}
-                      </div>
-                      <div className="text-[10.5px] text-ink-4 mt-0.5">
-                        {vatTreatmentLabel(inv.vat_treatment)}
-                      </div>
-                    </div>
-                    <BBChip variant={isPaid ? 'green' : isUpcoming ? 'amber' : 'default'}>
-                      {statusLabel}
-                    </BBChip>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
+          <InvoiceTable
+            rows={invoices.map(invoiceRow)}
+            downloadingId={downloading}
+            onDownload={(inv) => void handleDownload(inv)}
+          />
         </div>
       )}
     </div>

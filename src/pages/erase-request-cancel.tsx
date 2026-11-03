@@ -1,3 +1,4 @@
+// The erase-request cancel route and its confirmation view.
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'

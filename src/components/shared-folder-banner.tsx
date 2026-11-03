@@ -1,3 +1,4 @@
+// The banner shown inside a shared folder with its member context.
 import { Icon } from '@beebeeb/shared'
 
 interface SharedFolderBannerProps {

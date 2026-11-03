@@ -1,3 +1,4 @@
+// The empty state shown when the recovery phrase is unavailable.
 import type { ReactNode } from 'react'
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'

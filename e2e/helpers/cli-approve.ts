@@ -1,3 +1,4 @@
+// Approves a CLI device from the browser page in E2E specs.
 import { expect, type Page } from '@playwright/test'
 
 /**

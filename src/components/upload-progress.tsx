@@ -1,3 +1,4 @@
+// The upload-progress list with per-item status and cancel.
 import { Icon } from '@beebeeb/shared'
 import { formatBytes } from '../lib/format'
 

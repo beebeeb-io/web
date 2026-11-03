@@ -1,3 +1,4 @@
+// The plan comparison table used by pricing and upgrade.
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { MARKETED_PLAN_SLUGS, PLAN_LABELS, PLAN_PRICE_LABELS, PLAN_META, PLAN_RANK, STORAGE_ADDON_EUR_PER_TB } from '../lib/plan-constants'

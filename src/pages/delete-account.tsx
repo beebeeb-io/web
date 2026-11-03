@@ -1,3 +1,4 @@
+// The /delete-account route: erase-request confirmation and status.
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Icon } from '@beebeeb/shared'

@@ -1,3 +1,5 @@
+// The Vite build config: wasm preload/emission, aliases, and the dev proxy.
+import { storageSource } from './src/lib/direct/allowlist'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -41,7 +43,8 @@ function devCspPlugin(apiUrl: string): Plugin {
   // Allow the configured dev/e2e API origin (default :3001, but :3003 etc. for
   // an isolated e2e backend) plus its websocket scheme and the Vite HMR socket.
   const wsApi = apiUrl.replace(/^http/, 'ws')
-  const allow = `${apiUrl} ${wsApi} ws://localhost:5173 http://localhost:5173`
+  const pair = process.env.VITE_DEV_STORAGE_PAIR ? storageSource(JSON.parse(process.env.VITE_DEV_STORAGE_PAIR), true) : ''
+  const allow = `${apiUrl} ${wsApi} ws://localhost:5173 http://localhost:5173 ${pair}`
   return {
     name: 'beebeeb-dev-csp',
     apply: 'serve',

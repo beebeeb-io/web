@@ -1,3 +1,4 @@
+// The route error boundary that reports and renders a recovery screen.
 import { Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { reportError } from '@beebeeb/shared'

@@ -1,3 +1,4 @@
+// The empty state for the shared view.
 import { EmptyState } from './empty-state'
 import type { IconName } from '@beebeeb/shared'
 

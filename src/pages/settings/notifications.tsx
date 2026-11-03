@@ -1,3 +1,4 @@
+// The settings notifications page.
 import { useState, useEffect, useCallback } from 'react'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { BBToggle, Icon } from '@beebeeb/shared'

@@ -1,3 +1,4 @@
+// Theme mode (light/dark/system) and its provider.
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 

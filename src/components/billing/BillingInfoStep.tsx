@@ -1,3 +1,4 @@
+// The billing-details step of checkout: card holder and address fields.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'

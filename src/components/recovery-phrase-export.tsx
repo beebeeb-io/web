@@ -1,3 +1,4 @@
+// The recovery-phrase export step: reveal, confirm, and download.
 import { useState } from 'react'
 import { BBButton, Icon } from '@beebeeb/shared'
 import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'

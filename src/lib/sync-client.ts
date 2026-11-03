@@ -4,35 +4,24 @@
 // protocol. The server is the source of truth; clients send ops, the
 // server assigns seq_ids and broadcasts via SSE.
 
+import { SyncQueue } from './sync/queue'
+import type { PendingOp } from './sync/queue'
 import {
-  getApiUrl,
-  getSnapshot,
-  getSyncOps,
-  getSyncOpsSinceUserSeq,
-  submitSyncOps,
-  getStreamToken,
-} from './api'
-import type { SyncOp, SyncNode, SyncSnapshot, UserSeqSyncOp, UserSeqSyncSnapshot } from './api'
+  COVERAGE_RESYNC_BACKOFF,
+  GAP_FILL_BACKOFF,
+  RECONNECT_BACKOFF,
+  SyncBackoff,
+} from './sync/backoff'
+import { SNAPSHOT_TIMEOUT_MS, SYNC_REQUEST_TIMEOUT_MS, SyncTransport } from './sync/transport'
+import { classifyStreamFrame, opOrderKey, userSeqOf } from './sync/protocol'
+import type { StreamFrame } from './sync/protocol'
+import { getDeviceId, loadLastSeq, saveLastSeq, uuid } from './sync/cursor-store'
+import { SYNC_OPS_PAGE_CAP, coverageComplete } from './sync/coverage'
+import { locateOrphanedPending } from './sync/orphans'
+import { StarOrder } from './sync/star-order'
+import { applyOpToTree } from './sync/tree-ops'
+import type { SyncNode, SyncOp, SyncSnapshot, UserSeqSyncOp, UserSeqSyncSnapshot } from './api'
 
-const LAST_SEQ_KEY = 'bb_sync_last_seq'
-const PENDING_OPS_KEY = 'bb_sync_pending_ops'
-const DEVICE_ID_KEY = 'bb_sync_device_id'
-
-const RECONNECT_DELAY_MS = 1500
-const RECONNECT_MAX_DELAY_MS = 30_000
-
-/**
- * Server op-log page cap (`GET /sync/ops`, server sync.rs). A response this
- * long means the backlog was truncated — only a snapshot merge can restore
- * full coverage (task 1700).
- */
-const SYNC_OPS_PAGE_CAP = 1000
-/** Debounce before a detected seq gap is filled from the op log. */
-const GAP_FILL_DEBOUNCE_MS = 30
-/** A gap-fill request that never answers must not stall coverage (task 1700). */
-const GAP_FILL_TIMEOUT_MS = 10_000
-/** Debounce for the coverage resync a missing-node op schedules. */
-const MISSING_NODE_RESYNC_DEBOUNCE_MS = 100
 /** Upper bound on out-of-order ops held while a gap is filled. */
 const REORDER_BUFFER_MAX = 500
 /**
@@ -45,38 +34,7 @@ const USER_SEQ_CATCHUP_MAX_PAGES = 20
  * fetch is time-bounded, so this only guards against pathological storms.
  */
 const DEFERRED_FRAMES_MAX = 10_000
-/** Bound on a full-snapshot fetch: a hung request must never stall coverage. */
-const SNAPSHOT_TIMEOUT_MS = 10_000
-/**
- * Task 1973 r2: most `GET /sync/ops?since=` pages one orphan lookup reads
- * (server page = 1,000 ops). Past that the op is resubmitted, as before.
- */
-const ORPHAN_SCAN_MAX_PAGES = 5
-
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
-
-export interface PendingOp {
-  client_op_id: string
-  op_type: string
-  payload: Record<string, unknown>
-  /** Snapshot of the affected node before the op was applied (for rollback). */
-  rollback?: SyncNode | null
-  /** Logical id the op affects, used to look up the node. */
-  target_id?: string
-  /**
-   * Task 1973 r2: where the server recorded this op, from POST `applied[]` or
-   * found in the op log. Persisted: a snapshot (also the first one after a
-   * reload) that covers this position already holds the op, so the entry is
-   * confirmed then instead of being re-applied over the snapshot and resubmitted.
-   */
-  applied_seq_id?: number
-  applied_user_seq?: number | null
-  /**
-   * Task 1973 r2: the global cursor when the op was submitted. The server
-   * numbers the op above it, so an orphan lookup in the op log starts here.
-   */
-  submitted_after_seq?: number
-}
 
 interface SyncEvent {
   /** `tree` = the tree changed outside the sequenced op log (e.g. a star). */
@@ -90,85 +48,6 @@ interface SyncEvent {
 
 type Listener = (event: SyncEvent) => void
 
-function uuid(): string {
-  const c = globalThis.crypto as Crypto & { randomUUID?: () => string }
-  if (typeof c.randomUUID === 'function') {
-    return c.randomUUID()
-  }
-  // Fallback: random bytes shaped into a v4 UUID.
-  const bytes = c.getRandomValues(new Uint8Array(16))
-  bytes[6] = (bytes[6] & 0x0f) | 0x40
-  bytes[8] = (bytes[8] & 0x3f) | 0x80
-  const hex = Array.from(bytes, (b: number) => b.toString(16).padStart(2, '0')).join('')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
-
-function getDeviceId(): string {
-  let id = localStorage.getItem(DEVICE_ID_KEY)
-  if (!id) {
-    id = uuid()
-    localStorage.setItem(DEVICE_ID_KEY, id)
-  }
-  return id
-}
-
-function loadLastSeq(): number {
-  const raw = localStorage.getItem(LAST_SEQ_KEY)
-  if (!raw) return 0
-  const n = parseInt(raw, 10)
-  return Number.isFinite(n) && n >= 0 ? n : 0
-}
-
-function saveLastSeq(seq: number): void {
-  localStorage.setItem(LAST_SEQ_KEY, String(seq))
-}
-
-/**
- * Task 1973: the op's number in its user's own gap-free sequence, or null when
- * the server did not number it (an op recorded before server#233, or a frame
- * from an older node during a rolling deploy).
- */
-function userSeqOf(op: { user_seq?: number | null }): number | null {
-  const n = op.user_seq
-  return typeof n === 'number' && Number.isFinite(n) ? n : null
-}
-
-/**
- * Task 1973 r3: true when the server recorded this pending op, i.e. it has a
- * finite `applied_seq_id`. ONE predicate decides both sides of the invariant:
- * `flushPending` resubmits exactly the entries without a recorded position, and
- * `pendingCoveredBy` can clear every entry with one (the `seq_id` comparison
- * needs nothing else, and every snapshot carries `seq_id`).
- */
-export function hasRecordedPosition(p: Pick<PendingOp, 'applied_seq_id'>): boolean {
-  return typeof p.applied_seq_id === 'number' && Number.isFinite(p.applied_seq_id)
-}
-
-/**
- * Task 1973 r2/r3: true when a snapshot already holds a pending op the server
- * recorded. Compared on `user_seq` when BOTH the snapshot and the entry carry
- * one (a user's ops commit in user_seq order). Otherwise on the global
- * `seq_id`, which every snapshot carries: the legacy coverage rule, and the
- * fallback for an entry whose POST `applied[]` came from a node that predates
- * server#233 (no `user_seq`) while the client is in user_seq mode (Codex P2 on
- * web#173 at 04ad1c89). Without that fallback such an entry was cleared by no
- * snapshot, and `flushPending` never resubmits it: if its echo was missed it
- * stayed pending for good and was re-applied over every snapshot.
- *
- * Invariant (test/1973-sync-pending-confirm.test.ts, "r3"): an entry with a recorded
- * position is cleared by a numbered AND by an unnumbered snapshot once that
- * snapshot is far enough ahead; an entry without one is resubmitted. No shape
- * is neither.
- */
-export function pendingCoveredBy(p: PendingOp, snapSeq: number, snapUserSeq: number | null): boolean {
-  if (!hasRecordedPosition(p)) return false
-  const userSeq = p.applied_user_seq
-  if (snapUserSeq !== null && typeof userSeq === 'number' && Number.isFinite(userSeq)) {
-    return userSeq <= snapUserSeq
-  }
-  return (p.applied_seq_id as number) <= snapSeq
-}
-
 /** Outcome of one user_seq catch-up (task 1973). */
 type UserSeqCatchUp =
   /** The cursor reached the server head and no held op is left. */
@@ -179,21 +58,6 @@ type UserSeqCatchUp =
   | 'truncated'
   /** A snapshot fetch or mode switch started meanwhile; it owns coverage now. */
   | 'aborted'
-
-function loadPendingOps(): PendingOp[] {
-  try {
-    const raw = localStorage.getItem(PENDING_OPS_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as PendingOp[]) : []
-  } catch {
-    return []
-  }
-}
-
-function savePendingOps(ops: PendingOp[]): void {
-  localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(ops))
-}
 
 /**
  * SyncClient owns the in-memory tree, the SSE connection, and the
@@ -231,22 +95,19 @@ export class SyncClient {
    * (the storage key is not per account).
    */
   private lastUserSeq = 0
-  private pendingOps: PendingOp[] = loadPendingOps()
-  /**
-   * Task 1973 r2: pending ops the server may have recorded although this tab
-   * never heard back: loaded from storage without a recorded position (the
-   * page went away mid-POST), or whose POST failed. The next snapshot fetch
-   * looks them up in the op log by `client_op_id` before merging.
-   */
-  private orphanedPending = new Set<string>(
-    this.pendingOps.filter((p) => !hasRecordedPosition(p)).map((p) => p.client_op_id),
-  )
+  /** The ops this tab is waiting on: persisted, confirmed by position or identity. */
+  private readonly queue: SyncQueue
+  /** The live pending-op array (`queue.ops`), kept under its pre-split name. */
+  private get pendingOps(): PendingOp[] {
+    return this.queue.ops
+  }
   /** The global cursor this tab booted with: the lookup floor for old entries. */
   private readonly bootLastSeq = this.lastSeq
   private deviceId = getDeviceId()
   private eventSource: EventSource | null = null
   private status: ConnectionStatus = 'idle'
-  private reconnectAttempts = 0
+  /** Reconnect delays: 1.5s doubling to 30s. */
+  private readonly reconnectBackoff = new SyncBackoff(RECONNECT_BACKOFF)
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private listeners = new Set<Listener>()
   private started = false
@@ -264,11 +125,13 @@ export class SyncClient {
   private reorderBuffer = new Map<number, SyncOp>()
   private gapFillTimer: ReturnType<typeof setTimeout> | null = null
   private gapFillInFlight: Promise<void> | null = null
-  private gapFillAttempts = 0
+  /** Gap-fill delays: 30ms doubling to 5s. */
+  private readonly gapFillBackoff = new SyncBackoff(GAP_FILL_BACKOFF)
   private resyncTimer: ReturnType<typeof setTimeout> | null = null
   private resyncInFlight: Promise<void> | null = null
   private resyncQueued = false
-  private resyncAttempts = 0
+  /** Coverage-resync delays: 100ms doubling to 10s. */
+  private readonly resyncBackoff = new SyncBackoff(COVERAGE_RESYNC_BACKOFF)
   /** Ops whose node is missing at schedule time (resolved after the resync). */
   private pendingMissingIds = new Set<string>()
   /**
@@ -277,18 +140,8 @@ export class SyncClient {
    * a genuinely unknown id (or a reconnect) retries.
    */
   private knownAbsentIds = new Set<string>()
-  /**
-   * Star ordering state (task 1577, PR #115 review). `file.starred` is a
-   * realtime event, not a sequenced op, so it has no seq_id to order by.
-   * - `starFrameAt`: server `timestamp` (ms) of the newest `file.starred`
-   *   frame applied per file — an older frame for the same file is dropped.
-   * - `starEchoes`: local-clock times of this client's own star PATCHes whose
-   *   `file.starred` echo has not come back over the stream yet. While more
-   *   than one is outstanding, an arriving frame predates a newer local write
-   *   the tree already reflects, so it must not overwrite it.
-   */
-  private starFrameAt = new Map<string, number>()
-  private starEchoes = new Map<string, number[]>()
+  /** Star ordering state (task 1577, PR #115 review). */
+  private readonly starOrder = new StarOrder()
   /**
    * In-flight single snapshot merge, shared by every resync caller (review
    * S1) — overlapping merges can never land out of order.
@@ -300,9 +153,12 @@ export class SyncClient {
   private deferredStreamFrames: StreamFrame[] = []
   /** Snapshot fetch bound; overridable so tests can exercise the timeout. */
   private readonly snapshotTimeoutMs: number
+  /** Every network call the client makes. */
+  private readonly transport = new SyncTransport()
 
   constructor(options?: { snapshotTimeoutMs?: number }) {
     this.snapshotTimeoutMs = options?.snapshotTimeoutMs ?? SNAPSHOT_TIMEOUT_MS
+    this.queue = new SyncQueue(this.bootLastSeq)
   }
 
   getStatus(): ConnectionStatus {
@@ -381,11 +237,16 @@ export class SyncClient {
 
   /** Recompute the coverage flag from the current buffering state. */
   private refreshCoverageFlag(): void {
-    if (!this.coverageSnapshotMerged) return
-    if (this.reorderBuffer.size > 0) return
-    if (this.gapFillTimer || this.gapFillInFlight) return
-    if (this.resyncTimer || this.resyncInFlight || this.resyncQueued) return
-    this.setTreeComplete(true)
+    if (
+      coverageComplete({
+        snapshotMerged: this.coverageSnapshotMerged,
+        reorderDepth: this.reorderBuffer.size,
+        gapFillPending: Boolean(this.gapFillTimer || this.gapFillInFlight),
+        resyncPending: Boolean(this.resyncTimer || this.resyncInFlight || this.resyncQueued),
+      })
+    ) {
+      this.setTreeComplete(true)
+    }
   }
 
   /** Boot. Idempotent — calling twice is a no-op. */
@@ -404,7 +265,7 @@ export class SyncClient {
       this.openStream()
 
       // Flush any locally-queued ops from a prior session.
-      if (this.pendingOps.length > 0) {
+      if (this.queue.size > 0) {
         void this.flushPending()
       }
     } catch (err) {
@@ -455,7 +316,7 @@ export class SyncClient {
       const outcome = await this.catchUpByUserSeq()
       return { truncated: outcome === 'contradiction' || outcome === 'truncated' }
     }
-    const ops = await getSyncOps(this.lastSeq)
+    const ops = await this.transport.opsSince(this.lastSeq)
     for (const op of ops) {
       this.applyRemoteOp(op)
     }
@@ -482,7 +343,7 @@ export class SyncClient {
    *   re-applied over it nor resubmitted.
    */
   private mergeSnapshot(snap: SyncSnapshot): void {
-    this.confirmPendingCoveredBy(snap)
+    this.queue.confirmCoveredBy(snap)
     const pendingTargets = new Set<string>()
     for (const p of this.pendingOps) {
       if (p.target_id) pendingTargets.add(p.target_id)
@@ -500,7 +361,7 @@ export class SyncClient {
       this.tree.delete(id)
     }
     for (const p of this.pendingOps) {
-      this.applyOpToTree(p.op_type, p.payload)
+      applyOpToTree(this.tree, this.knownAbsentIds, p.op_type, p.payload)
     }
     this.emit({ type: 'snapshot' })
   }
@@ -510,91 +371,8 @@ export class SyncClient {
       if (buffered > seq) continue
       this.reorderBuffer.delete(buffered)
       // Covered by the snapshot: a server-applied op of ours is confirmed.
-      this.confirmPending(op.client_op_id)
+      this.queue.confirm(op.client_op_id)
     }
-  }
-
-  /**
-   * Task 1973 r2: confirmation is by IDENTITY, never by sequence. A
-   * server-applied op carrying this `client_op_id` (a stream echo, a catch-up
-   * page, a POST `applied[]` entry, an op found in the op log) confirms and
-   * clears its pending entry whatever its number is relative to the cursor;
-   * only the TREE application of an op at or below the cursor is skipped.
-   * Returns true when an entry was cleared.
-   */
-  private confirmPending(clientOpId: string | null | undefined): boolean {
-    if (!clientOpId) return false
-    const idx = this.pendingOps.findIndex((p) => p.client_op_id === clientOpId)
-    if (idx === -1) return false
-    this.pendingOps.splice(idx, 1)
-    savePendingOps(this.pendingOps)
-    this.orphanedPending.delete(clientOpId)
-    return true
-  }
-
-  /** Task 1973 r2: confirm every pending op whose recorded position `snap` covers. */
-  private confirmPendingCoveredBy(snap: SyncSnapshot): void {
-    const snapUserSeq = userSeqOf(snap as UserSeqSyncSnapshot)
-    const covered = this.pendingOps.filter((p) => pendingCoveredBy(p, snap.seq_id, snapUserSeq))
-    for (const p of covered) this.confirmPending(p.client_op_id)
-  }
-
-  /** Task 1973 r2: record the server's position for a pending op (persisted). */
-  private recordPendingPosition(clientOpId: string, seqId: number, userSeq: number | null): boolean {
-    const p = this.pendingOps.find((x) => x.client_op_id === clientOpId)
-    if (!p || typeof seqId !== 'number' || !Number.isFinite(seqId)) return false
-    p.applied_seq_id = seqId
-    p.applied_user_seq = userSeq
-    this.orphanedPending.delete(clientOpId)
-    return true
-  }
-
-  /**
-   * Task 1973 r2: look orphaned pending ops up in the op log by
-   * `client_op_id`, from the global cursor at their submission up to the
-   * snapshot about to merge. One found there was recorded by the server, so it
-   * gets its position and the merge confirms it: it is neither re-applied over
-   * the snapshot nor resubmitted. The server does not deduplicate a
-   * resubmitted `client_op_id` (it re-executes the op and records a new one),
-   * so a resubmission would also re-write a value another device has replaced
-   * since. Bounded: past ORPHAN_SCAN_MAX_PAGES, or on an error, the op stays
-   * pending and is resubmitted, as before. Never applies anything to the tree.
-   */
-  private async locateOrphanedPending(snap: SyncSnapshot): Promise<void> {
-    if (this.orphanedPending.size === 0) return
-    const orphans = this.pendingOps.filter((p) => this.orphanedPending.has(p.client_op_id))
-    if (orphans.length === 0) {
-      this.orphanedPending.clear()
-      return
-    }
-    let since = Math.min(...orphans.map((p) => p.submitted_after_seq ?? this.bootLastSeq))
-    let found = false
-    let complete = false
-    try {
-      for (let page = 0; page < ORPHAN_SCAN_MAX_PAGES; page++) {
-        const ops = await this.withTimeout(getSyncOps(since), GAP_FILL_TIMEOUT_MS)
-        for (const op of ops) {
-          if (op.client_op_id && this.orphanedPending.has(op.client_op_id)) {
-            found = this.recordPendingPosition(op.client_op_id, op.seq_id, userSeqOf(op as UserSeqSyncOp)) || found
-          }
-        }
-        const last = ops.length > 0 ? ops[ops.length - 1].seq_id : since
-        if (ops.length < SYNC_OPS_PAGE_CAP || last >= snap.seq_id || this.orphanedPending.size === 0) {
-          complete = true
-          break
-        }
-        since = last
-      }
-    } catch (err) {
-      console.warn('[SyncClient] orphaned pending-op lookup failed; they will be resubmitted', err)
-    }
-    if (found) savePendingOps(this.pendingOps)
-    if (!complete && this.orphanedPending.size > 0) {
-      console.warn('[SyncClient] orphaned pending-op lookup stopped early; the rest will be resubmitted')
-    }
-    // One lookup per orphan: what is left was not found and stays a plain
-    // pending op (optimistic state kept, resubmitted on the next boot).
-    this.orphanedPending.clear()
   }
 
   /** Tear down. Stream closed, last_seq persisted, pending ops kept. */
@@ -635,23 +413,22 @@ export class SyncClient {
 
     let token: string
     try {
-      const tokenResp = await getStreamToken()
-      token = tokenResp.stream_token
+      token = await this.transport.streamToken()
     } catch (err) {
       this.scheduleReconnect()
       this.emit({ type: 'error', error: err instanceof Error ? err : new Error(String(err)) })
       return
     }
 
-    const url = `${getApiUrl()}/api/v1/sync/stream?token=${encodeURIComponent(token)}`
+    const url = this.transport.streamUrl(token)
     // Echoes published while no stream was open are gone for good; waiting
     // for them would swallow the next genuine frame for that file.
-    this.starEchoes.clear()
+    this.starOrder.clear()
     const es = new EventSource(url)
     this.eventSource = es
 
     es.onopen = () => {
-      this.reconnectAttempts = 0
+      this.reconnectBackoff.reset()
       this.setStatus('connected')
     }
 
@@ -673,11 +450,7 @@ export class SyncClient {
     if (this.destroyed) return
     if (this.reconnectTimer) return
     this.setStatus('reconnecting')
-    const delay = Math.min(
-      RECONNECT_DELAY_MS * 2 ** this.reconnectAttempts,
-      RECONNECT_MAX_DELAY_MS,
-    )
-    this.reconnectAttempts += 1
+    const delay = this.reconnectBackoff.next()
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       void this.reconnect()
@@ -773,10 +546,7 @@ export class SyncClient {
    * Stars are not sequenced sync ops, so this never touches `lastSeq`.
    */
   setNodeStarred(id: string, isStarred: boolean): void {
-    const now = Date.now()
-    const echoes = this.liveStarEchoes(id, now)
-    echoes.push(now)
-    this.starEchoes.set(id, echoes)
+    this.starOrder.noteLocalWrite(id)
     this.writeStarred(id, isStarred)
   }
 
@@ -796,23 +566,8 @@ export class SyncClient {
    * correct even when another device toggles concurrently.
    */
   private applyStarredFrame(id: string, isStarred: boolean, at: number | undefined): void {
-    const echoes = this.liveStarEchoes(id, Date.now())
-    if (echoes.length > 0) echoes.shift()
-    if (echoes.length > 0) this.starEchoes.set(id, echoes)
-    else this.starEchoes.delete(id)
-
-    if (at !== undefined) {
-      const newest = this.starFrameAt.get(id)
-      if (newest !== undefined && at < newest) return
-      this.starFrameAt.set(id, at)
-    }
-    if (echoes.length > 0) return
+    if (!this.starOrder.applyFrame(id, at)) return
     this.writeStarred(id, isStarred)
-  }
-
-  /** Outstanding local echoes for `id`, minus any too old to still arrive. */
-  private liveStarEchoes(id: string, now: number): number[] {
-    return (this.starEchoes.get(id) ?? []).filter((t) => now - t < STAR_ECHO_TTL_MS)
   }
 
   /** Write a star value into the tree; emits a tree change only on a move. */
@@ -833,22 +588,16 @@ export class SyncClient {
   private applyRemoteOp(op: SyncOp): void {
     // Task 1973: against a server that numbers ops per user, order and detect
     // holes on `user_seq`; otherwise on the global `seq_id` exactly as before.
-    let key: number
-    if (this.userSeqMode) {
-      const userSeq = userSeqOf(op as UserSeqSyncOp)
-      if (userSeq === null) {
-        this.applyUnnumberedOp(op)
-        return
-      }
-      key = userSeq
-    } else {
-      key = op.seq_id
+    const key = opOrderKey(op, this.userSeqMode)
+    if (key === null) {
+      this.applyUnnumberedOp(op)
+      return
     }
     const cursor = this.cursor()
     if (key <= cursor) {
       // Already in the tree (a duplicate, an old op, or one a snapshot holds).
       // An op of ours is still confirmed by identity (task 1973 r2).
-      this.confirmPending(op.client_op_id)
+      this.queue.confirm(op.client_op_id)
       return
     }
 
@@ -870,7 +619,7 @@ export class SyncClient {
       // Buffer exhausted — a snapshot merge is the bounded fallback, routed
       // through the single-flight/retry path (review S1). The held ops were
       // all applied server-side, so ours among them are confirmed (1973 r2).
-      for (const held of this.reorderBuffer.values()) this.confirmPending(held.client_op_id)
+      for (const held of this.reorderBuffer.values()) this.queue.confirm(held.client_op_id)
       this.reorderBuffer.clear()
       this.coverageSnapshotMerged = false
       this.setTreeComplete(false)
@@ -902,7 +651,7 @@ export class SyncClient {
    */
   private applyUnnumberedOp(op: SyncOp): void {
     if (op.seq_id <= this.lastSeq) {
-      this.confirmPending(op.client_op_id) // by identity (task 1973 r2)
+      this.queue.confirm(op.client_op_id) // by identity (task 1973 r2)
       return
     }
     this.applyOpNow(op)
@@ -932,14 +681,14 @@ export class SyncClient {
    */
   private applyOpNow(op: SyncOp): void {
     // Echo suppression.
-    if (this.confirmPending(op.client_op_id)) {
+    if (this.queue.confirm(op.client_op_id)) {
       // Tree already reflects the change locally — only update seq.
       this.advanceCursor(op)
       this.emit({ type: 'op', op })
       return
     }
 
-    const applied = this.applyOpToTree(op.op_type, op.payload)
+    const applied = applyOpToTree(this.tree, this.knownAbsentIds, op.op_type, op.payload)
     this.advanceCursor(op)
     this.emit({ type: 'op', op })
 
@@ -960,107 +709,6 @@ export class SyncClient {
     }
   }
 
-  /** Mutate the in-memory tree based on op type + payload. */
-  private applyOpToTree(
-    opType: string,
-    payload: Record<string, unknown>,
-  ): 'applied' | 'missing-node' {
-    switch (opType) {
-      case 'file_create':
-      case 'folder_create': {
-        const node = payloadToNode(payload, opType === 'folder_create')
-        if (node) {
-          this.tree.set(node.id, node)
-          // The id exists now — a later missing-node op must resync again.
-          this.knownAbsentIds.delete(node.id)
-        }
-        return 'applied'
-      }
-      case 'file_update': {
-        const id = payload.id as string | undefined
-        if (!id) return 'applied'
-        const existing = this.tree.get(id)
-        if (!existing) return 'missing-node'
-        this.tree.set(id, {
-          ...existing,
-          size_bytes: (payload.size_bytes as number | undefined) ?? existing.size_bytes,
-          version_number:
-            (payload.version_number as number | undefined) ?? existing.version_number,
-          content_hash:
-            (payload.content_hash as string | undefined) ?? existing.content_hash,
-          has_thumbnail:
-            (payload.has_thumbnail as boolean | undefined) ?? existing.has_thumbnail,
-          has_large_thumbnail:
-            (payload.has_large_thumbnail as boolean | undefined) ?? existing.has_large_thumbnail,
-          // A new version can land in another pool (task 1919: the person
-          // picked another country); the drive shows that pool's country.
-          storage_pool_id:
-            'storage_pool_id' in payload
-              ? ((payload.storage_pool_id as string | null | undefined) ?? null)
-              : existing.storage_pool_id,
-          updated_at: new Date().toISOString(),
-        })
-        return 'applied'
-      }
-      case 'file_move':
-      case 'folder_move': {
-        const id = payload.id as string | undefined
-        if (!id) return 'applied'
-        const existing = this.tree.get(id)
-        if (!existing) return 'missing-node'
-        this.tree.set(id, {
-          ...existing,
-          parent_id: (payload.new_parent_id as string | null | undefined) ?? null,
-          updated_at: new Date().toISOString(),
-        })
-        return 'applied'
-      }
-      case 'file_rename':
-      case 'folder_rename': {
-        const id = payload.id as string | undefined
-        if (!id) return 'applied'
-        const existing = this.tree.get(id)
-        if (!existing) return 'missing-node'
-        this.tree.set(id, {
-          ...existing,
-          name_encrypted:
-            (payload.new_name_encrypted as string | undefined) ?? existing.name_encrypted,
-          updated_at: new Date().toISOString(),
-        })
-        return 'applied'
-      }
-      case 'file_trash': {
-        const id = payload.id as string | undefined
-        if (!id) return 'applied'
-        const existing = this.tree.get(id)
-        if (!existing) return 'missing-node'
-        this.tree.set(id, { ...existing, is_trashed: true })
-        return 'applied'
-      }
-      case 'file_restore': {
-        const id = payload.id as string | undefined
-        if (!id) return 'applied'
-        const existing = this.tree.get(id)
-        if (!existing) return 'missing-node'
-        this.tree.set(id, { ...existing, is_trashed: false })
-        return 'applied'
-      }
-      case 'file_delete': {
-        const id = payload.id as string | undefined
-        if (id) this.tree.delete(id)
-        return 'applied'
-      }
-      case 'share_create':
-      case 'share_revoke':
-        // Notification-only — UI listens for these to refresh share state.
-        return 'applied'
-      default:
-        // Unknown op type — keep going. Future protocol versions may add
-        // new types and we don't want to crash on them.
-        return 'applied'
-    }
-  }
-
   // ─── Coverage recovery (task 1700) ─────────────────────────────────────
   // A seq gap is filled from the op log; if that errors, times out, or hits
   // the server page cap, a snapshot merge is the bounded fallback. Both paths
@@ -1069,9 +717,9 @@ export class SyncClient {
   private scheduleGapFill(): void {
     if (this.destroyed || this.gapFillTimer || this.gapFillInFlight) return
     if (this.reorderBuffer.size === 0) return
-    // Back off exponentially across failed attempts (capped): a persistently
+    // Back off across failed attempts (capped): a persistently
     // failing server must not be hammered by the recovery path (task 1700).
-    const delay = Math.min(GAP_FILL_DEBOUNCE_MS * 2 ** this.gapFillAttempts, 5_000)
+    const delay = this.gapFillBackoff.next()
     this.gapFillTimer = setTimeout(() => {
       this.gapFillTimer = null
       void this.runGapFill()
@@ -1098,7 +746,7 @@ export class SyncClient {
           }
           return
         }
-        const ops = await this.withTimeout(getSyncOps(this.lastSeq), GAP_FILL_TIMEOUT_MS)
+        const ops = await this.transport.opsSince(this.lastSeq, SYNC_REQUEST_TIMEOUT_MS)
         if (this.snapshotFetchInFlight) {
           // A coverage resync started while the op page was in flight: the
           // same hold applies. Do NOT apply anything an older snapshot would
@@ -1123,10 +771,9 @@ export class SyncClient {
       } finally {
         this.gapFillInFlight = null
         if (this.reorderBuffer.size > 0) {
-          this.gapFillAttempts += 1
           this.scheduleGapFill()
         } else {
-          this.gapFillAttempts = 0
+          this.gapFillBackoff.reset()
           this.refreshCoverageFlag()
         }
       }
@@ -1146,8 +793,8 @@ export class SyncClient {
       return
     }
     if (this.resyncTimer) return
-    // Retries back off exponentially (capped) after a failed snapshot fetch.
-    const delay = Math.min(MISSING_NODE_RESYNC_DEBOUNCE_MS * 2 ** this.resyncAttempts, 10_000)
+    // Retries back off (capped) after a failed snapshot fetch.
+    const delay = this.resyncBackoff.next()
     this.resyncTimer = setTimeout(() => {
       this.resyncTimer = null
       void this.runCoverageResync()
@@ -1167,15 +814,14 @@ export class SyncClient {
         this.resyncInFlight = null
         if (this.resyncQueued) {
           this.resyncQueued = false
-          this.resyncAttempts = 0
+          this.resyncBackoff.reset()
           this.scheduleCoverageResync()
         } else if (!ok && !this.destroyed) {
           // Retry with backoff — a transient failure must not leave coverage
           // incomplete forever, and a persistent one must not spin.
-          this.resyncAttempts += 1
           this.scheduleCoverageResync()
         } else {
-          this.resyncAttempts = 0
+          this.resyncBackoff.reset()
           this.refreshCoverageFlag()
         }
       }
@@ -1200,11 +846,11 @@ export class SyncClient {
       this.snapshotFetchInFlight = true
       let snap: SyncSnapshot
       try {
-        snap = await this.withTimeout(getSnapshot(), this.snapshotTimeoutMs)
+        snap = await this.transport.snapshot(this.snapshotTimeoutMs)
         // Task 1973 r2: still holding stream frames, find orphaned pending ops
         // the server recorded, so the merge confirms them instead of
         // re-applying them over the snapshot.
-        await this.locateOrphanedPending(snap)
+        await locateOrphanedPending(this.transport, this.queue, snap)
       } finally {
         this.snapshotFetchInFlight = false
       }
@@ -1231,7 +877,7 @@ export class SyncClient {
           // and needs a FRESH fetch — the settled snapshot may predate the
           // frames that requested it (round-3 hardening).
           this.resyncQueued = false
-          this.resyncAttempts = 0
+          this.resyncBackoff.reset()
           void this.runCoverageResync()
         }
         if (this.reorderBuffer.size > 0) this.scheduleGapFill()
@@ -1284,10 +930,10 @@ export class SyncClient {
     const held = Array.from(this.reorderBuffer.values())
     this.reorderBuffer.clear()
     for (const op of held) {
-      const key = this.userSeqMode ? userSeqOf(op as UserSeqSyncOp) : op.seq_id
+      const key = opOrderKey(op, this.userSeqMode)
       if (key !== null) this.reorderBuffer.set(key, op)
       // Held before this snapshot was fetched, so the snapshot holds it.
-      else this.confirmPending(op.client_op_id)
+      else this.queue.confirm(op.client_op_id)
     }
   }
 
@@ -1312,7 +958,7 @@ export class SyncClient {
       const since = this.lastUserSeq
       let heldBefore = 0
       for (const key of this.reorderBuffer.keys()) if (key > heldBefore) heldBefore = key
-      const res = await this.withTimeout(getSyncOpsSinceUserSeq(since), GAP_FILL_TIMEOUT_MS)
+      const res = await this.transport.opsSinceUserSeq(since, SYNC_REQUEST_TIMEOUT_MS)
       if (this.destroyed || !this.userSeqMode || this.snapshotFetchInFlight) return 'aborted'
       const head = res.head_user_seq
       if (typeof head !== 'number' || !Number.isFinite(head) || head < since) return 'contradiction'
@@ -1328,25 +974,6 @@ export class SyncClient {
     return 'truncated'
   }
 
-  /** Bound a sync request so coverage recovery can never hang indefinitely. */
-  private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`sync request timed out after ${ms}ms`))
-      }, ms)
-      promise.then(
-        (value) => {
-          clearTimeout(timer)
-          resolve(value)
-        },
-        (err) => {
-          clearTimeout(timer)
-          reject(err)
-        },
-      )
-    })
-  }
-
   /**
    * Submit a local op. Applies optimistically, queues for the server,
    * rolls back on rejection.
@@ -1360,7 +987,7 @@ export class SyncClient {
     const rollback = targetId ? this.tree.get(targetId) ?? null : null
 
     // Optimistic local apply.
-    this.applyOpToTree(opType, payload)
+    applyOpToTree(this.tree, this.knownAbsentIds, opType, payload)
 
     const pending: PendingOp = {
       client_op_id: clientOpId,
@@ -1370,12 +997,11 @@ export class SyncClient {
       target_id: targetId ?? undefined,
       submitted_after_seq: this.lastSeq,
     }
-    this.pendingOps.push(pending)
-    savePendingOps(this.pendingOps)
+    this.queue.add(pending)
     this.emit({ type: 'op' })
 
     try {
-      const result = await submitSyncOps([
+      const result = await this.transport.submit([
         {
           client_op_id: clientOpId,
           op_type: opType,
@@ -1387,18 +1013,14 @@ export class SyncClient {
       const rejected = result.rejected.find((r) => r.client_op_id === clientOpId)
       if (rejected) {
         // Remove from pending and roll back the local change.
-        const idx = this.pendingOps.findIndex((p) => p.client_op_id === clientOpId)
-        if (idx !== -1) {
-          this.pendingOps.splice(idx, 1)
-          savePendingOps(this.pendingOps)
-        }
+        if (this.queue.remove(clientOpId)) this.queue.persist()
         if (targetId) {
           if (rollback) this.tree.set(targetId, rollback)
           else this.tree.delete(targetId)
         }
         // Apply the winning op if present.
         if (rejected.winning_op) {
-          this.applyOpToTree(rejected.winning_op.op_type, rejected.winning_op.payload)
+          applyOpToTree(this.tree, this.knownAbsentIds, rejected.winning_op.op_type, rejected.winning_op.payload)
         }
         this.emit({ type: 'op' })
         return { accepted: false, reason: rejected.reason ?? 'rejected' }
@@ -1412,12 +1034,11 @@ export class SyncClient {
       // Network error — leave it in pending; we'll flush on reconnect. The
       // server may still have recorded it (the answer was lost), so the next
       // snapshot looks it up first (task 1973 r2).
-      if (this.pendingOps.includes(pending)) this.orphanedPending.add(clientOpId)
+      if (this.queue.has(clientOpId)) this.queue.markOrphaned(clientOpId)
       this.emit({ type: 'error', error: err instanceof Error ? err : new Error(String(err)) })
       return { accepted: true } // optimistic state stays
     }
   }
-
   /**
    * `POST /sync/ops` answered these ops as applied.
    *
@@ -1445,15 +1066,15 @@ export class SyncClient {
     if (!applied) return
     let recorded = false
     for (const entry of applied) {
-      recorded = this.recordPendingPosition(entry.client_op_id, entry.seq_id, userSeqOf(entry)) || recorded
+      recorded = this.queue.recordPosition(entry.client_op_id, entry.seq_id, userSeqOf(entry)) || recorded
     }
-    if (recorded) savePendingOps(this.pendingOps)
+    if (recorded) this.queue.persist()
     if (!this.userSeqMode) {
       // While a snapshot fetch is in flight the cursor is about to move; the
       // merge confirms the covered ones from the recorded positions.
       if (this.snapshotFetchInFlight) return
       for (const entry of applied) {
-        if (entry.seq_id <= this.lastSeq) this.confirmPending(entry.client_op_id)
+        if (entry.seq_id <= this.lastSeq) this.queue.confirm(entry.client_op_id)
       }
       return
     }
@@ -1485,7 +1106,7 @@ export class SyncClient {
     // Task 1973 r2: an op with a recorded server position was applied; it
     // waits for its echo or a covering snapshot and is never resubmitted (the
     // server would execute it a second time).
-    const unsent = this.pendingOps.filter((p) => !hasRecordedPosition(p))
+    const unsent = this.queue.unsent()
     if (unsent.length === 0) return
     const batch = unsent.map((p) => ({
       client_op_id: p.client_op_id,
@@ -1494,103 +1115,37 @@ export class SyncClient {
       device_id: this.deviceId,
     }))
     try {
-      const result = await submitSyncOps(batch)
+      const result = await this.transport.submit(batch)
       for (const rej of result.rejected) {
-        const idx = this.pendingOps.findIndex((p) => p.client_op_id === rej.client_op_id)
-        if (idx === -1) continue
-        const [pending] = this.pendingOps.splice(idx, 1)
-        if (pending.target_id) {
-          if (pending.rollback) this.tree.set(pending.target_id, pending.rollback)
-          else this.tree.delete(pending.target_id)
+        const removed = this.queue.remove(rej.client_op_id)
+        if (!removed) continue
+        if (removed.target_id) {
+          if (removed.rollback) this.tree.set(removed.target_id, removed.rollback)
+          else this.tree.delete(removed.target_id)
         }
         if (rej.winning_op) {
-          this.applyOpToTree(rej.winning_op.op_type, rej.winning_op.payload)
+          applyOpToTree(this.tree, this.knownAbsentIds, rej.winning_op.op_type, rej.winning_op.payload)
         }
       }
-      savePendingOps(this.pendingOps)
+      this.queue.persist()
       this.adoptApplied(result.applied, batch)
       this.emit({ type: 'op' })
     } catch (err) {
       // The answer may be lost after the server recorded them (task 1973 r2).
       for (const op of batch) {
-        if (this.pendingOps.some((p) => p.client_op_id === op.client_op_id)) {
-          this.orphanedPending.add(op.client_op_id)
-        }
+        if (this.queue.has(op.client_op_id)) this.queue.markOrphaned(op.client_op_id)
       }
       console.warn('[SyncClient] Failed to flush pending ops', err)
     }
   }
 }
 
-function payloadToNode(
-  payload: Record<string, unknown>,
-  isFolder: boolean,
-): SyncNode | null {
-  const id = payload.id as string | undefined
-  if (!id) return null
-  const now = new Date().toISOString()
-  return {
-    id,
-    name_encrypted: (payload.name_encrypted as string | undefined) ?? '',
-    file_request_id: (payload.file_request_id as string | null | undefined) ?? null,
-    sender_ephemeral_pubkey: (payload.sender_ephemeral_pubkey as string | null | undefined) ?? null,
-    wrapped_content_key: (payload.wrapped_content_key as string | null | undefined) ?? null,
-    parent_id: (payload.parent_id as string | null | undefined) ?? null,
-    is_folder: isFolder,
-    size_bytes: (payload.size_bytes as number | undefined) ?? 0,
-    mime_type: (payload.mime_type as string | null | undefined) ?? null,
-    content_hash: (payload.content_hash as string | null | undefined) ?? null,
-    version_number: (payload.version_number as number | undefined) ?? 1,
-    has_thumbnail: (payload.has_thumbnail as boolean | undefined) ?? false,
-    has_large_thumbnail: (payload.has_large_thumbnail as boolean | undefined) ?? false,
-    storage_pool_id: (payload.storage_pool_id as string | null | undefined) ?? null,
-    is_trashed: false,
-    is_starred: false,
-    chunk_count: (payload.chunk_count as number | undefined) ?? 1,
-    created_at: now,
-    updated_at: now,
-  }
-}
-
-/**
- * How long a local star write waits for its `file.starred` echo before it
- * stops holding back other frames for that file. The echo is published before
- * the PATCH response is sent, so it normally lands within milliseconds; the
- * TTL only bounds the damage of an echo lost to a dropped stream.
- */
-const STAR_ECHO_TTL_MS = 15_000
-
-/** A `/sync/stream` frame, classified. See `SyncClient.ingestStreamFrame`. */
-export type StreamFrame =
-  | { kind: 'op'; op: SyncOp }
-  | { kind: 'starred'; id: string; isStarred: boolean; at?: number }
-  | { kind: 'ignore' }
-
-/**
- * Classify a parsed `/sync/stream` frame. A sequenced sync op carries a
- * numeric `seq_id` and a string `op_type`; anything else is a realtime
- * event-bus message (`{ type, data }`, serialised by the server's
- * `#[serde(tag = "type", content = "data")] enum SyncEvent`). Of those, only
- * `file.starred` (`data: { id, is_starred }`) carries node state the tree
- * must mirror — every other realtime event already has a matching sync op
- * or no tree effect.
- */
-export function classifyStreamFrame(frame: unknown): StreamFrame {
-  if (!frame || typeof frame !== 'object') return { kind: 'ignore' }
-  const f = frame as Record<string, unknown>
-  if (typeof f.seq_id === 'number' && Number.isFinite(f.seq_id) && typeof f.op_type === 'string') {
-    return { kind: 'op', op: f as unknown as SyncOp }
-  }
-  if (f.type === 'file.starred' && f.data && typeof f.data === 'object') {
-    const d = f.data as Record<string, unknown>
-    if (typeof d.id === 'string' && typeof d.is_starred === 'boolean') {
-      // `timestamp` is the server's publish time (event_bus.rs
-      // TimestampedEvent, RFC 3339). Absent/unparseable → no time ordering.
-      const at = typeof f.timestamp === 'string' ? Date.parse(f.timestamp) : NaN
-      return Number.isFinite(at)
-        ? { kind: 'starred', id: d.id, isStarred: d.is_starred, at }
-        : { kind: 'starred', id: d.id, isStarred: d.is_starred }
-    }
-  }
-  return { kind: 'ignore' }
-}
+// The public surface of the sync module: the client, its stream-frame
+// classifier, and the pending-op predicates the tests rely on.
+export { SyncQueue, hasRecordedPosition, pendingCoveredBy } from './sync/queue'
+export type { PendingOp } from './sync/queue'
+export { SyncTransport } from './sync/transport'
+export { SyncBackoff, RECONNECT_BACKOFF, GAP_FILL_BACKOFF, COVERAGE_RESYNC_BACKOFF } from './sync/backoff'
+export type { BackoffPolicy } from './sync/backoff'
+export { classifyStreamFrame } from './sync/protocol'
+export type { StreamFrame } from './sync/protocol'

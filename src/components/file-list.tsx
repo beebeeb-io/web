@@ -1,20 +1,21 @@
+// The drive file list: rows, selection, and per-row actions.
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { BBCheckbox } from '@beebeeb/shared'
-import { BBChip } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from './icons'
-import { FileIcon, getFileType } from './file-icon'
-import { getBadgeStyle } from '../lib/file-colors'
-import { FileBrowserRow, FILE_HEADER_BAR, FILE_HEADER_LABEL } from './file-browser-row'
-import { needsOwnership } from '../lib/owner-adoption'
+import { FileRow, type FileRowProps } from './file-list/file-row'
+import { FileListHeader } from './file-list/file-list-header'
+import { displayNameFrom, useDecryptedNames } from './file-list/use-decrypted-names'
+import { useFileThumbnails } from './file-list/use-file-thumbnails'
+import { needsOwnership, classifyItemIds, isForeignItemById } from '../lib/owner-adoption'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
-import { decryptManyNames, encryptFilename, readFileMetadata, serializeEncryptedBlob } from '../lib/crypto'
-import { renameKeyFor } from '../lib/owner-rename'
+import { readFileMetadata } from '../lib/crypto'
+import { renameOwnerRow } from '../lib/owner-rename'
+import { contentKeyBytes } from '../lib/request-row'
+import { ownerWriteRefusal } from '../lib/owner-write-guard'
 import { onDecrypted } from '../lib/decrypt-events'
-import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
 import {
   clearPendingSelectTimer,
@@ -23,50 +24,15 @@ import {
   handleRowDoubleClick as resolveRowDoubleClick,
 } from '../lib/pending-select-timer'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
-import { formatBytes, timeAgo } from '../lib/format'
-import { setPreference, updateFile } from '../lib/api'
+import { timeAgo } from '../lib/format'
+import { setPreference } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
 import { SharePopover } from './share-popover'
-import { FolderViewerBadge } from './presence-avatars'
 import { useToast } from './toast'
 import { getFolderColorDot, FOLDER_COLORS } from '../lib/folder-colors'
 import type { DriveFile, MyShare } from '../lib/api'
-import { fileStorageCountry } from '../lib/storage-regions'
+import { SORT_KEY_PREFIX, SORT_OPTIONS, typeGroupRank, type SortKey } from './file-list-sort'
 
-// ─── Sort types ─────────────────────────────────────
-
-type SortKey =
-  | 'name-asc' | 'name-desc'
-  | 'modified-desc' | 'modified-asc'
-  | 'size-desc' | 'size-asc'
-  | 'type-asc'
-  | 'starred-first'
-
-const SORT_OPTIONS: { key: SortKey; label: string }[] = [
-  { key: 'name-asc',      label: 'Name (A → Z)' },
-  { key: 'name-desc',     label: 'Name (Z → A)' },
-  { key: 'modified-desc', label: 'Modified (newest)' },
-  { key: 'modified-asc',  label: 'Modified (oldest)' },
-  { key: 'size-desc',     label: 'Size (largest)' },
-  { key: 'size-asc',      label: 'Size (smallest)' },
-  { key: 'type-asc',      label: 'Type' },
-  { key: 'starred-first', label: 'Starred first' },
-]
-
-// Type-group rank: lower = earlier in the list
-function typeGroupRank(file: DriveFile, name: string): number {
-  if (file.is_folder) return 0
-  const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  if (['jpg', 'jpeg', 'png', 'gif', 'heic', 'webp', 'svg', 'ico', 'bmp', 'tiff', 'tif', 'avif'].includes(ext)) return 1
-  if (['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv', 'm4v'].includes(ext)) return 2
-  if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma', 'm4a', 'aiff', 'opus'].includes(ext)) return 3
-  if (['pdf', 'doc', 'docx', 'odt', 'rtf', 'txt', 'pages', 'md', 'mdx', 'xls', 'xlsx', 'ods', 'numbers', 'ppt', 'pptx', 'odp', 'key'].includes(ext)) return 4
-  if (['zip', 'tar', 'gz', 'rar', '7z', 'bz2', 'xz', 'zst', 'dmg', 'iso'].includes(ext)) return 5
-  if (['js', 'jsx', 'ts', 'tsx', 'py', 'rs', 'go', 'rb', 'java', 'kt', 'swift', 'c', 'cpp', 'h', 'cs', 'php', 'sh', 'html', 'css', 'json', 'yaml', 'yml', 'toml', 'sql'].includes(ext)) return 6
-  return 7
-}
-
-const SORT_KEY_PREFIX = 'beebeeb.sort.'
 
 // ─── Helpers ─────────────────────────────────────────
 
@@ -210,7 +176,7 @@ export function FileList({
   parentId,
   onRefresh,
 }: FileListProps) {
-  const { getFileKey, getFileKeyForFile, isUnlocked } = useKeys()
+  const { getFileKeyForFile, sealRequestRename, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
   const { showToast } = useToast()
 
   // ─── Active-share lookup ───────────────────────────
@@ -278,230 +244,16 @@ export function FileList({
   }, [sortKey, sortLsKey])
 
   // ─── Decrypted names ───────────────────────────────
-  //
-  // `decryptedNames[id]` semantics:
-  //   undefined  →  not yet decrypted (show skeleton in UI)
-  //   string     →  successfully decrypted name
-  //   null       →  decryption failed (show "Encrypted file" placeholder)
-  //
-  // NEVER fall back to `file.name_encrypted` — that exposes raw JSON ciphertext
-  // to users and is the bug this fix addresses.
-  const [decryptedNames, setDecryptedNames] = useState<Record<string, string | null>>({})
-
-  useEffect(() => {
-    if (externalDecryptedNames !== undefined) {
-      setDecryptedNames(externalDecryptedNames)
-      return
-    }
-    if (!isUnlocked) {
-      setDecryptedNames({})
-      return
-    }
-    if (files.length === 0) {
-      setDecryptedNames({})
-      return
-    }
-    let cancelled = false
-
-    // Retry transient failures (commonly: WASM still initializing when the
-    // first render fires, a brief master-key handoff race, or — for folders
-    // created on iOS — the file-key being derived from a different KDF path
-    // that races with the web key cache warm-up). Four attempts with mild
-    // backoff costs at most ~1.5s before we surface the encrypted placeholder.
-    const MAX_ATTEMPTS = 4
-    const RETRY_DELAY_MS = 300
-
-    // Per-file decryption is split into two phases so we can collapse N
-    // worker round-trips into 1:
-    //   1) Key derivation runs on the main thread in parallel (cheap, cached).
-    //   2) The decrypt is one batched Comlink call to the worker, which reads
-    //      every envelope with core's name reader (name subkey first, then the
-    //      legacy raw key; task 1943).
-    //
-    // Errors are tracked per file: a key-derivation failure for one row never
-    // blocks the others, and the worker's batched call also reports errors
-    // per-item (an unparsable or unopenable envelope included).
-    type Prepared =
-      | { id: string; status: 'ok'; fileKey: Uint8Array; nameEncrypted: string }
-      | { id: string; status: 'plaintext'; name: string }
-      | { id: string; status: 'error'; error: unknown }
-
-    async function prepareOne(file: DriveFile): Promise<Prepared> {
-      // Legacy format (iOS before 930c61a): plain-text name, not JSON-encrypted.
-      if (!file.name_encrypted.startsWith('{')) {
-        return { id: file.id, status: 'plaintext', name: file.name_encrypted }
-      }
-      try {
-        // A file another person added to a shared folder is sealed under a key
-        // this account cannot derive; getFileKeyForFile takes the folder-key
-        // path for it (owner wrap, then `shared_folder_keys` under the shared
-        // ROOT), the same path download, rename and zip use (task 2237b).
-        const fileKey = await getFileKeyForFile(file)
-        return { id: file.id, status: 'ok', fileKey, nameEncrypted: file.name_encrypted }
-      } catch (err) {
-        return { id: file.id, status: 'error', error: err }
-      }
-    }
-
-    async function decryptAll() {
-      const names: Record<string, string | null> = {}
-      const errors = new Map<string, unknown>()
-      // Files that still need a retry pass — initialized to all files, then
-      // narrowed each attempt to only those that failed.
-      let pending: DriveFile[] = files.slice()
-
-      for (let attempt = 0; attempt < MAX_ATTEMPTS && pending.length > 0; attempt++) {
-        if (cancelled) return
-
-        // Phase 1: derive keys in parallel.
-        const prepared = await Promise.all(pending.map(prepareOne))
-        if (cancelled) return
-
-        // Phase 2: one batched worker call for all rows that made it to "ok".
-        const batchInput = prepared
-          .filter((p): p is Extract<Prepared, { status: 'ok' }> => p.status === 'ok')
-          .map(({ id, fileKey, nameEncrypted }) => ({ id, fileKey, nameEncrypted }))
-
-        let batchResults: Awaited<ReturnType<typeof decryptManyNames>> = []
-        if (batchInput.length > 0) {
-          try {
-            batchResults = await decryptManyNames(batchInput)
-          } catch (err) {
-            // Whole-batch failure (worker crash, comlink disconnect, …) — treat
-            // every item in this batch as failed so the retry loop covers them.
-            for (const item of batchInput) errors.set(item.id, err)
-          }
-        }
-        if (cancelled) return
-
-        const resultById = new Map(batchResults.map((r) => [r.id, r]))
-        const stillFailing: DriveFile[] = []
-
-        for (const p of prepared) {
-          if (p.status === 'plaintext') {
-            names[p.id] = p.name
-            errors.delete(p.id)
-            continue
-          }
-          if (p.status === 'error') {
-            errors.set(p.id, p.error)
-            const f = pending.find((file) => file.id === p.id)
-            if (f) stillFailing.push(f)
-            continue
-          }
-          const r = resultById.get(p.id)
-          if (r && r.error === undefined && typeof r.name === 'string') {
-            names[p.id] = r.name
-            errors.delete(p.id)
-          } else {
-            errors.set(p.id, r?.error ?? errors.get(p.id) ?? new Error('decryption failed'))
-            const f = pending.find((file) => file.id === p.id)
-            if (f) stillFailing.push(f)
-          }
-        }
-
-        pending = stillFailing
-        if (pending.length > 0 && attempt < MAX_ATTEMPTS - 1) {
-          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)))
-        }
-      }
-
-      if (cancelled) return
-
-      // Anything still in `pending` after retries failed permanently.
-      for (const file of pending) {
-        names[file.id] = null
-        // eslint-disable-next-line no-console
-        console.error('[file-list] decryption failed', {
-          fileId: file.id,
-          error:
-            errors.get(file.id) instanceof Error
-              ? (errors.get(file.id) as Error).message
-              : String(errors.get(file.id)),
-        })
-      }
-      setDecryptedNames(names)
-    }
-    decryptAll()
-    return () => { cancelled = true }
-  }, [files, isUnlocked, getFileKeyForFile, externalDecryptedNames])
+  const decryptedNames = useDecryptedNames(files, externalDecryptedNames)
 
   useEffect(() => {
     onDecryptedNamesChange?.(decryptedNames)
   }, [decryptedNames, onDecryptedNamesChange])
 
-  /**
-   * Returns the display name for a file.
-   *
-   * - `undefined` in decryptedNames → decryption pending → returns null (caller shows skeleton)
-   * - `null` in decryptedNames      → decryption failed  → returns "Encrypted file"
-   * - `string` in decryptedNames    → success            → returns the name
-   *
-   * NEVER returns raw ciphertext JSON. The caller is responsible for rendering
-   * a skeleton when this returns null.
-   */
-  function displayName(file: DriveFile): string | null {
-    const cached = decryptedNames[file.id]
-    if (cached === undefined) return null      // pending — caller shows skeleton
-    if (cached === null) return 'Encrypted file' // failed
-    return cached                               // success
-  }
+  const displayName = (file: DriveFile) => displayNameFrom(decryptedNames, file)
 
   // ─── Thumbnails ────────────────────────────────────
-  const [thumbnails, setThumbnails] = useState<Record<string, string>>({})
-  const loadingThumbs = useRef(new Set<string>())
-  const thumbnailsRef = useRef(thumbnails)
-  useEffect(() => { thumbnailsRef.current = thumbnails }, [thumbnails])
-
-  const loadThumbnailRef = useRef<((fileId: string) => void) | null>(null)
-
-  const loadThumbnail = useCallback(async (fileId: string) => {
-    if (thumbnailsRef.current[fileId] || loadingThumbs.current.has(fileId)) return
-    loadingThumbs.current.add(fileId)
-    try {
-      const fileKey = await getFileKey(fileId)
-      const url = await fetchAndDecryptThumbnail(fileId, fileKey)
-      if (url) setThumbnails((prev) => ({ ...prev, [fileId]: url }))
-    } catch { /* ignore */ }
-  }, [getFileKey])
-
-  useEffect(() => {
-    loadThumbnailRef.current = loadThumbnail
-  }, [loadThumbnail])
-
-  const observerRef = useRef<IntersectionObserver | null>(null)
-  const thumbNodeRefs = useRef(new Map<string, HTMLElement>())
-
-  useEffect(() => {
-    if (!isUnlocked) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            const fileId = (entry.target as HTMLElement).dataset.fileId
-            if (fileId) loadThumbnailRef.current?.(fileId)
-          }
-        }
-      },
-      { threshold: 0.1, rootMargin: '100px' },
-    )
-    observerRef.current = observer
-    for (const el of thumbNodeRefs.current.values()) {
-      observer.observe(el)
-    }
-    return () => observer.disconnect()
-  }, [isUnlocked])
-
-  const setThumbRef = useCallback((fileId: string, el: HTMLElement | null) => {
-    if (el) {
-      thumbNodeRefs.current.set(fileId, el)
-      observerRef.current?.observe(el)
-    } else {
-      const existing = thumbNodeRefs.current.get(fileId)
-      if (existing) observerRef.current?.unobserve(existing)
-      thumbNodeRefs.current.delete(fileId)
-    }
-  }, [])
+  const { thumbnails, setThumbRef } = useFileThumbnails(isUnlocked)
 
   // ─── Selection ─────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set<string>())
@@ -739,13 +491,6 @@ export function FileList({
     return displayName(file) ?? ''
   }
 
-  function typeLabel(file: DriveFile): string {
-    if (file.is_folder) return 'Folder'
-    if (file.mime_type) return file.mime_type
-    // Extension is already shown in the colored badge — don't repeat it
-    return ''
-  }
-
   const sortedFiles = useMemo(() => {
     if (!sortable) return files
     return [...files].sort((a, b) => {
@@ -782,6 +527,20 @@ export function FileList({
 
   const allSelected = sortedFiles.length > 0 && selectedIds.size === sortedFiles.length
   const someSelected = selectedIds.size > 0 && selectedIds.size < sortedFiles.length
+
+  // T5.5: ask core for the id class of every listed row once per id. The F
+  // marker then reads this client's answer (`isForeignItemById`), never the
+  // server-supplied attribution columns.
+  const foreignClassKey = sortedFiles.map((f) => f.id).join(',')
+  const [foreignClassTick, setForeignClassTick] = useState(0)
+  useEffect(() => {
+    if (!foreignClassKey) return
+    let cancelled = false
+    void classifyItemIds(foreignClassKey.split(',')).then(() => {
+      if (!cancelled) setForeignClassTick((n) => n + 1)
+    })
+    return () => { cancelled = true }
+  }, [foreignClassKey])
 
   // ─── Row click handler ─────────────────────────────
   // Branching + the pending-select-timer clear/schedule decision live in
@@ -971,80 +730,91 @@ export function FileList({
       // decryptable via the same (request-key) path that reads it.
       // rv-web198c P2-4: a guest's or member's row is renamed under ITS key,
       // proven to open its current name (never the derived fall-through).
-      const fileKey = await renameKeyFor({
+      // SF-0002 round 2 (W4): the same write-time read-only check as the
+      // dialog rename runs first; a refused row is not PATCHed.
+      await renameOwnerRow({
         fileId: file.id,
         file,
+        newName,
         viewerId: null,
-        getFileKey: async () => getFileKeyForFile(file),
-        getFileKeyForFile,
+        residentUserId: getResidentUserId(),
+        masterKey: getMasterKey(),
+        getFileKey: async () => contentKeyBytes(await getFileKeyForFile(file, { plaintextChunk: true })),
+        getFileKeyForFile: (f) => getFileKeyForFile(f, { plaintextChunk: true }),
         readName: readFileMetadata,
+        sealRequestRename,
       })
-      const enc = await encryptFilename(fileKey, newName)
-      const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      await updateFile(file.id, { name_encrypted: nameEncrypted })
       onRefresh?.()
-    } catch {
-      showToast({ icon: 'x', title: 'Rename failed', description: 'Could not rename the file.', danger: true })
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Rename failed',
+        description: ownerWriteRefusal(err) ?? 'Could not rename the file.',
+        danger: true,
+      })
     }
   }
 
-  // ─── Row renderer ──────────────────────────────────
+  // ─── Row props ─────────────────────────────────────
   // `rowIndex` is the file's index into `sortedFiles`. With virtualization, the
   // DOM no longer contains adjacent rows for nextElementSibling-style traversal,
-  // so we use data-row-index to look up rows by position instead.
-  function renderRow(file: DriveFile, rowIndex: number) {
+  // so we use data-row-index to look up rows by position instead. The row
+  // itself is `FileRow`; all state and side effects stay here.
+  function rowFor(file: DriveFile, rowIndex: number): FileRowProps {
     // null = decryption still running for this file — show skeleton in name cell
     const name = displayName(file)
-    const fileType = getFileType(name ?? '', file.is_folder)
-    const isSelected = selectedIds.has(file.id)
-    const isDragTarget = file.is_folder && dragOverFolderId === file.id
-    const isDragging = draggedFileId === file.id
-    const isTrashing = trashingIds.has(file.id)
-    const isRecentUpload = recentlyUploadedIds.has(file.id)
-    const hasThumbnail = !!(file.has_thumbnail && isUnlocked)
-    const thumbUrl = thumbnails[file.id]
-
-    return (
-      <FileBrowserRow
-        key={file.id}
-        data-row-index={rowIndex}
-        draggable={!isTrashing}
-        tabIndex={0}
-        role="row"
-        aria-label={
-          file.is_folder
-            ? `${name ?? 'Folder'}, folder`
-            : `${name ?? 'Encrypted file'}, ${formatBytes(file.size_bytes)}, ${timeAgo(file.updated_at)}`
-        }
-        aria-selected={isSelected || undefined}
-        onDragStart={(e) => handleDragStart(e, file)}
-        onDragEnd={handleDragEnd}
-        onDragOver={(e) => handleDragOver(e, file)}
-        onDragLeave={(e) => handleDragLeave(e, file.id)}
-        onDrop={(e) => handleDrop(e, file)}
-        className={[
-          'grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px]',
-          'px-3 md:px-5 py-[11px]',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber',
-          isDragTarget
-            ? 'file-row--drag-target bg-amber-bg ring-2 ring-amber ring-inset'
-            : isSelected
-              ? 'file-row--selected bg-amber-bg/50'
-              : selectedFileId === file.id
-                ? 'bg-amber-bg/30'
-                : 'hover:bg-paper-2',
-          isDragging ? 'opacity-40' : '',
-          isTrashing ? 'trash-slide-out' : '',
-          isRecentUpload ? 'upload-glow' : '',
-        ].filter(Boolean).join(' ')}
+    return {
+      file,
+      rowIndex,
+      name,
+      selection: {
+        selectable,
+        isSelected: selectedIds.has(file.id),
+        isCurrent: selectedFileId === file.id,
+        anySelected: selectedIds.size > 0,
+      },
+      flags: {
+        isDragTarget: file.is_folder && dragOverFolderId === file.id,
+        isDragging: draggedFileId === file.id,
+        isTrashing: trashingIds.has(file.id),
+        isRecentUpload: recentlyUploadedIds.has(file.id),
+        isPinned: file.is_folder && pinnedFolderIds.has(file.id),
+        isStarPulse: starPulseId === file.id,
+        isDecryptPulse: decryptPulseId === file.id,
+        isUnlocked,
+        hasActiveShare: (file.share_count ?? 0) > 0 || !!sharedFileIds?.has(file.id),
+        canShowTrustDetails: !!onShowTrustDetails && !file.is_folder,
+        isForeign: foreignClassTick >= 0 && isForeignItemById(file.id),
+      },
+      thumbnail: {
+        enabled: !!(file.has_thumbnail && isUnlocked),
+        url: thumbnails[file.id],
+        folderColor: folderColors[file.id] ?? null,
+        viewerCount: folderViewerCounts?.[file.id],
+      },
+      inlineRename: {
+        editing: inlineRenameId === file.id,
+        value: inlineRenameValue,
+        inputRef: inlineRenameInputRef,
+        onChange: setInlineRenameValue,
+        commit: () => { void commitInlineRename(file) },
+        cancel: () => setInlineRenameId(null),
+      },
+      renderActions,
+      handlers: {
+        onDragStart: (e) => handleDragStart(e, file),
+        onDragEnd: handleDragEnd,
+        onDragOver: (e) => handleDragOver(e, file),
+        onDragLeave: (e) => handleDragLeave(e, file.id),
+        onDrop: (e) => { void handleDrop(e, file) },
         // Capture phase: runs before ANY nested control's onClick (checkbox,
         // star, share badges, lock, row actions, rename input — all of which
-        // stopPropagation and so never reach handleRowClick below), clearing a
+        // stopPropagation and so never reach the row's onClick), clearing a
         // debounced select-timer armed by an earlier non-previewable click.
         // See handleRowInteractionCapture in pending-select-timer.ts.
-        onClickCapture={() => handleRowInteractionCapture(pendingSelectTimerRef)}
-        onClick={(e) => handleRowClick(file, e)}
-        onDoubleClick={(e) => {
+        onInteractionCapture: () => handleRowInteractionCapture(pendingSelectTimerRef),
+        onClick: (e) => handleRowClick(file, e),
+        onDoubleClick: (e) => {
           e.stopPropagation()
           // A real dblclick DID land on this row (both native clicks reached
           // it) — cancel the debounced onSelectFile from the first click (of
@@ -1063,8 +833,8 @@ export function FileList({
               }),
             },
           )
-        }}
-        onContextMenu={(e) => {
+        },
+        onContextMenu: (e) => {
           e.preventDefault()
           // A right-click is a new action too — don't let a stale debounced
           // select pop a details panel over the context menu it opens.
@@ -1080,8 +850,8 @@ export function FileList({
             isStarred: file.is_starred ?? false,
             mimeType: file.mime_type ?? null,
           })
-        }}
-        onKeyDown={(e) => {
+        },
+        onKeyDown: (e) => {
           // Keyboard activation of ANY row must not let a stale debounced
           // select-timer from an earlier mouse click (on this row or a
           // different one) fire afterward — see pending-select-timer.ts.
@@ -1134,395 +904,58 @@ export function FileList({
             e.preventDefault()
             focusRowAtIndex(rowIndex - 1)
           }
-        }}
-      >
-        {/* Checkbox — shows on hover (or always when selected); drag grip shows on hover when nothing is selected */}
-        <span className="relative flex items-center justify-center">
-          {/* Drag grip — shows behind the checkbox when hovering and no selection is active */}
-          <span
-            className={`absolute inset-0 flex items-center justify-center transition-opacity text-ink-4 cursor-grab active:cursor-grabbing pointer-events-none ${
-              selectedIds.size === 0 ? 'opacity-0 group-hover:opacity-100' : 'opacity-0'
-            }`}
-            aria-hidden="true"
-          >
-            <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="3" cy="2" r="1.2" />
-              <circle cx="7" cy="2" r="1.2" />
-              <circle cx="3" cy="7" r="1.2" />
-              <circle cx="7" cy="7" r="1.2" />
-              <circle cx="3" cy="12" r="1.2" />
-              <circle cx="7" cy="12" r="1.2" />
-            </svg>
-          </span>
-          {/* Checkbox — on top of the grip; visible when selected or when items are already selected */}
-          <span
-            className={`relative z-10 transition-opacity ${
-              selectable && isSelected ? '' : 'opacity-0 group-hover:opacity-100'
-            }`}
-            onClick={(e) => selectable && handleCheckboxClick(file.id, e)}
-          >
-            {selectable && <BBCheckbox checked={isSelected} onChange={() => {}} />}
-          </span>
-        </span>
-
-        {/* Icon or thumbnail */}
-        {hasThumbnail ? (
-          <div
-            ref={(el) => setThumbRef(file.id, el as HTMLElement | null)}
-            data-file-id={file.id}
-            className="w-8 h-8 rounded-md overflow-hidden shrink-0 self-center"
-          >
-            {thumbUrl ? (
-              <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full bg-paper-3 flex items-center justify-center">
-                <FileIcon type={fileType} />
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="relative inline-flex shrink-0">
-            <FileIcon type={fileType} />
-            {file.is_folder && folderColors[file.id] && (
-              <span
-                aria-hidden="true"
-                style={{
-                  position: 'absolute',
-                  bottom: 0,
-                  right: 0,
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  backgroundColor: folderColors[file.id] as string,
-                  boxShadow: '0 0 0 1.5px var(--color-paper)',
-                }}
-              />
-            )}
-          </div>
-        )}
-
-        {/* Name column */}
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            {inlineRenameId === file.id ? (
-              <input
-                ref={inlineRenameInputRef}
-                className="font-medium bg-transparent border border-amber-deep rounded px-1 outline-none min-w-0 flex-1"
-                value={inlineRenameValue}
-                onChange={(e) => setInlineRenameValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); void commitInlineRename(file) }
-                  if (e.key === 'Escape') { e.preventDefault(); setInlineRenameId(null) }
-                }}
-                onBlur={() => { void commitInlineRename(file) }}
-                onClick={(e) => e.stopPropagation()}
-              />
-            ) : name !== null
-              ? <span className="font-medium truncate">{name}</span>
-              : <span
-                  className="inline-block rounded bg-paper-3 animate-pulse shrink-0"
-                  style={{ width: `${Math.max(60, (file.id.charCodeAt(0) % 80) + 60)}px`, height: '12px' }}
-                  aria-label="Loading…"
-                />
-            }
-            {/* Star toggle — filled when starred, outline when not */}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                onToggleStar?.(file.id)
-              }}
-              aria-label={file.is_starred ? 'Unstar' : 'Star'}
-              aria-pressed={!!file.is_starred}
-              className={`inline-flex items-center transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber rounded ${
-                file.is_starred
-                  ? 'text-amber-deep'
-                  : 'text-ink-4 opacity-0 group-hover:opacity-100 hover:text-amber-deep'
-              }${starPulseId === file.id ? ' star-pulse' : ''}`}
-            >
-              <Icon name="star" size={11} />
-            </button>
-
-            {/* Pin badge — shown when folder is pinned to Quick access */}
-            {file.is_folder && pinnedFolderIds.has(file.id) && (
-              <span
-                className="inline-flex items-center text-amber-deep"
-                title="Pinned to Quick access"
-                aria-label="Pinned to Quick access"
-              >
-                <Icon name="pin" size={10} />
-              </span>
-            )}
-
-            {/* Folder viewer badge — compact presence dots for shared folders */}
-            {file.is_folder && folderViewerCounts?.[file.id] && (folderViewerCounts[file.id].count > 0) && (
-              <FolderViewerBadge
-                count={folderViewerCounts[file.id].count}
-                emails={folderViewerCounts[file.id].emails}
-              />
-            )}
-
-            {/* Share badge — shown when file has active share links.
-                Falls back to `myShares` when share_count is stale (e.g.
-                immediately after creating a share, before the next refetch). */}
-            {((file.share_count ?? 0) > 0 || sharedFileIds?.has(file.id)) && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                  setSharePopover({ fileId: file.id, anchorRect: rect })
-                }}
-                aria-label={
-                  (file.share_count ?? 0) > 0
-                    ? `Manage ${file.share_count} active share${(file.share_count ?? 0) > 1 ? 's' : ''}`
-                    : 'Manage active share'
-                }
-                title="Shared"
-                className="inline-flex items-center gap-0.5 text-amber-deep hover:text-amber transition-colors cursor-pointer"
-              >
-                <Icon name="link" size={11} />
-                {(file.share_count ?? 0) > 1 && (
-                  <span className="font-mono text-[9px]">{file.share_count}</span>
-                )}
-              </button>
-            )}
-            {isUnlocked && (
-              onShowTrustDetails && !file.is_folder ? (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onShowTrustDetails(file)
-                  }}
-                  aria-label="Encryption details"
-                  className={`inline-flex items-center justify-center w-[18px] h-[18px] rounded-full text-amber-deep hover:bg-amber-bg transition-colors cursor-pointer ${decryptPulseId === file.id ? 'decrypt-pulse' : ''}`}
-                  title="View encryption details"
-                >
-                  <Icon name="lock" size={11} />
-                </button>
-              ) : (
-                <span className={decryptPulseId === file.id ? 'decrypt-pulse inline-flex' : 'inline-flex'}>
-                  <BBChip variant="amber">
-                    <span className="flex items-center gap-1 text-[9.5px]">
-                      <Icon name="lock" size={9} /> E2EE
-                    </span>
-                  </BBChip>
-                </span>
-              )
-            )}
-            {!file.is_folder && (file.version_number ?? 1) > 1 && (
-              <span
-                className="font-mono text-[9.5px] text-ink-3 bg-paper-3 border border-line rounded px-1 py-px tabular-nums"
-                title={`Version ${file.version_number}`}
-              >
-                v{file.version_number}
-              </span>
-            )}
-            {file.is_trashed && (
-              <BBChip variant="default" className="gap-1 py-0 text-[9.5px]">
-                <Icon name="trash" size={9} /> Deleted
-              </BBChip>
-            )}
-          </div>
-          <div className="text-[11px] text-ink-3 mt-0.5 flex items-center gap-1.5 flex-wrap">
-            {!file.is_folder && name !== null ? (() => {
-              const ext = name.split('.').pop()?.toLowerCase() ?? ''
-              const badgeStyle = getBadgeStyle(fileType)
-              return ext ? (
-                <span
-                  className="font-mono font-medium shrink-0 rounded px-[5px] py-px text-[10px] leading-tight"
-                  style={{ color: badgeStyle.color, background: badgeStyle.background }}
-                >
-                  {ext.toUpperCase()}
-                </span>
-              ) : null
-            })() : null}
-            <span className="truncate">{typeLabel(file)}</span>
-            {!file.is_folder && (
-              <>
-                <span className="md:hidden text-line-2">·</span>
-                <span className="md:hidden font-mono tabular-nums">{formatBytes(file.size_bytes)}</span>
-              </>
-            )}
-            <span className="md:hidden text-line-2">·</span>
-            <span className="md:hidden">{timeAgo(file.updated_at)}</span>
-          </div>
-          {!file.is_folder && (
-            <div className="font-mono text-[10.5px] text-ink-3 mt-0.5 truncate tabular-nums">
-              AES-256-GCM · {fileStorageCountry(file) ?? 'Europe'}
-            </div>
-          )}
-        </div>
-
-        {/* Size */}
-        <span className="hidden md:inline font-mono text-[13px] text-ink-3 tabular-nums self-center">
-          {file.is_folder ? '--' : formatBytes(file.size_bytes)}
-        </span>
-
-        {/* Modified */}
-        <span className="hidden md:inline text-[13px] text-ink-3 self-center">
-          {timeAgo(file.updated_at)}
-        </span>
-
-        {/* Shared indicator */}
-        <div className="hidden md:block self-center">
-          {(file.share_count ?? 0) > 0 ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                setSharePopover({ fileId: file.id, anchorRect: rect })
-              }}
-              aria-label={`${file.share_count} active share link${(file.share_count ?? 0) > 1 ? 's' : ''}`}
-              className="inline-flex items-center gap-1 text-[12px] text-amber-deep hover:text-amber transition-colors cursor-pointer font-medium"
-            >
-              <Icon name="link" size={12} />
-              {(file.share_count ?? 0) > 1 && <span className="font-mono text-[11px]">{file.share_count}</span>}
-            </button>
-          ) : (
-            <span className="text-[13px] text-ink-4">—</span>
-          )}
-        </div>
-
-        {/* Row actions */}
-        <div className="flex justify-end self-center">
-          {renderActions ? (
-            renderActions(file)
-          ) : (
-            <BBButton
-              size="sm"
-              variant="ghost"
-              className="md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-              aria-label="File actions"
-              onClick={(e) => {
-                e.stopPropagation()
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                setCtxMenu({
-                  open: true,
-                  x: rect.left,
-                  y: rect.bottom + 4,
-                  fileId: file.id,
-                  fileName: name ?? 'Encrypted file',
-                  isFolder: file.is_folder,
-                  versionNumber: file.version_number ?? 1,
-                  isStarred: file.is_starred ?? false,
-                  mimeType: file.mime_type ?? null,
-                })
-              }}
-            >
-              <Icon name="more" size={14} />
-            </BBButton>
-          )}
-        </div>
-      </FileBrowserRow>
-    )
+        },
+        onCheckboxClick: (e) => { if (selectable) handleCheckboxClick(file.id, e) },
+        onToggleStar: (e) => { e.stopPropagation(); onToggleStar?.(file.id) },
+        onShowTrustDetails: (e) => { e.stopPropagation(); onShowTrustDetails?.(file) },
+        onOpenShare: (e) => {
+          e.stopPropagation()
+          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+          setSharePopover({ fileId: file.id, anchorRect: rect })
+        },
+        onOpenMenu: (e) => {
+          e.stopPropagation()
+          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+          setCtxMenu({
+            open: true,
+            x: rect.left,
+            y: rect.bottom + 4,
+            fileId: file.id,
+            fileName: name ?? 'Encrypted file',
+            isFolder: file.is_folder,
+            versionNumber: file.version_number ?? 1,
+            isStarred: file.is_starred ?? false,
+            mimeType: file.mime_type ?? null,
+          })
+        },
+        setThumbRef: (el) => setThumbRef(file.id, el),
+      },
+    }
   }
+
 
   const hasBulkBar = selectable && (onBulkTrash ?? onBulkMove ?? onBulkShare ?? onBulkDownload)
 
   return (
     <>
-      {/* Sort button + column headers */}
-      {sortable && (
-        <>
-          <div className="px-3 md:px-5 py-1.5 border-b border-line bg-paper-2 flex items-center justify-end relative">
-            <button
-              type="button"
-              onClick={() => setSortMenuOpen((v) => !v)}
-              className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-ink-2 rounded hover:bg-paper hover:text-ink transition-colors"
-              aria-label={`Sort: ${SORT_OPTIONS.find((o) => o.key === sortKey)?.label ?? 'Sort'}`}
-              aria-haspopup="menu"
-              aria-expanded={sortMenuOpen}
-            >
-              <span className="text-ink-3">Sort:</span>
-              <span className="font-medium">{SORT_OPTIONS.find((o) => o.key === sortKey)?.label ?? 'Sort'}</span>
-              <Icon name="chevron-down" size={10} className="text-ink-3" />
-            </button>
-            {sortMenuOpen && (
-              <>
-                <div className="fixed inset-0 z-30" onClick={() => setSortMenuOpen(false)} />
-                <div
-                  role="menu"
-                  className="absolute right-3 md:right-5 top-full mt-0.5 z-40 bg-paper border border-line-2 rounded-md shadow-2 py-1 min-w-[200px]"
-                >
-                  {SORT_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.key}
-                      role="menuitemradio"
-                      aria-checked={opt.key === sortKey}
-                      onClick={() => { setSortKey(opt.key); setSortMenuOpen(false) }}
-                      className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-paper-2 transition-colors ${
-                        opt.key === sortKey ? 'text-ink font-medium' : 'text-ink-2'
-                      }`}
-                    >
-                      <span className="w-3 inline-flex">
-                        {opt.key === sortKey && <Icon name="check" size={10} />}
-                      </span>
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className={`${FILE_HEADER_BAR} grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px]`}>
-            <span className="flex items-center justify-center">
-              {selectable && sortedFiles.length > 0 && (
-                <BBCheckbox
-                  checked={allSelected}
-                  indeterminate={someSelected}
-                  onChange={() => {
-                    if (allSelected) clearSelection()
-                    else updateSelection(new Set(sortedFiles.map((f) => f.id)))
-                  }}
-                />
-              )}
-            </span>
-            <span />
-            {/* Name header — toggles name-asc / name-desc */}
-            <button
-              type="button"
-              onClick={() => setSortKey((k) => k === 'name-asc' ? 'name-desc' : 'name-asc')}
-              className={`flex items-center gap-1 ${FILE_HEADER_LABEL} hover:text-ink transition-colors cursor-pointer select-none`}
-              aria-label="Sort by name"
-            >
-              Name
-              <span className="text-[9px] leading-none">
-                {sortKey === 'name-asc' ? '↑' : sortKey === 'name-desc' ? '↓' : <span className="opacity-30">↕</span>}
-              </span>
-            </button>
-            {/* Size header — toggles size-desc / size-asc */}
-            <button
-              type="button"
-              onClick={() => setSortKey((k) => k === 'size-desc' ? 'size-asc' : 'size-desc')}
-              className={`hidden md:flex items-center gap-1 ${FILE_HEADER_LABEL} hover:text-ink transition-colors cursor-pointer select-none`}
-              aria-label="Sort by size"
-            >
-              Size
-              <span className="text-[9px] leading-none">
-                {sortKey === 'size-desc' ? '↓' : sortKey === 'size-asc' ? '↑' : <span className="opacity-30">↕</span>}
-              </span>
-            </button>
-            {/* Modified header — toggles modified-desc / modified-asc */}
-            <button
-              type="button"
-              onClick={() => setSortKey((k) => k === 'modified-desc' ? 'modified-asc' : 'modified-desc')}
-              className={`hidden md:flex items-center gap-1 ${FILE_HEADER_LABEL} hover:text-ink transition-colors cursor-pointer select-none`}
-              aria-label="Sort by modified date"
-            >
-              Modified
-              <span className="text-[9px] leading-none">
-                {sortKey === 'modified-desc' ? '↓' : sortKey === 'modified-asc' ? '↑' : <span className="opacity-30">↕</span>}
-              </span>
-            </button>
-            <span className={`hidden md:inline ${FILE_HEADER_LABEL}`}>Shared</span>
-            <span />
-          </div>
-        </>
-      )}
+      <FileListHeader
+        sortKey={sortKey}
+        sortMenuOpen={sortMenuOpen}
+        onToggleSortMenu={() => setSortMenuOpen((v) => !v)}
+        onCloseSortMenu={() => setSortMenuOpen(false)}
+        onSelectSort={(key) => { setSortKey(key); setSortMenuOpen(false) }}
+        onToggleNameSort={() => setSortKey((k) => k === 'name-asc' ? 'name-desc' : 'name-asc')}
+        onToggleSizeSort={() => setSortKey((k) => k === 'size-desc' ? 'size-asc' : 'size-desc')}
+        onToggleModifiedSort={() => setSortKey((k) => k === 'modified-desc' ? 'modified-asc' : 'modified-desc')}
+        selectable={selectable}
+        totalCount={sortedFiles.length}
+        allSelected={allSelected}
+        someSelected={someSelected}
+        onToggleAll={() => {
+          if (allSelected) clearSelection()
+          else updateSelection(new Set(sortedFiles.map((f) => f.id)))
+        }}
+      />
 
       {/* File list body — role=rowgroup + aria-label lets screen readers announce the list.
           This div is the scroll container; the virtualizer measures it. Upload
@@ -1579,7 +1012,7 @@ export function FileList({
                       {item.label}
                     </div>
                   ) : (
-                    renderRow(item.file, item.rowIndex)
+                    <FileRow {...rowFor(item.file, item.rowIndex)} />
                   )}
                 </div>
               )

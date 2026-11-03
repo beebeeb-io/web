@@ -1,3 +1,4 @@
+// The account activity panel: recent sign-ins and security events with device detail.
 import { useState, useEffect, useCallback } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { Icon, type IconName } from '@beebeeb/shared'

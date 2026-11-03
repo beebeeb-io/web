@@ -24,7 +24,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build && node gen-wasm-sri.mjs",
+    "build": "tsc --noEmit && vite build && node gen-wasm-sri.mjs && bun scripts/check-storage-csp.ts --check",
     "preview": "vite preview",
     "test": "bun test",
     "test:order": "bash scripts/test-order-guard.sh",
@@ -96,6 +96,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.7.0",
     "dotenv": "^17.4.2",
+    "openapi-typescript": "7.13.0",
     "otplib": "^13.4.1",
     "tailwindcss": "^4.2.4",
     "typescript": "^7.0.2",

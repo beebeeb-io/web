@@ -12,7 +12,14 @@
 // an earlier generation may have filled with double-encoded (br + gzip)
 // responses. This comment also changes sw.js's own bytes, so browsers that
 // only byte-compare the top-level script still install the update.
+// LD-0001 PR-B: media-stream-logic.js holds the /sw-stream/ range responder's
+// pure decisions (range parse, M4 headers, the request filter, the claim
+// check); this file only wires them to clients, ports and ReadableStreams.
+// That route is checked BEFORE office or any caching, and it never touches
+// Cache Storage (contract §6 M4). This line also changes sw.js's bytes again
+// so browsers pick the update up.
 importScripts('/office-cache-logic.js')
+importScripts('/media-stream-logic.js')
 
 const CACHE = 'beebeeb-v2'
 const OFFLINE_URL = '/offline.html'
@@ -26,6 +33,38 @@ const downloads = new Map()
 // Stale download cleanup: a download is dropped if the page never opens
 // the URL within this window. Avoids leaking ReadableStreams.
 const DOWNLOAD_TTL_MS = 60_000
+
+// ── LD-0001 PR-B: /sw-stream/ media streaming ───────────────────────────────
+//
+// The page owns the keys and the plaintext; this worker is a stateless byte
+// relay (contract §2.1). A registry entry is created by 'register-stream'
+// from the page and holds the MessagePort that answers `pull` with `data`.
+// Nothing on this path writes to Cache Storage, and a navigation to
+// /sw-stream/ is never answered here (it falls through to the navigation
+// handler below).
+const streamClock = {
+  now: () => Date.now(),
+  setTimeout: (cb, ms) => setTimeout(cb, ms),
+  clearTimeout: (id) => clearTimeout(id),
+}
+
+// The relay (registry, per-response bodies, claims, the page's stream
+// messages) lives in media-stream-logic.js so it runs under `bun test`
+// (test/ld-0001-b-r3.test.ts); this file only hands it `self.clients`.
+const streamRelay = BBMediaStreamLogic.createStreamRelay({
+  clock: streamClock,
+  matchAll: () => self.clients.matchAll({ type: 'window', includeUncontrolled: true }),
+})
+
+// The route itself is pure (media-stream-logic.js). `cacheStore` is passed so
+// the test can prove this path never opens or writes Cache Storage.
+const streamRoute = BBMediaStreamLogic.createStreamRoute({
+  registry: streamRelay.registry,
+  clock: streamClock,
+  claim: streamRelay.claim,
+  createBody: streamRelay.createBody,
+  cacheStore: caches,
+})
 
 self.addEventListener('install', e => {
   e.waitUntil(
@@ -117,6 +156,9 @@ self.addEventListener('message', e => {
     return
   }
 
+  // LD-0001 PR-B: register-stream / close-stream / stream-claim-reply.
+  if (streamRelay.onMessage(data, e.source && e.source.id)) return
+
   if (data.type === 'ping') {
     e.source && e.source.postMessage({ type: 'pong' })
     return
@@ -156,6 +198,23 @@ async function handleOfficeAssetFetch(request, pathname) {
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url)
+
+  // LD-0001 PR-B: the stream route is checked BEFORE office or any caching.
+  // route() is synchronous: for a navigation (or a non-stream path) it returns
+  // null, so no respondWith happens and no registry lookup either — the
+  // request falls through to the navigation handler at the bottom.
+  const stream = streamRoute(e.request, e.clientId, e.resultingClientId)
+  if (stream) {
+    e.respondWith(
+      stream.response.catch(() =>
+        new Response('Stream not found', {
+          status: 404,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
+        }),
+      ),
+    )
+    return
+  }
 
   if (BBOfficeCacheLogic.isOfficeAssetPath(url.pathname)) {
     e.respondWith(handleOfficeAssetFetch(e.request, url.pathname))

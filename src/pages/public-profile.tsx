@@ -1,3 +1,4 @@
+// The public profile share route.
 import { useCallback, useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { BBButton, BBLogo } from '@beebeeb/shared'

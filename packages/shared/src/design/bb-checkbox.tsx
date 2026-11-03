@@ -1,3 +1,4 @@
+// The shared BBCheckbox design-system control.
 import { useId } from 'react'
 import { Icon } from './icons'
 

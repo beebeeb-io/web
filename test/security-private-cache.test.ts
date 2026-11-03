@@ -101,7 +101,7 @@ test('lock/logout wiring invokes both cache purges and drive checks its captured
     expect(source).toContain('clearThumbnailCache()')
   }
   expect(keys).toContain('setOfflineCacheAccessCheck(() => masterKeyRef.current !== null')
-  const drive = await Bun.file(new URL('../src/pages/drive.tsx', import.meta.url)).text()
+  const drive = await Bun.file(new URL('../src/pages/drive/use-drive-files.ts', import.meta.url)).text()
   const fetch = drive.slice(drive.indexOf('const fetchFiles ='), drive.indexOf('// Latest-callback refs'))
   expect(fetch).toContain('const cacheScope = getOfflineCacheScope()')
   expect(fetch.match(/isCurrentOfflineCacheScope\(cacheScope\)/g)?.length).toBe(5)

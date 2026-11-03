@@ -1,3 +1,4 @@
+// The chrome around a guest folder link: branding and lock state.
 import type { ReactNode } from 'react'
 import { Icon } from '@beebeeb/shared'
 import { BBLogo } from '../bb-logo'

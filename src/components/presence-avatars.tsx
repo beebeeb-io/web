@@ -1,3 +1,4 @@
+// The folder-presence avatar stack and viewer lookup.
 import { useState, useEffect, useRef } from 'react'
 import { getFolderMembers } from '../lib/api'
 

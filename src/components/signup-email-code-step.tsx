@@ -1,3 +1,4 @@
+// The signup email-verification code step.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { signupEmailStart, signupEmailVerify } from '../lib/api'

@@ -1,3 +1,4 @@
+// The top banner shown while the connection is offline.
 import { useEffect, useState } from 'react'
 import { Icon } from '@beebeeb/shared'
 import { registerConnectionStatusHandler } from '../lib/api'

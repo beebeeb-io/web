@@ -1,3 +1,4 @@
+// Signup E2E helpers: unique email, form fill, pilot-key retry, password step.
 import { expect, type Page } from '@playwright/test'
 import { waitForSignupCode } from './mail-sink'
 

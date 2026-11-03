@@ -1,3 +1,4 @@
+// The settings profile page.
 import { useState, useEffect, useCallback } from 'react'
 import { SettingsShell, SettingsHeader, SettingsRow } from '../../components/settings-shell'
 import { BBInput } from '@beebeeb/shared'

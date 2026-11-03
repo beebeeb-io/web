@@ -1,3 +1,4 @@
+// The empty state for the activity view.
 import { EmptyState } from './empty-state'
 
 interface EmptyActivityProps {

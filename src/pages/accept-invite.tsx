@@ -1,3 +1,4 @@
+// The /accept-invite route: joins an invited account to a shared folder.
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Icon } from '@beebeeb/shared'

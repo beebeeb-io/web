@@ -1,3 +1,4 @@
+// Verifies a recovered key against the account and backfills the recovery check.
 import { ApiError } from '@beebeeb/shared'
 
 /**

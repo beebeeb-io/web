@@ -1,6 +1,152 @@
 /* @ts-self-types="./beebeeb_wasm.d.ts" */
 
 /**
+ * Opaque handle holding ONLY the derived client-metadata key (task 1922).
+ *
+ * Make it once when the vault unlocks, free it on lock. List views and SSE
+ * frames call `seal` / `open` / `openMany` on the handle, so the master key is
+ * not copied into WASM memory on every frame. The derived key never leaves
+ * Rust; the handle is zeroized on drop and `free()` is wasm-bindgen's own.
+ */
+export class ClientMetaKey {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ClientMetaKeyFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_clientmetakey_free(ptr, 0);
+    }
+    /**
+     * Derive the key from a 32-byte master key. The bytes are taken into a
+     * `Zeroizing` buffer and the master key is dropped before returning.
+     * @param {Uint8Array} master_key
+     */
+    constructor(master_key) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.clientmetakey_new(retptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            this.__wbg_ptr = r0 >>> 0;
+            ClientMetaKeyFinalization.register(this, this.__wbg_ptr, this);
+            return this;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Open one field's `bbcm1.` envelope.
+     * @param {string} record_key
+     * @param {string | null | undefined} device_key
+     * @param {number} field
+     * @param {string} envelope
+     * @returns {string}
+     */
+    open(record_key, device_key, field, envelope) {
+        let deferred5_0;
+        let deferred5_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(record_key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            var ptr1 = isLikeNone(device_key) ? 0 : passStringToWasm0(device_key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            var len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(envelope, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len2 = WASM_VECTOR_LEN;
+            wasm.clientmetakey_open(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1, field, ptr2, len2);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            var ptr4 = r0;
+            var len4 = r1;
+            if (r3) {
+                ptr4 = 0; len4 = 0;
+                throw takeObject(r2);
+            }
+            deferred5_0 = ptr4;
+            deferred5_1 = len4;
+            return getStringFromWasm0(ptr4, len4);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred5_0, deferred5_1, 1);
+        }
+    }
+    /**
+     * Open many rows in one call: `items` is
+     * `[{ recordKey, deviceKey?, field, envelope? }]`; the result is
+     * `[{ ok: bool, value?: string }]`. One bad row never fails the batch: a
+     * null envelope, a bad field or UUID, a malformed row and a failed open
+     * each yield `{ ok: false }` for that row only.
+     * @param {any} items
+     * @returns {any}
+     */
+    openMany(items) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.clientmetakey_openMany(retptr, this.__wbg_ptr, addHeapObject(items));
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Seal one field. `device_key` must be `null` for field 1 and set for 2-4.
+     * @param {string} record_key
+     * @param {string | null | undefined} device_key
+     * @param {number} field
+     * @param {string} plaintext
+     * @returns {string}
+     */
+    seal(record_key, device_key, field, plaintext) {
+        let deferred5_0;
+        let deferred5_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(record_key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            var ptr1 = isLikeNone(device_key) ? 0 : passStringToWasm0(device_key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            var len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(plaintext, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len2 = WASM_VECTOR_LEN;
+            wasm.clientmetakey_seal(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1, field, ptr2, len2);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            var ptr4 = r0;
+            var len4 = r1;
+            if (r3) {
+                ptr4 = 0; len4 = 0;
+                throw takeObject(r2);
+            }
+            deferred5_0 = ptr4;
+            deferred5_1 = len4;
+            return getStringFromWasm0(ptr4, len4);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred5_0, deferred5_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) ClientMetaKey.prototype[Symbol.dispose] = ClientMetaKey.prototype.free;
+
+/**
  * k-anonymity breach check for one password. Core hashes and matches; **JS
  * makes the HTTP call**, to the endpoint the onboarding document declares in
  * `policy.password.breach_check.endpoint` (Beebeeb's own API, never a third
@@ -376,6 +522,62 @@ export class WasmChunkEncryptor {
                 throw takeObject(r1);
             }
             return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Create a push-form encryptor for a NEW row minted by
+     * `newOwnerItemId`/`newForeignItemId` (task 2275, L13).
+     *
+     * The id comes from the handle; the content key is core's derivation under
+     * that id, which is also the member's rule for a new foreign item.
+     * @param {WasmNewItemId} item_id
+     * @param {bigint} file_size
+     * @param {string} profile
+     * @returns {WasmChunkEncryptor}
+     */
+    static forNewItem(item_id, file_size, profile) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            _assertClass(item_id, WasmNewItemId);
+            const ptr0 = passStringToWasm0(profile, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmchunkencryptor_forNewItem(retptr, item_id.__wbg_ptr, file_size, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return WasmChunkEncryptor.__wrap(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Create a push-form replacement encryptor for a resolved row (task 2275,
+     * L13). The key, the id and the recorded chunk-format pin all come from the
+     * `WasmWriteTarget`, so a caller cannot drop a recorded v2 pin.
+     * @param {WasmWriteTarget} target
+     * @param {bigint} file_size
+     * @param {string} profile
+     * @returns {WasmChunkEncryptor}
+     */
+    static forTarget(target, file_size, profile) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            _assertClass(target, WasmWriteTarget);
+            const ptr0 = passStringToWasm0(profile, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmchunkencryptor_forTarget(retptr, target.__wbg_ptr, file_size, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return WasmChunkEncryptor.__wrap(r0);
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
@@ -817,6 +1019,16 @@ export class WasmDownloadPlanner {
         }
     }
     /**
+     * The ciphertext length of chunk `index` once the first window was accepted, else `null`.
+     * The link's `length` is this number; the caller checks a storage answer against it.
+     * @param {number} index
+     * @returns {number | null}
+     */
+    chunkLength(index) {
+        const ret = wasm.wasmdownloadplanner_chunkLength(this.__wbg_ptr, index);
+        return takeObject(ret);
+    }
+    /**
      * Chunk `index` arrived but did not authenticate when decrypted.
      * @param {number} index
      */
@@ -1082,6 +1294,179 @@ export class WasmDownloadPlanner {
     }
 }
 if (Symbol.dispose) WasmDownloadPlanner.prototype[Symbol.dispose] = WasmDownloadPlanner.prototype.free;
+
+/**
+ * An opaque new-item id minted by core for one master key (task 2275, L13).
+ *
+ * There is no constructor from text and no export that turns arbitrary id text
+ * into a sealer input: a new-item write can only use an id core minted (or
+ * resumed from a persisted id + tag) for this master key. `idText` is the wire
+ * form; `tag` is the resume tag to persist with the upload session.
+ */
+export class WasmNewItemId {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(WasmNewItemId.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmNewItemIdFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmNewItemIdFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmnewitemid_free(ptr, 0);
+    }
+    /**
+     * The canonical id text to send on the wire.
+     * @returns {string}
+     */
+    get idText() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmnewitemid_idText(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * The resume tag to persist with the upload session (32 bytes).
+     * @returns {Uint8Array}
+     */
+    get tag() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmnewitemid_tag(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v1 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+}
+if (Symbol.dispose) WasmNewItemId.prototype[Symbol.dispose] = WasmNewItemId.prototype.free;
+
+/**
+ * A request row's decrypt-only content reader (task 2275 §15; 2326 delta2
+ * P2-2). It owns a copy of the row's content key `C`, bound to the row's file
+ * id and recorded chunk-format pin; the key is zeroized when the reader drops
+ * and no getter exposes it.
+ *
+ * `decryptor()` returns a FRESH sequential [`WasmChunkDecryptor`] at chunk 0
+ * on every call (retry after a mid-stream error); `openFrame(...)` opens ONE
+ * frame by index for a seek / range read.
+ */
+export class WasmRequestContentReader {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(WasmRequestContentReader.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmRequestContentReaderFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmRequestContentReaderFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmrequestcontentreader_free(ptr, 0);
+    }
+    /**
+     * The row's recorded chunk-format pin: 0 = unrecorded, 2 = v2.
+     * @returns {number}
+     */
+    get chunkFormat() {
+        const ret = wasm.wasmrequestcontentreader_chunkFormat(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * A FRESH sequential decryptor at chunk 0. Call again after any error.
+     *
+     * Retry contract: discard EVERYTHING the failed attempt produced; never
+     * splice attempt 1's prefix with attempt 2's suffix (after a replace that
+     * splices two uploads of one id). The failed cursor is not poisoned
+     * (`open_next` does not advance `next_index` on an error), but the output
+     * must still be rebuilt from frame 0.
+     * @returns {WasmChunkDecryptor}
+     */
+    decryptor() {
+        const ret = wasm.wasmrequestcontentreader_decryptor(this.__wbg_ptr);
+        return WasmChunkDecryptor.__wrap(ret);
+    }
+    /**
+     * The file id every frame of this row must be bound to.
+     * @returns {string}
+     */
+    get fileId() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmrequestcontentreader_fileId(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Open ONE content frame at `index` without the frames before it (seek /
+     * range read). `isLast = index == chunkCount - 1`. `format` (1 = v1,
+     * 2 = v2) and `versionId` (12 bytes, v2 only) must come from authenticated
+     * data. When the row is pinned to v2, `format: 1` is refused.
+     * @param {Uint8Array} version_id
+     * @param {number} index
+     * @param {boolean} is_last
+     * @param {number} format
+     * @param {Uint8Array} frame
+     * @returns {Uint8Array}
+     */
+    openFrame(version_id, index, is_last, format, frame) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(version_id, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passArray8ToWasm0(frame, wasm.__wbindgen_export);
+            const len1 = WASM_VECTOR_LEN;
+            wasm.wasmrequestcontentreader_openFrame(retptr, this.__wbg_ptr, ptr0, len0, index, is_last, format, ptr1, len1);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            if (r3) {
+                throw takeObject(r2);
+            }
+            var v3 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+            return v3;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+}
+if (Symbol.dispose) WasmRequestContentReader.prototype[Symbol.dispose] = WasmRequestContentReader.prototype.free;
 
 /**
  * A stateful, client-side search index over a vault's file names.
@@ -1833,6 +2218,310 @@ export class WasmSignupCeremony {
 if (Symbol.dispose) WasmSignupCeremony.prototype[Symbol.dispose] = WasmSignupCeremony.prototype.free;
 
 /**
+ * A storage GET's body as the bytes arrive, counted in core so no client counts its own.
+ * `WasmStorageBody.fromHead(status, contentLength, expected)` starts it; `push(n)` counts the bytes
+ * read and throws as soon as they would pass the grant; `finish()` gives `{ kind: "stored" }` or
+ * `{ kind: "failed", status: 200 }` and consumes the handle. Every count crosses as a JS number.
+ * Because `finish()` takes the handle by value, a JS `push` after `finish` throws wasm-bindgen's
+ * moved-value error, which has no `code` (the count was consumed; there is nothing left to count).
+ */
+export class WasmStorageBody {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(WasmStorageBody.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmStorageBodyFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmStorageBodyFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmstoragebody_free(ptr, 0);
+    }
+    /**
+     * The body's answer; the handle is consumed.
+     * @returns {DirectStorageGet}
+     */
+    finish() {
+        try {
+            const ptr = this.__destroy_into_raw();
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmstoragebody_finish(retptr, ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Start counting. `status` is the head's HTTP status and must be a whole number that fits a
+     * `u16`; `content_length` is the head's `Content-Length` (or `null`). Throws `status_invalid`
+     * for a status that is not one, and `failed` (with its `status`) when the head is not a `200`
+     * whose length is exactly `expected`.
+     * @param {number} status
+     * @param {number | null | undefined} content_length
+     * @param {number} expected
+     * @returns {WasmStorageBody}
+     */
+    static fromHead(status, content_length, expected) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmstoragebody_fromHead(retptr, status, !isLikeNone(content_length), isLikeNone(content_length) ? 0 : content_length, expected);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return WasmStorageBody.__wrap(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Count `n` more bytes read. Throws `failed` (with its `status`) as soon as they would pass
+     * `expected`, so the caller stops reading.
+     * @param {number} n
+     */
+    push(n) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmstoragebody_push(retptr, this.__wbg_ptr, n);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+}
+if (Symbol.dispose) WasmStorageBody.prototype[Symbol.dispose] = WasmStorageBody.prototype.free;
+
+/**
+ * An opaque write target issued by `resolveOwnedKey` (task 2275, L13).
+ *
+ * A replacement is sealed through this handle only: the id, the key and the
+ * chunk-format pin all come from core's resolution, so a caller cannot point a
+ * write at another row or drop a recorded v2 pin.
+ */
+export class WasmWriteTarget {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(WasmWriteTarget.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmWriteTargetFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmWriteTargetFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmwritetarget_free(ptr, 0);
+    }
+    /**
+     * The row id the write must target.
+     * @returns {string}
+     */
+    get itemId() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmwritetarget_itemId(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * The chunk-format pin the write must keep (0 = unrecorded, 2 = v2).
+     * @returns {number}
+     */
+    get pin() {
+        const ret = wasm.wasmwritetarget_pin(this.__wbg_ptr);
+        return ret;
+    }
+}
+if (Symbol.dispose) WasmWriteTarget.prototype[Symbol.dispose] = WasmWriteTarget.prototype.free;
+
+/**
+ * The archive/extract rule: [`path_safety::archive_component`], the portable
+ * sanitizer above. Named for the caller that extracts entries, so the intent is
+ * on the call site; it never drops a name silently.
+ * @param {string} name
+ * @returns {string}
+ */
+export function archiveEntryName(name) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.archiveEntryName(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Build `{app_url}/{s|f}/{token}#key={key}`. `route` is `"s"` (the default
+ * when omitted or `null`) or `"f"`.
+ * @param {string} app_url
+ * @param {string} token
+ * @param {string} key
+ * @param {string | null} [route]
+ * @returns {string}
+ */
+export function buildShareLink(app_url, token, key, route) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(app_url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(token, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(route) ? 0 : passStringToWasm0(route, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len3 = WASM_VECTOR_LEN;
+        wasm.buildShareLink(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr5 = r0;
+        var len5 = r1;
+        if (r3) {
+            ptr5 = 0; len5 = 0;
+            throw takeObject(r2);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred6_0, deferred6_1, 1);
+    }
+}
+
+/**
+ * Check one server-provided name (a single component, never a path).
+ *
+ * `portable` selects the strict cross-platform rule set (what a pulled tree or
+ * an archive must satisfy); `windows` says the caller will write it with
+ * Windows path semantics. Returns normally when the name is safe, throws the
+ * user-facing reason otherwise (e.g. `contains a path separator`).
+ * @param {string} name
+ * @param {boolean} portable
+ * @param {boolean} windows
+ */
+export function checkPathComponent(name, portable, windows) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.checkPathComponent(retptr, ptr0, len0, portable, windows);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        if (r1) {
+            throw takeObject(r0);
+        }
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Was the body a storage GET actually delivered the chunk? Same answer shape as
+ * `checkStorageGet`, but decided by the counted bytes: `stored` only when `received` is
+ * exactly `expected`. `Content-Length` is only the head; a truncated stream ends short.
+ * @param {number} received
+ * @param {number} expected
+ * @returns {DirectStorageGet}
+ */
+export function checkStorageBody(received, expected) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.checkStorageBody(retptr, received, expected);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Was a storage GET answer the chunk we asked for? `{ kind: "stored" }` or
+ * `{ kind: "failed", status }`; a caller with no HTTP answer passes status `0` (exactly what
+ * `WasmStorageBody.fromHead` reports for it). Only a `200` whose `Content-Length` is exactly
+ * `expected` is `stored`.
+ * `status` crosses as a JS number and is validated exactly as `WasmStorageBody.fromHead` validates
+ * it: a whole number in `0..=65535`, else `status_invalid`. `undefined` is not a number and throws
+ * `status_invalid` too, so a caller cannot omit the answer it means to report.
+ * @param {number} status
+ * @param {number | null | undefined} content_length
+ * @param {number} expected
+ * @returns {DirectStorageGet}
+ */
+export function checkStorageGet(status, content_length, expected) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.checkStorageGet(retptr, status, !isLikeNone(content_length), isLikeNone(content_length) ? 0 : content_length, expected);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * May the client follow this storage link? Throws an `Error` whose `code` is
  * the refusal (`malformed`, `not_https`, `userinfo`, `ip_literal`, `loopback`,
  * `bad_host`, `port`, `host_not_listed`, `bucket_not_listed`, `bad_path`); the
@@ -1855,6 +2544,42 @@ export function checkStorageUrl(url, discovery, api_base) {
         if (r1) {
             throw takeObject(r0);
         }
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * L14: does this row's L7 wrap open to exactly `expectedKey`?
+ * @param {Uint8Array} folder_key
+ * @param {string} shared_folder_id
+ * @param {string} item_id
+ * @param {number} kind
+ * @param {Uint8Array} wrapped
+ * @param {Uint8Array} expected_key
+ * @returns {boolean}
+ */
+export function childWrapMatches(folder_key, shared_folder_id, item_id, kind, wrapped, expected_key) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(shared_folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(wrapped, wasm.__wbindgen_export);
+        const len3 = WASM_VECTOR_LEN;
+        const ptr4 = passArray8ToWasm0(expected_key, wasm.__wbindgen_export);
+        const len4 = WASM_VECTOR_LEN;
+        wasm.childWrapMatches(retptr, ptr0, len0, ptr1, len1, ptr2, len2, kind, ptr3, len3, ptr4, len4);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return r0 !== 0;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -1964,6 +2689,33 @@ export function compute_recovery_check(master_key) {
         var v2 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export4(r0, r1 * 1, 1);
         return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Decode any accepted stored form of the metadata envelope.
+ *
+ * Throws an `Error` whose message starts with `invalid input:` — the core
+ * error's own text — for invalid JSON, a missing/non-byte field, an unknown
+ * cipher suite, or a `null` field. Fields core does not know are ignored.
+ * @param {string} payload
+ * @returns {any}
+ */
+export function decodeMetadataEnvelope(payload) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(payload, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.decodeMetadataEnvelope(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -2618,9 +3370,11 @@ export function directDownloadGrantsPath(file_id) {
 /**
  * `{ cap_object_download_v1, cap_object_upload_v1, capabilities_header,
  * discovery_path, max_window, default_window, chunk_overhead,
+ * max_discovery_body_bytes, max_grant_body_bytes, max_chunk_body_bytes,
  * storage_connect_timeout_ms, storage_get_idle_ms, discovery_timeout_ms,
  * api_call_timeout_ms, background_put_resource_timeout_ms }`: the contract's
- * names and numbers, and the time bounds every client applies, so no client re-types them.
+ * names and numbers, the response caps and the time bounds every client applies,
+ * so no client re-types them.
  * @returns {any}
  */
 export function directTransferConstants() {
@@ -2634,6 +3388,274 @@ export function directTransferConstants() {
             throw takeObject(r1);
         }
         return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Serialize a nonce + ciphertext pair into the canonical wire format.
+ *
+ * Returns `{"ciphertext":"<base64>","nonce":"<base64>"}` — byte-identical to
+ * `beebeeb_core::metadata_wire::serialize_encrypted_metadata`. Never emits a
+ * `cipher_suite`: the writer is frozen.
+ *
+ * Throws for a nonce that is not exactly 12 bytes (AES-GCM's nonce length).
+ *
+ * # Names, thumbnails and notes are not this pair
+ *
+ * The envelope is generic: no AAD, no field identity, so a reader can open a
+ * value sealed for one field as if it were another. The fields are kept
+ * apart by PURPOSE SUBKEY: one per-file HKDF subkey per purpose
+ * (`beebeeb/name/v1`, `beebeeb/thumb/v1`, `beebeeb/note/v1` in core's
+ * `encrypt`). Subkeys apply to a file whose metadata records a v2 pin —
+ * every name, thumbnail and note write for that file is subkey-sealed — and
+ * to every write once the gated core `WRITE_FORMAT` switch flips. Until then
+ * core's `METADATA_SEAL_WRITE` is `Legacy`, so a non-v2 file's names,
+ * thumbnails and notes are sealed under the raw file key.
+ *
+ * Use `encryptNameForNewItem` / `encryptNameForTarget` for a name,
+ * `encryptThumbnailForNewItem` / `encryptThumbnailForTarget` for a
+ * thumbnail, and `encryptNoteForNewItem` / `encryptNoteForTarget` for a
+ * note. Read them with `decrypt_file_metadata`, `decrypt_note` and
+ * `decrypt_thumbnail` (snake_case: these exports have no `js_name`). Never
+ * use `decrypt_metadata` for them: it checks no AAD and cannot tell which
+ * field a value was sealed for.
+ * @param {Uint8Array} nonce
+ * @param {Uint8Array} ciphertext
+ * @returns {string}
+ */
+export function encodeMetadataEnvelope(nonce, ciphertext) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(nonce, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(ciphertext, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.encodeMetadataEnvelope(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Seal a name for a NEW row minted by `newOwnerItemId`/`newForeignItemId`.
+ *
+ * The id handle decides the key (L12): an owner id derives it. A new foreign
+ * id is refused (an F id never derives its name key) — an F name is sealed
+ * through the `writeTarget` it gets after adoption; only its content goes
+ * through `WasmChunkEncryptor.forNewItem`.
+ * @param {WasmNewItemId} item_id
+ * @param {string} filename
+ * @param {string | null | undefined} mime_type
+ * @param {number} pin
+ * @returns {string}
+ */
+export function encryptNameForNewItem(item_id, filename, mime_type, pin) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        _assertClass(item_id, WasmNewItemId);
+        const ptr0 = passStringToWasm0(filename, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(mime_type) ? 0 : passStringToWasm0(mime_type, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.encryptNameForNewItem(retptr, item_id.__wbg_ptr, ptr0, len0, ptr1, len1, pin);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Seal a replacement name through the resolved row's write target. The key and
+ * the pin come from the target, so a caller cannot substitute either.
+ * @param {WasmWriteTarget} target
+ * @param {string} filename
+ * @param {string | null} [mime_type]
+ * @returns {string}
+ */
+export function encryptNameForTarget(target, filename, mime_type) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        _assertClass(target, WasmWriteTarget);
+        const ptr0 = passStringToWasm0(filename, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(mime_type) ? 0 : passStringToWasm0(mime_type, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.encryptNameForTarget(retptr, target.__wbg_ptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Seal a note for a NEW row minted by `newOwnerItemId`/`newForeignItemId`.
+ * @param {WasmNewItemId} item_id
+ * @param {string} note
+ * @param {number} pin
+ * @returns {string}
+ */
+export function encryptNoteForNewItem(item_id, note, pin) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        _assertClass(item_id, WasmNewItemId);
+        const ptr0 = passStringToWasm0(note, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.encryptNoteForNewItem(retptr, item_id.__wbg_ptr, ptr0, len0, pin);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Seal a replacement note through the resolved row's write target.
+ * @param {WasmWriteTarget} target
+ * @param {string} note
+ * @returns {string}
+ */
+export function encryptNoteForTarget(target, note) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        _assertClass(target, WasmWriteTarget);
+        const ptr0 = passStringToWasm0(note, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.encryptNoteForTarget(retptr, target.__wbg_ptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Seal a thumbnail for a NEW row minted by `newOwnerItemId`/`newForeignItemId`.
+ * @param {WasmNewItemId} item_id
+ * @param {Uint8Array} plaintext
+ * @param {number} pin
+ * @returns {Uint8Array}
+ */
+export function encryptThumbnailForNewItem(item_id, plaintext, pin) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        _assertClass(item_id, WasmNewItemId);
+        const ptr0 = passArray8ToWasm0(plaintext, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.encryptThumbnailForNewItem(retptr, item_id.__wbg_ptr, ptr0, len0, pin);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Seal a replacement thumbnail through the resolved row's write target.
+ * @param {WasmWriteTarget} target
+ * @param {Uint8Array} plaintext
+ * @returns {Uint8Array}
+ */
+export function encryptThumbnailForTarget(target, plaintext) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        _assertClass(target, WasmWriteTarget);
+        const ptr0 = passArray8ToWasm0(plaintext, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.encryptThumbnailForTarget(retptr, target.__wbg_ptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -2966,6 +3988,31 @@ export function evaluate_password(password, min_length) {
 }
 
 /**
+ * Shorten a client-metadata string for sealing: over 1024 UTF-8 bytes, keep
+ * the last 1021 bytes on a char boundary behind a leading `…`.
+ * @param {string} s
+ * @returns {string}
+ */
+export function fitForSeal(s) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(s, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.fitForSeal(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * A shared folder's key id (task 2133): a one-way id of the folder's 32-byte
  * key, for a server to compare folder keys without learning them (HKDF-SHA256,
  * info `beebeeb/folder-key-id/v1`). Returns a 32-byte `Uint8Array`; not secret,
@@ -2992,6 +4039,55 @@ export function folder_key_id(folder_key) {
         return v2;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Format a byte count with binary units and IEC labels: `1 KiB` (1,024),
+ * `1 MiB`, `1.0 TiB`. Same ladder and precision rule as the SI formatter; a
+ * negative count keeps its sign and never scales (`-1500 B`).
+ * @param {bigint} bytes
+ * @returns {string}
+ */
+export function formatBinary(bytes) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.formatBinary(retptr, bytes);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred1_0 = r0;
+        deferred1_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Format a byte count in decimal units with `decimals` decimals (0, 1 or 2),
+ * carrying a value that rounds up into the next unit (`999.6 KB` with one
+ * decimal prints `1.0 MB`). Counts below 1,000 always print as `N B`.
+ * @param {bigint} bytes
+ * @param {number} decimals
+ * @returns {string}
+ */
+export function formatCompact(bytes, decimals) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.formatCompact(retptr, bytes, decimals);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred1_0 = r0;
+        deferred1_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
     }
 }
 
@@ -3073,6 +4169,30 @@ export function generate_share_token() {
 }
 
 /**
+ * True when `item_id` is a canonical foreign (F) id; InvalidInput (a JS throw)
+ * when the text is not canonical at all.
+ * @param {string} item_id
+ * @returns {boolean}
+ */
+export function isForeignItemId(item_id) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.isForeignItemId(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return r0 !== 0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Returns `true` if the given MIME type can be previewed in-app.
  * @param {string | null} [mime_type]
  * @returns {boolean}
@@ -3143,6 +4263,108 @@ export function list_tar_entries(data) {
             throw takeObject(r1);
         }
         return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The ciphertext bytes a process of `class` (`"native"`, `"browser"`, `"mobile_app"`,
+ * `"mobile_extension"`) may hold at once. Throws `class_invalid` for any other string.
+ * @param {string} _class
+ * @returns {number}
+ */
+export function maxInFlightBytes(_class) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(_class, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.maxInFlightBytes(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Mint a guest (F) item id with NO master key (task 2275 §15). The anonymous
+ * uploader path uses this; the id is a canonical RFC 9562 UUID v8 and core's
+ * class check classifies it as foreign. The server has no T2 F-class check
+ * yet (future server work), so only the core check protects this id today.
+ * @returns {string}
+ */
+export function mintGuestItemId() {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.mintGuestItemId(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr1 = r0;
+        var len1 = r1;
+        if (r3) {
+            ptr1 = 0; len1 = 0;
+            throw takeObject(r2);
+        }
+        deferred2_0 = ptr1;
+        deferred2_1 = len1;
+        return getStringFromWasm0(ptr1, len1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Mint a new foreign (F) item id (RFC 9562 UUID v8) for `master_key`.
+ * @param {Uint8Array} master_key
+ * @returns {WasmNewItemId}
+ */
+export function newForeignItemId(master_key) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.newForeignItemId(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return WasmNewItemId.__wrap(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Mint a new owner (O) item id (random UUID v4) for `master_key`.
+ * @param {Uint8Array} master_key
+ * @returns {WasmNewItemId}
+ */
+export function newOwnerItemId(master_key) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.newOwnerItemId(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return WasmNewItemId.__wrap(r0);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -3262,6 +4484,82 @@ export function opaque_registration_start(password) {
 }
 
 /**
+ * Open a guest's display name. The envelope must be a JSON object with
+ * exactly the keys `cipher_suite`, `nonce` and `ciphertext` (any key order,
+ * any whitespace) that opens under the one actor-name key; the plaintext then
+ * goes through the same `sanitize_actor_name` rule as the writer and is
+ * returned sanitized. Every refusal is a decryption failure.
+ * @param {Uint8Array} folder_key
+ * @param {string} shared_folder_id
+ * @param {string} envelope
+ * @returns {string}
+ */
+export function openFolderActorName(folder_key, shared_folder_id, envelope) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(shared_folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(envelope, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.openFolderActorName(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr4 = r0;
+        var len4 = r1;
+        if (r3) {
+            ptr4 = 0; len4 = 0;
+            throw takeObject(r2);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
+ * The one legacy (unbound) child opener: a 60-byte frame under the folder
+ * key, refused when its 32-byte plaintext is valid UTF-8 (L9 rule 1).
+ * Returns `undefined` when the frame is not a legacy child wrap.
+ * @param {Uint8Array} folder_key
+ * @param {Uint8Array} wrapped
+ * @returns {Uint8Array | undefined}
+ */
+export function openLegacyChildKey(folder_key, wrapped) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(wrapped, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.openLegacyChildKey(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        let v3;
+        if (r0 !== 0) {
+            v3 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        }
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * L9 (task 2255): open a LEGACY invite owner copy and return its key only when
  * core proves it over the folder's rows, in ONE call. `rows` are the server's
  * `GET /shares/invites/{id}/folder-keys` rows verbatim:
@@ -3305,7 +4603,14 @@ export function openLegacyInviteOwnerCopy(master_key, folder_id, legacy_copy, ro
 
 /**
  * Open a sealed request upload (owner decrypt path). Recovers the content key.
- * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
+ * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns
+ * 32-byte `Uint8Array`.
+ *
+ * **DECRYPT-ONLY.** This is a request row's content key `C`, and the
+ * anonymous uploader holds it. Use it to read the row's content; never seal a
+ * name, note or thumbnail under this key. For a request row the owner's rename
+ * goes through `seal_request_rename` / `sealRequestRename` (the §15
+ * string-derived key), never `C`.
  * @param {Uint8Array} r_priv
  * @param {Uint8Array} e_pub
  * @param {Uint8Array} file_id
@@ -3340,6 +4645,143 @@ export function open_request_upload(r_priv, e_pub, file_id, wrapped_key) {
 }
 
 /**
+ * Resolve the owner's per-file key for ONE content version of a file from the
+ * canonical `file_id` and that version's first chunk frame, and report which
+ * id convention that version's key came from (SF-0002). Returns
+ * `{ key: Uint8Array, convention }`, where `convention` is `"string"`,
+ * `"binary"` or `"upper_repair"`.
+ *
+ * The first chunk frame may be a v1 legacy frame (`nonce || ciphertext ||
+ * tag`, no AAD — what the iOS File Provider wrote) or core's v2 frame 0.
+ *
+ * A file is READ-ONLY for the client if EITHER
+ * [`ownerFileKeyForName`](owner_file_key_for_name) or ANY of its versions
+ * reports `"upper_repair"`: no rename, no new version; save an edit as a new
+ * file. Resolve each version separately — the name's convention does not
+ * decide the content key.
+ * @param {Uint8Array} master_key
+ * @param {string} file_id
+ * @param {Uint8Array} first_chunk_frame
+ * @returns {any}
+ */
+export function ownerFileKeyForContent(master_key, file_id, first_chunk_frame) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(first_chunk_frame, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.ownerFileKeyForContent(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Resolve the owner's per-file key for a file from the `(file_id,
+ * name_encrypted)` pair the server stores, and report which id convention the
+ * key came from (SF-0002). Returns `{ key: Uint8Array, convention }`, where
+ * `convention` is `"string"`, `"binary"` or `"upper_repair"`.
+ *
+ * The string convention is tried first, then the legacy binary one, then the
+ * uppercase repair one (only when uppercasing changes the id). The first
+ * candidate whose key authenticates `name_encrypted` wins.
+ *
+ * `"upper_repair"` is READ-ONLY: treat the file as read-only — no rename and
+ * no new version; save an edit as a new file. Core only reports the
+ * convention; it never re-seals or migrates an existing row.
+ * @param {Uint8Array} master_key
+ * @param {string} file_id
+ * @param {string} name_encrypted
+ * @returns {any}
+ */
+export function ownerFileKeyForName(master_key, file_id, name_encrypted) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(name_encrypted, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.ownerFileKeyForName(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * When `wire_bytes` received since `start_ms` at `kbps` KiB/s lets the next storage
+ * request start. The three counts cross as JS numbers (`f64`), like every other count.
+ * `-Infinity` (`i64::MIN` in core) means there is no ceiling: a real deadline is a
+ * finite number, so a caller only has to test `Number.isFinite`. Desktop's formula,
+ * unchanged in value.
+ * @param {number} start_ms
+ * @param {number} wire_bytes
+ * @param {number} kbps
+ * @returns {number}
+ */
+export function pacedUntilMs(start_ms, wire_bytes, kbps) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.pacedUntilMs(retptr, start_ms, wire_bytes, kbps);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * May this client use the direct transport for `direction`? True only when discovery
+ * offers it AND has at least one storage pair AND every pair in `discovery.storage_buckets`
+ * is in `pairs` (an array of `{host, bucket}`). Hosts compare ASCII case-insensitively,
+ * buckets exactly.
+ * @param {any} discovery
+ * @param {string} direction
+ * @param {any} pairs
+ * @returns {boolean}
+ */
+export function pairsAllowed(discovery, direction, pairs) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(direction, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.pairsAllowed(retptr, addHeapObject(discovery), ptr0, len0, addHeapObject(pairs));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return r0 !== 0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Decode a discovery body (`GET /api/v1/transfer/capabilities`). Returns
  * `{ download, upload, storage_hosts, storage_buckets: [{host, bucket}],
  * max_window, url_ttl_seconds }`; unknown fields are ignored and missing lists
@@ -3354,6 +4796,49 @@ export function parseDirectDiscovery(body) {
         const ptr0 = passArray8ToWasm0(body, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         wasm.parseDirectDiscovery(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Parse a `Retry-After` delta-seconds header: the number of seconds, or `null`
+ * for anything else (empty, negative, fractional, an HTTP date), so the caller
+ * falls back to the ladder.
+ * @param {string} value
+ * @returns {any}
+ */
+export function parseRetryAfter(value) {
+    const ptr0 = passStringToWasm0(value, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parseRetryAfter(ptr0, len0);
+    return takeObject(ret);
+}
+
+/**
+ * Parse a share link on either route and on any `https` host (legacy hosts
+ * included; plain `http` only for loopback). Returns
+ * `{ base_url, route, token, key }`; `key` is the percent-decoded fragment
+ * value, not yet decoded as bytes — use `shareKeyBytes(key)` for that.
+ *
+ * The thrown message starts with core's stable code, so a caller can branch:
+ * `missing_fragment`, `missing_key`, `missing_token`, `not_a_share_link`.
+ * @param {string} url
+ * @returns {any}
+ */
+export function parseShareLink(url) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.parseShareLink(retptr, ptr0, len0);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
@@ -3484,6 +4969,44 @@ export function plan_monthly_cost_cents(plan_slug, extra_tb, extra_users) {
 }
 
 /**
+ * One preview decision per name, for one platform: `result[i]` is `1` when
+ * `names[i]` can be previewed in-app on `platform`, `0` otherwise.
+ *
+ * `platform` is `"web"`, `"desktop"` or `"mobile"`. Any other string throws
+ * `unknown preview platform \`…\`` — it never falls back to a default, because
+ * answering for the wrong client is exactly the regression this export exists
+ * to prevent.
+ *
+ * The vector `test-vectors/consolidation/preview_platforms.json` carries the
+ * expected answer for every extension of the three-way union, per platform.
+ * @param {string[]} names
+ * @param {string} platform
+ * @returns {Uint8Array}
+ */
+export function previewableBatchFor(names, platform) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArrayJsValueToWasm0(names, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(platform, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.previewableBatchFor(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Recover a master key from a 12-word BIP39 recovery phrase.
  * Returns the 32-byte master key as `Uint8Array`.
  * @param {string} phrase
@@ -3535,6 +5058,152 @@ export function redactUrl(url) {
 }
 
 /**
+ * Resolve one row's key from its id class (task 2275 L12).
+ *
+ * `kind` is the row kind (1 = file, 2 = folder) and is required: a plaintext
+ * name on a FOLDER uses the string convention, a plaintext name on a FILE must
+ * authenticate content chunk 0 (`firstChunkFrame`) and is refused without one.
+ *
+ * Returns `{ key: Uint8Array, contentKey: Uint8Array | null, origin: string,
+ * name: {name?, mimeType?, plaintext?, chunkFormat}, writeTarget:
+ * WasmWriteTarget | null }`. `origin` is "derived", "derived_binary",
+ * "derived_upper_repair", "owner_wrap" or "folder_wrap". `contentKey` is set
+ * only for an SF-0002 split row (name and content under different
+ * conventions). A row with an upper-repair name or content key is READ-ONLY and
+ * has no write target.
+ *
+ * Owner ids never use `ownerWrap`/the folder wrap; foreign ids never derive a
+ * key and require one of them to open AND authenticate the name.
+ * @param {Uint8Array} master_key
+ * @param {string} item_id
+ * @param {number} kind
+ * @param {Uint8Array | null | undefined} owner_wrap
+ * @param {string} name_encrypted
+ * @param {string | null} [shared_folder_id]
+ * @param {Uint8Array | null} [folder_key]
+ * @param {Uint8Array | null} [folder_wrap]
+ * @param {Uint8Array | null} [first_chunk_frame]
+ * @returns {any}
+ */
+export function resolveOwnedKey(master_key, item_id, kind, owner_wrap, name_encrypted, shared_folder_id, folder_key, folder_wrap, first_chunk_frame) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(owner_wrap) ? 0 : passArray8ToWasm0(owner_wrap, wasm.__wbindgen_export);
+        var len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(name_encrypted, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len3 = WASM_VECTOR_LEN;
+        var ptr4 = isLikeNone(shared_folder_id) ? 0 : passStringToWasm0(shared_folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len4 = WASM_VECTOR_LEN;
+        var ptr5 = isLikeNone(folder_key) ? 0 : passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+        var len5 = WASM_VECTOR_LEN;
+        var ptr6 = isLikeNone(folder_wrap) ? 0 : passArray8ToWasm0(folder_wrap, wasm.__wbindgen_export);
+        var len6 = WASM_VECTOR_LEN;
+        var ptr7 = isLikeNone(first_chunk_frame) ? 0 : passArray8ToWasm0(first_chunk_frame, wasm.__wbindgen_export);
+        var len7 = WASM_VECTOR_LEN;
+        wasm.resolveOwnedKey(retptr, ptr0, len0, ptr1, len1, kind, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, ptr7, len7);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Resolve a 2236 request row: `{content, nameOrigin, name, mimeType,
+ * chunkFormat, seal, renameTarget}`. `content` is a decrypt-only
+ * `WasmRequestContentReader` for the row's content key; no raw key reaches JS,
+ * so a request-row result offers no sealing path. The seal is `"bound"` or
+ * `"unbound"` (§15), and `renameTarget` is `{origin, pin}` or null when the
+ * name is upper-repair (read-only). Renames go through `sealRequestRename`.
+ *
+ * `request_wrap_context` is the context the owner wrapped the request private
+ * key under: empty for every request created so far (the server mints the
+ * request id after the wrap). A real request id refuses a shipped row; this
+ * function never tries both contexts.
+ * @param {Uint8Array} master_key
+ * @param {string} item_id
+ * @param {Uint8Array} request_wrap_context
+ * @param {Uint8Array} wrapped_request_private
+ * @param {Uint8Array} wrap_nonce
+ * @param {Uint8Array} sender_ephemeral_pubkey
+ * @param {Uint8Array} wrapped_content_key
+ * @param {string} name_encrypted
+ * @returns {any}
+ */
+export function resolveRequestRow(master_key, item_id, request_wrap_context, wrapped_request_private, wrap_nonce, sender_ephemeral_pubkey, wrapped_content_key, name_encrypted) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(request_wrap_context, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(wrapped_request_private, wasm.__wbindgen_export);
+        const len3 = WASM_VECTOR_LEN;
+        const ptr4 = passArray8ToWasm0(wrap_nonce, wasm.__wbindgen_export);
+        const len4 = WASM_VECTOR_LEN;
+        const ptr5 = passArray8ToWasm0(sender_ephemeral_pubkey, wasm.__wbindgen_export);
+        const len5 = WASM_VECTOR_LEN;
+        const ptr6 = passArray8ToWasm0(wrapped_content_key, wasm.__wbindgen_export);
+        const len6 = WASM_VECTOR_LEN;
+        const ptr7 = passStringToWasm0(name_encrypted, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len7 = WASM_VECTOR_LEN;
+        wasm.resolveRequestRow(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, ptr7, len7);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Resume a minted id from the id text and tag persisted with an upload session
+ * (task 2275, L13). The tag is re-checked in constant time; a tampered tag, a
+ * different id or a server-echoed id is refused, so an interrupted upload can
+ * continue but a substituted id cannot be sealed.
+ * @param {Uint8Array} master_key
+ * @param {string} item_id
+ * @param {Uint8Array} tag
+ * @returns {WasmNewItemId}
+ */
+export function resumeNewItemId(master_key, item_id, tag) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(tag, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.resumeNewItemId(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return WasmNewItemId.__wrap(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * What to do with an unfinished upload found on disk. `recorded` is `"api"` or `"direct"` (what the resume
  * record names); `discovery` is `{ kind, upload? }` with `kind` `"offers"` (and `upload: true | false`),
  * `"not_supported"` (a JSON 404), `"unknown"` (a 5xx, a timeout, a bare 404: no usable answer) or
@@ -3575,6 +5244,140 @@ export function resumeTransport(recorded, discovery, forced_api) {
 }
 
 /**
+ * The decision after `attempts_made` attempts: the delay in milliseconds to
+ * wait before the next attempt, or `null` to surface the last error. A server
+ * `Retry-After` (`retry_after_seconds`, a number of seconds or `null`)
+ * replaces the ladder exactly.
+ *
+ * `outcome` is `"success"`, `"network"`, `"fatal"`, or `{ status: 503 }`.
+ * @param {any} policy
+ * @param {number} attempts_made
+ * @param {any} outcome
+ * @param {any} retry_after_seconds
+ * @returns {any}
+ */
+export function retryDecide(policy, attempts_made, outcome, retry_after_seconds) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.retryDecide(retptr, addHeapObject(policy), attempts_made, addHeapObject(outcome), addHeapObject(retry_after_seconds));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The un-jittered ladder delay before retry number `retry` (1-based; retry 0
+ * means "no retry" and is 0 ms), capped at the policy's `cap_ms`.
+ * @param {any} policy
+ * @param {number} retry
+ * @returns {number}
+ */
+export function retryDelayMs(policy, retry) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.retryDelayMs(retptr, addHeapObject(policy), retry);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The ladder delay shortened per the policy's jitter, with a caller-supplied
+ * sample in permille (`0..=1000`; larger values are clamped). A `"none"`
+ * policy ignores the sample.
+ * @param {any} policy
+ * @param {number} retry
+ * @param {number} sample_permille
+ * @returns {number}
+ */
+export function retryJitteredDelayMs(policy, retry, sample_permille) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.retryJitteredDelayMs(retptr, addHeapObject(policy), retry, sample_permille);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The shipped policy: six requests in all (one try plus five retries), 500 ms
+ * base, a 30 s cap, no jitter, and a server `Retry-After` honoured.
+ * @returns {any}
+ */
+export function retryPolicy() {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.retryPolicy(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Rewrite one name so it is safe under the strictest (Windows) rule set:
+ * `: < > " | ? *` become `_`, trailing dots/spaces become `_`, a reserved
+ * device name gets a leading `_`, and bidi controls are removed. A name that
+ * is structurally unsafe (separator, `.`/`..`, control character, drive
+ * prefix) is still refused, never rewritten.
+ * @param {string} name
+ * @returns {string}
+ */
+export function sanitizePathComponent(name) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.sanitizePathComponent(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Text that may contain URLs, made safe to print.
  * @param {string} text
  * @returns {string}
@@ -3595,6 +5398,106 @@ export function scrubText(text) {
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
         wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Seal a guest's display name under the folder key, bound to the shared root.
+ * Seals `sanitize_actor_name(name)` (core `kdf::sanitize_actor_name`): NFC;
+ * controls, bidi controls and the other display controls of its strip table
+ * removed (ZWNJ, ZWJ, variation selectors and tag characters are kept); NFC
+ * again; then a leading combining mark, a result outside 1..64 Unicode scalar
+ * values and a visibly blank name are refused (invalid input). Returns the
+ * envelope: a JSON object with exactly the keys `cipher_suite`, `nonce` and
+ * `ciphertext`.
+ * @param {Uint8Array} folder_key
+ * @param {string} shared_folder_id
+ * @param {string} name
+ * @returns {string}
+ */
+export function sealFolderActorName(folder_key, shared_folder_id, name) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(shared_folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.sealFolderActorName(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr4 = r0;
+        var len4 = r1;
+        if (r3) {
+            ptr4 = 0; len4 = 0;
+            throw takeObject(r2);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
+ * Seal a request-row rename under the section 15 string-convention key derived
+ * from `item_id`, keeping the row's recorded `pin` (`chunkFormat` from
+ * `resolveRequestRow`). This is the only sealing path a request-row result
+ * offers: `resolveRequestRow` hands back no key, so a rename cannot be sealed
+ * under the content key `C` that the anonymous uploader holds (A9).
+ *
+ * An F id is refused by the same owner-class check the resolver runs. `pin` is
+ * the `renameTarget.pin` the resolver returned (the row's recorded format),
+ * never a field from the wire. Pin direction matters both ways:
+ * - a pin of 2 on a v1 row makes the file unreadable until it is renamed again
+ *   with the correct pin;
+ * - a pin of 0 on a v2 row drops the recorded 2, turns frame-0 detection back
+ *   on, and lets a server serve the uploader's old no-AAD name blob under `C`
+ *   as a one-frame v1 file.
+ * @param {Uint8Array} master_key
+ * @param {string} item_id
+ * @param {number} pin
+ * @param {string} filename
+ * @param {string | null} [mime_type]
+ * @returns {string}
+ */
+export function sealRequestRename(master_key, item_id, pin, filename, mime_type) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(filename, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(mime_type) ? 0 : passStringToWasm0(mime_type, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len3 = WASM_VECTOR_LEN;
+        wasm.sealRequestRename(retptr, ptr0, len0, ptr1, len1, pin, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr5 = r0;
+        var len5 = r1;
+        if (r3) {
+            ptr5 = 0; len5 = 0;
+            throw takeObject(r2);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred6_0, deferred6_1, 1);
     }
 }
 
@@ -3654,6 +5557,19 @@ export function searchIndexSyncPlan(local, remote, local_is_authoritative) {
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
+}
+
+/**
+ * Decode a `#key=` value as bytes, accepting standard base64 (legacy links) and
+ * base64url (current links), padded or unpadded; `null` when it is neither.
+ * @param {string} key
+ * @returns {any}
+ */
+export function shareKeyBytes(key) {
+    const ptr0 = passStringToWasm0(key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.shareKeyBytes(ptr0, len0);
+    return takeObject(ret);
 }
 
 /**
@@ -3720,6 +5636,102 @@ export function storage_format_si(bytes) {
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
         wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Where `bytes` falls against one variant's budgets: `"target"` (at or below
+ * `target_bytes`, stop the ladder), `"fallback"` (above target but at or below
+ * `max_bytes`, keep it and keep trying) or `"rejected"` (above `max_bytes`).
+ * @param {string} variant
+ * @param {number} bytes
+ * @returns {string}
+ */
+export function thumbnailBudget(variant, bytes) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(variant, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.thumbnailBudget(retptr, ptr0, len0, bytes);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * The encoder output a variant asks for on `platform`: `"heic"` on iOS and
+ * macOS (the OS owns the encoder), `"webp"` everywhere else.
+ * @param {string} variant
+ * @param {string} platform
+ * @returns {string}
+ */
+export function thumbnailFormat(variant, platform) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(variant, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(platform, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.thumbnailFormat(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * The policy for one variant (`small`, `medium`, `large`):
+ * `{ variant, target_px, target_bytes, max_bytes, steps }`, where each step is
+ * `{ max_dimension, quality }`.
+ * @param {string} variant
+ * @returns {any}
+ */
+export function thumbnailPolicy(variant) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(variant, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.thumbnailPolicy(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
 }
 
@@ -4006,6 +6018,46 @@ export function unwrapInviteOwnerCopy(master_key, folder_id, wrapped) {
 }
 
 /**
+ * Open a link label; one key, one shape. Returns the label in NFC (a non-NFC
+ * plaintext is normalized, not refused); invalid UTF-8 or a label outside
+ * 1..40 Unicode scalar values after NFC is a decryption failure.
+ * @param {Uint8Array} master_key
+ * @param {string} share_id
+ * @param {Uint8Array} wrapped
+ * @returns {string}
+ */
+export function unwrapLinkLabel(master_key, share_id, wrapped) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(share_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(wrapped, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.unwrapLinkLabel(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr4 = r0;
+        var len4 = r1;
+        if (r3) {
+            ptr4 = 0; len4 = 0;
+            throw takeObject(r2);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
  * Open a link's owner copy of K_c. K_c is the deliberate export: JS puts it
  * in the link fragment. The master key never leaves the caller.
  * @param {Uint8Array} master_key
@@ -4238,6 +6290,39 @@ export function wrapInviteOwnerCopy(master_key, folder_id, folder_key) {
 }
 
 /**
+ * Seal a link label to the owner's master key, bound to the 16-byte share id.
+ * Wire = nonce(12) || ciphertext+tag, like the L6 wraps.
+ * @param {Uint8Array} master_key
+ * @param {string} share_id
+ * @param {string} label
+ * @returns {Uint8Array}
+ */
+export function wrapLinkLabel(master_key, share_id, label) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(share_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(label, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.wrapLinkLabel(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Seal a folder link's fragment key K_c to the owner's master key, bound to
  * the link's share id (so the owner can copy the link again later).
  * @param {Uint8Array} master_key
@@ -4442,6 +6527,10 @@ function __wbg_get_imports() {
             const ret = typeof(getObject(arg0)) === 'function';
             return ret;
         },
+        __wbg___wbindgen_is_null_52ff4ec04186736f: function(arg0) {
+            const ret = getObject(arg0) === null;
+            return ret;
+        },
         __wbg___wbindgen_is_object_63322ec0cd6ea4ef: function(arg0) {
             const val = getObject(arg0);
             const ret = typeof(val) === 'object' && val !== null;
@@ -4585,6 +6674,10 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(getObject(arg0));
             return addHeapObject(ret);
         },
+        __wbg_new_34d45cc8e36aaead: function() {
+            const ret = new Map();
+            return addHeapObject(ret);
+        },
         __wbg_new_5e360d2ff7b9e1c3: function(arg0, arg1) {
             const ret = new Error(getStringFromWasm0(arg0, arg1));
             return addHeapObject(ret);
@@ -4649,6 +6742,10 @@ function __wbg_get_imports() {
         __wbg_set_6be42768c690e380: function(arg0, arg1, arg2) {
             getObject(arg0)[takeObject(arg1)] = takeObject(arg2);
         },
+        __wbg_set_fde2cec06c23692b: function(arg0, arg1, arg2) {
+            const ret = getObject(arg0).set(getObject(arg1), getObject(arg2));
+            return addHeapObject(ret);
+        },
         __wbg_static_accessor_GLOBAL_8cfadc87a297ca02: function() {
             const ret = typeof global === 'undefined' ? null : global;
             return isLikeNone(ret) ? 0 : addHeapObject(ret);
@@ -4677,8 +6774,16 @@ function __wbg_get_imports() {
             const ret = getObject(arg0).versions;
             return addHeapObject(ret);
         },
+        __wbg_wasmrequestcontentreader_new: function(arg0) {
+            const ret = WasmRequestContentReader.__wrap(arg0);
+            return addHeapObject(ret);
+        },
         __wbg_wasmsignedurl_new: function(arg0) {
             const ret = WasmSignedUrl.__wrap(arg0);
+            return addHeapObject(ret);
+        },
+        __wbg_wasmwritetarget_new: function(arg0) {
+            const ret = WasmWriteTarget.__wrap(arg0);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000001: function(arg0) {
@@ -4720,6 +6825,9 @@ function __wbg_get_imports() {
     };
 }
 
+const ClientMetaKeyFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_clientmetakey_free(ptr >>> 0, 1));
 const WasmBreachCheckFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmbreachcheck_free(ptr >>> 0, 1));
@@ -4738,6 +6846,12 @@ const WasmDirectHealthFinalization = (typeof FinalizationRegistry === 'undefined
 const WasmDownloadPlannerFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmdownloadplanner_free(ptr >>> 0, 1));
+const WasmNewItemIdFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmnewitemid_free(ptr >>> 0, 1));
+const WasmRequestContentReaderFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmrequestcontentreader_free(ptr >>> 0, 1));
 const WasmSearchIndexFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsearchindex_free(ptr >>> 0, 1));
@@ -4747,6 +6861,12 @@ const WasmSignedUrlFinalization = (typeof FinalizationRegistry === 'undefined')
 const WasmSignupCeremonyFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsignupceremony_free(ptr >>> 0, 1));
+const WasmStorageBodyFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmstoragebody_free(ptr >>> 0, 1));
+const WasmWriteTargetFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmwritetarget_free(ptr >>> 0, 1));
 
 function addHeapObject(obj) {
     if (heap_next === heap.length) heap.push(heap.length + 1);
@@ -4913,6 +7033,16 @@ function passArray8ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 1, 1) >>> 0;
     getUint8ArrayMemory0().set(arg, ptr / 1);
     WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+function passArrayJsValueToWasm0(array, malloc) {
+    const ptr = malloc(array.length * 4, 4) >>> 0;
+    const mem = getDataViewMemory0();
+    for (let i = 0; i < array.length; i++) {
+        mem.setUint32(ptr + 4 * i, addHeapObject(array[i]), true);
+    }
+    WASM_VECTOR_LEN = array.length;
     return ptr;
 }
 

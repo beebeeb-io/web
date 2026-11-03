@@ -1,3 +1,4 @@
+// The web icon set and IconName union.
 import type { SVGProps } from 'react'
 
 export type IconName =

@@ -1,3 +1,4 @@
+// The activity-tracking preference block in settings.
 import { useState, useEffect, useCallback } from 'react'
 import { BBButton, BBToggle, Icon } from '@beebeeb/shared'
 import { SettingsRow } from '../settings-shell'

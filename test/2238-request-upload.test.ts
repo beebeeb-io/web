@@ -4,22 +4,31 @@
  *
  * Such a row (file_request_id / sender_ephemeral_pubkey / wrapped_content_key
  * set) is sealed under a RANDOM content key, not `deriveFileKey(master, id)`
- * (see src/lib/file-request-crypto.ts). Wrapping the derived key would publish
+ * (§15: core resolves the row; see src/lib/request-row.ts). Wrapping the derived key would publish
  * an item the recipient can never decrypt — the folder link would list it and
  * then fail on download. The fix has two halves, each pinned here:
  *
  *   1. `prepareBundleShareItems` honours a caller-supplied item key instead of
  *      re-deriving (RED before the fix: it always derived, so the wrapped blob
  *      unwraps to the derived key, not the request key).
- *   2. `collectFolderBundle` keeps the whole row, so the dialog CAN hand that
- *      key in (`getFileKeyForFile(file)`); RED before the fix: the scan only
- *      carried {fileId, position, name}, so no envelope field survived it.
+ *   2. `collectFolderBundle` leaves a request row OUT and lists it with the
+ *      L15 "can't be shared" sentence (2326 review P2-2), so the dialog never
+ *      wraps a derived key for a row that has no wrappable key.
  */
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import type { DriveFile } from '@beebeeb/shared'
 import { prepareBundleShareItems, toBase64, unwrapKeyFromShare } from '../src/lib/crypto'
 import { decodeShareKeyToken } from '../src/lib/share-key'
 import { collectFolderBundle } from '../src/lib/folder-bundle'
+import { folderSkipReason } from '../src/lib/share-missing-items'
+import { ensureShareLinkWasm } from '../src/lib/share-links-wasm'
+
+// `decodeShareKeyToken` runs core's base64 decoder synchronously, so the wasm
+// module must be in memory before the first test — this file initialises it
+// itself (a full run only looked green because another file's init had settled).
+beforeAll(async () => {
+  await ensureShareLinkWasm()
+})
 
 /** A row exactly as the server returns a file that arrived via a file request. */
 function requestRow(id: string): DriveFile {
@@ -64,20 +73,23 @@ describe('prepareBundleShareItems honours a supplied item key (2238 review)', ()
 
 })
 
-describe('collectFolderBundle keeps the row so its key can be resolved (2238 review)', () => {
-  test('a request upload inside the folder survives the walk with its envelope fields', async () => {
+describe('collectFolderBundle skips a request row (2326 review P2-2, L15)', () => {
+  test('a request upload inside the folder is listed as unshareable and left out', async () => {
     const row = requestRow('request-1')
     const scan = await collectFolderBundle('root', {
       listChildren: async () => [row, plainRow('plain-1')],
-      decryptName: async (node) => (node.file_request_id ? 'received.txt' : 'mine.txt'),
+      decryptName: async (node) => 'mine.txt',
+      // The dialog's wiring, reused here: L15 request-row copy.
+      skipReason: folderSkipReason,
     })
 
-    expect(scan.files.map((f) => f.fileId)).toEqual(['plain-1', 'request-1'])
-    const item = scan.files.find((f) => f.fileId === 'request-1')
-    expect(item, 'the request upload must be IN the snapshot').toBeTruthy()
-    expect(item!.file.file_request_id).toBe('req-1')
-    expect(item!.file.sender_ephemeral_pubkey).toBe('pubkey-base64')
-    expect(item!.file.wrapped_content_key).toBe('wrapped-key-base64')
-    expect(item!.file).toBe(row)
+    expect(scan.files.map((f) => f.fileId)).toEqual(['plain-1'])
+    expect(scan.skipped).toEqual([
+      {
+        fileId: 'request-1',
+        name: null,
+        reason: "can't be shared (received through a file request)",
+      },
+    ])
   })
 })

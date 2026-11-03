@@ -1,3 +1,4 @@
+// Shares the drive's file data with panels rendered outside the drive page.
 import { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -40,6 +41,15 @@ const USAGE_MIN_INTERVAL_MS = 3_000
 const PINNED_FOLDERS_PREF = 'pinned_folders'
 const LEGACY_PINNED_FOLDERS_PREF = 'pinned_shared_folders'
 
+/**
+ * `GET /files/usage` plus the best-effort `/billing/usage` enrichment.
+ *
+ * `percentage` is the server's fraction 0.0–1.0 (spec §16.3 decision 4); it is
+ * absent when the billing fetch failed or has not landed yet, so callers must
+ * fall back to the bytes ratio rather than invent a percentage.
+ */
+export type DriveUsage = StorageUsage & { percentage?: number }
+
 interface PlanDetails {
   plan: Plan | null
   subscription: Subscription | null
@@ -56,7 +66,7 @@ interface DriveDataState {
    */
   unpinFolders: (folderIds: string[]) => void
 
-  usage: StorageUsage | null
+  usage: DriveUsage | null
   /** Task 1706 review #132-A — resolves true when the primary /files/usage
    * fetch delivered a value into context, false when it failed. Existing
    * fire-and-forget callers are unaffected (a statement call ignores it). */
@@ -117,7 +127,7 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
   const { isUnlocked } = useKeys()
 
   const [pinnedFolderIds, setPinnedFolderIds] = useState<string[]>([])
-  const [usage, setUsage] = useState<StorageUsage | null>(null)
+  const [usage, setUsage] = useState<DriveUsage | null>(null)
   const [planDetails, setPlanDetails] = useState<PlanDetails>({ plan: null, subscription: null })
   const [subSettled, setSubSettled] = useState(false)
   // Task 1816: the account-stage onboarding document, when the flag is on and the
@@ -214,7 +224,7 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
           if (!b) return true
           setUsage((prev) => {
             if (!prev) return prev
-            return { ...prev, used_bytes: b.used_bytes, plan_limit_bytes: b.quota_bytes }
+            return { ...prev, used_bytes: b.used_bytes, plan_limit_bytes: b.quota_bytes, percentage: b.percentage }
           })
         } catch {
           // best-effort enrichment

@@ -50,8 +50,10 @@ import {
   transferGenerateKeypair,
 } from '../lib/crypto'
 import { useAuth } from '../lib/auth-context'
+import { formatBinarySize as formatBytes } from '../lib/format'
 import { useKeys } from '../lib/key-context'
 import { encryptedUpload } from '../lib/encrypted-upload'
+import { ownedItem } from '../lib/owned-item'
 import { userFriendlyError } from '../lib/user-friendly-error'
 
 type Phase =
@@ -275,7 +277,9 @@ export function Receive() {
     setVaultSavePhase('saving')
     setVaultSaveError(null)
     try {
-      const fileId = crypto.randomUUID()
+      // F9: the create's id is core's; its tag travels with the upload.
+      const newItemId = await ownedItem.mint(getMasterKey(), 'owner')
+      const fileId = newItemId.idText
       const fileKey = await getFileKey(fileId)
       // savedBlob is already the DECRYPTED plaintext — upload it directly so it
       // is single-encrypted under the user's master key (no transfer-layer
@@ -283,7 +287,7 @@ export function Receive() {
       const file = new File([savedBlob], savedFilename, {
         type: savedBlob.type || 'application/octet-stream',
       })
-      await encryptedUpload(file, fileId, fileKey, getMasterKey(), undefined, undefined, undefined, undefined, undefined, getFileKey)
+      await encryptedUpload(file, fileId, fileKey, getMasterKey(), undefined, undefined, undefined, undefined, undefined, { newItemId })
       setVaultSavePhase('saved')
     } catch (err) {
       setVaultSaveError(
@@ -811,13 +815,6 @@ function Spinner({ large = false }: { large?: boolean }) {
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
   )
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
 function escapeHtml(s: string): string {

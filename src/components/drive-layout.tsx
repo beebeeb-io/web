@@ -1,3 +1,4 @@
+// The drive shell: sidebar, header, and the content outlet.
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode, DragEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom'

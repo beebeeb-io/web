@@ -26,7 +26,8 @@
  * this helper calls `mock.module(` directly, and it runs the suite in reversed
  * and shuffled file orders plus every file alone.
  */
-import { afterAll, mock } from 'bun:test'
+import { afterAll, beforeEach, mock } from 'bun:test'
+import { clearSlots, isSlotted, setSlots, slotAcceptsOverride } from './module-slots'
 
 type Exports = Record<string, unknown>
 
@@ -66,7 +67,44 @@ export async function mockModuleScoped(
       throw new Error(`mockModuleScoped(${specifier}): '${name}' is not exported by the real module`)
     }
   }
-  mock.module(path, () => ({ ...real, ...o }))
+  // The hot modules (module-slots.ts, installed by the test preload) take
+  // overrides through a slot: bun 1.3.4 binds `mock.module()` exports where a
+  // module is first imported, so a file's mock would otherwise bind for the
+  // rest of the process and a later file's would not reach it (the full run:
+  // f11 read owner-adoption's `api` fake and posted to production;
+  // owner-adoption read another file's fake and lost the folder key).
+  if (isSlotted(path)) {
+    for (const [name, value] of Object.entries(o)) {
+      if (value === real[name]) continue
+      if (!slotAcceptsOverride(real[name], value)) {
+        // module-slots.ts proxies functions and plain objects only, so a
+        // constant override would be dropped on the floor: the test would
+        // keep the real value while believing it had changed it.
+        throw new Error(
+          `mockModuleScoped(${specifier}): '${name}' cannot be overridden on a slotted module — ` +
+            `module-slots.ts proxies only functions and plain objects, so this ${typeof value} ` +
+            `override would be silently dropped (the real value ${JSON.stringify(real[name])} would stay in place)`,
+        )
+      }
+    }
+    // Only the names this file actually replaces: `real` is the slotted
+    // namespace, whose non-overridden functions are the wrappers themselves, so
+    // storing them back would make a call recurse into its own wrapper.
+    const only = Object.fromEntries(Object.entries(o).filter(([name, value]) => value !== real[name]))
+    const install = () => setSlots(path, only)
+    install()
+    // A file may also re-mock from inside a test (a surface that needs a
+    // different flag); there is no hook to register there and none is needed.
+    try {
+      beforeEach(install)
+    } catch {
+      // inside a test: the install() above is the whole job
+    }
+    afterAll(() => clearSlots(path))
+    return real
+  }
+  const install = () => mock.module(path, () => ({ ...real, ...o }))
+  install()
   afterAll(() => {
     mock.module(path, () => real)
   })

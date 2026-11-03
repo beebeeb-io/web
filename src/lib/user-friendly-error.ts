@@ -12,6 +12,8 @@ import { ApiError } from './api'
 import { consumeAccountDeletedNotice, type NoticeStorage } from './account-deleted-notice'
 import { ACCOUNT_INACTIVE_NOTICE } from './account-inactive'
 import { UploadRestartFailedError } from './upload-session-reinit'
+import { isServerChangedItemIdError } from './item-id-echo'
+import { PausedVersionRefusedError } from './upload-resume'
 import { FOLDER_NEEDS_UPGRADE, FolderUpgradeRefusedError, needsFolderUpgrade } from './folder-upgrade'
 import { strictRefusalMessage } from './storage-regions'
 import { shareRefusalCopy, startTrialErrorCopy, trialBillingRefusalCopy } from './no-card-trial'
@@ -122,6 +124,13 @@ export function userFriendlyError(err: unknown): string {
   // Task 1589 — a swept upload session whose fresh re-init also failed. Its
   // message is written for users and says what to do (upload again).
   if (err instanceof UploadRestartFailedError) return err.message
+  // L13 (SF-0001): a create or upload answered with another item. Both of its
+  // sentences are written for users (the after-upload one says to check files
+  // before uploading again) and the longer one is over the generic cutoff.
+  if (isServerChangedItemIdError(err)) return err.message
+  // SF-0001 round 3: a paused new version whose file is gone or unverifiable.
+  // Its sentences say what happened and what to do; over the generic cutoff.
+  if (err instanceof PausedVersionRefusedError) return err.message
 
   // Contract 2237 §2: a folder with legacy rows needs the upgrade before it can
   // get a link or a new invite. Its own sentence, never a generic conflict.

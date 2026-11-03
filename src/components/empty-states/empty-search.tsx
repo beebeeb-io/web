@@ -1,3 +1,4 @@
+// The empty state for search with no matches.
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 

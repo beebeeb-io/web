@@ -24,6 +24,8 @@ import type * as Wasm from 'beebeeb-wasm'
 export type ContentWasm = Pick<
   typeof Wasm,
   | 'WasmChunkDecryptor'
+  | 'WasmRequestContentReader'
+  | 'decrypt_chunk_frame'
   | 'decrypt_file_metadata_with_key'
   | 'decrypt_name_metadata_with_key'
   | 'encrypt_note_for'
@@ -87,14 +89,89 @@ function pinnedFrom(raw: unknown): PinnedMetadata {
  * never leaves it: callers hold an opaque numeric handle (the same pattern as
  * the worker's `WasmChunkEncryptor` registry).
  */
+/**
+ * LD-0001 r4 (A-R2): the name of the ONE error that means "a frame (or the
+ * chunk format it claims) failed authentication". It is set where core
+ * throws, inside the worker, and survives Comlink (which keeps an Error's
+ * name). A worker, WASM-load or messaging failure never carries it.
+ */
+export const CHUNK_AUTH_ERROR_NAME = 'ChunkAuthenticationError'
+
+function chunkAuthError(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err)
+  const tagged = new Error(message)
+  tagged.name = CHUNK_AUTH_ERROR_NAME
+  return tagged
+}
+
+/** True for a frame that failed authentication (see CHUNK_AUTH_ERROR_NAME). */
+export function isChunkAuthenticationError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { name?: unknown }).name === CHUNK_AUTH_ERROR_NAME
+}
+
 export function createContentOps(wasm: ContentWasm) {
-  const liveDecryptors = new Map<number, Wasm.WasmChunkDecryptor>()
+  interface LiveDecryptor {
+    decryptor: Wasm.WasmChunkDecryptor
+    /** A private copy of the file key, wiped when this decryptor or its reader ends. */
+    key: Uint8Array
+    /** The id the file was uploaded under (v2 frames bind it). */
+    fileId: string
+    /** The authenticated pin the decryptor was created under. */
+    pin: ContentPin
+    /**
+     * §15/2326: set when this decryptor came from a request row's reader. Its
+     * random-access reader then opens frames THROUGH the request reader and
+     * holds no key; `requestReaderFree` owns the reader's lifetime.
+     */
+    requestReaderHandle?: number
+  }
+  interface LiveReader {
+    key: Uint8Array
+    fileId: string
+    versionId: Uint8Array
+    /** 1 = v1, 2 = v2. */
+    format: number
+    /** §15/2326: frames open through this request reader; no key is held. */
+    requestReaderHandle?: number
+  }
+  const liveDecryptors = new Map<number, LiveDecryptor>()
+  const liveReaders = new Map<number, LiveReader>()
+  /** §15/2326: decrypt-only readers for request rows; they hold no key we can copy. */
+  const liveRequestReaders = new Map<number, Wasm.WasmRequestContentReader>()
   let nextHandle = 1
 
-  function decryptor(handle: number): Wasm.WasmChunkDecryptor {
+  function decryptor(handle: number): LiveDecryptor {
     const d = liveDecryptors.get(handle)
     if (!d) throw new Error(`No live decryptor for handle ${handle}`)
     return d
+  }
+
+  function reader(handle: number): LiveReader {
+    const r = liveReaders.get(handle)
+    if (!r) throw new Error(`No live chunk reader for handle ${handle}`)
+    return r
+  }
+
+  function wipeKey(key: Uint8Array | undefined): void {
+    key?.fill(0)
+  }
+
+  /** Open ONE frame through a registered request reader; no key involved. */
+  function openRequestFrame(
+    readerHandle: number,
+    versionId: Uint8Array,
+    index: number,
+    isLast: boolean,
+    format: number,
+    frame: Uint8Array,
+  ): Uint8Array {
+    const entry = liveRequestReaders.get(readerHandle)
+    if (!entry) throw new Error(`No live request reader for handle ${readerHandle}`)
+    try {
+      return entry.openFrame(versionId, index, isLast, format, frame) as Uint8Array
+    } catch (err) {
+      throw chunkAuthError(err)
+    }
   }
 
   return {
@@ -107,13 +184,19 @@ export function createContentOps(wasm: ContentWasm) {
     createDecryptor(fileKey: Uint8Array, fileId: string, pin: ContentPin): number {
       const d = wasm.WasmChunkDecryptor.fromFileKey(fileKey, fileId, toContentPin(pin))
       const handle = nextHandle++
-      liveDecryptors.set(handle, d)
+      liveDecryptors.set(handle, { decryptor: d, key: fileKey.slice(), fileId, pin })
       return handle
     },
 
     /** Open the next wire frame (`nonce || ciphertext || tag`), in order from chunk 0. */
     decryptorPushFrame(handle: number, frame: Uint8Array): Uint8Array {
-      return decryptor(handle).pushFrame(frame)
+      const entry = decryptor(handle)
+      try {
+        return entry.decryptor.pushFrame(frame)
+      } catch (err) {
+        // Core refused the frame: an authentication (or downgrade) failure.
+        throw chunkAuthError(err)
+      }
     },
 
     /**
@@ -123,28 +206,180 @@ export function createContentOps(wasm: ContentWasm) {
      * any `decryptorPushFrame`, throws.
      */
     decryptorFinish(handle: number): DecryptSummary {
-      const d = decryptor(handle)
+      const entry = decryptor(handle)
       // `finish` takes the WASM instance by value: it is gone after this call,
       // whether it returns or throws.
       liveDecryptors.delete(handle)
-      return d.finish() as DecryptSummary
+      try {
+        return entry.decryptor.finish() as DecryptSummary
+      } finally {
+        wipeKey(entry.key)
+      }
     },
 
     /** Free a decryptor that will not be finished (failed or aborted read). Idempotent. */
     decryptorDispose(handle: number): void {
-      const d = liveDecryptors.get(handle)
-      if (!d) return
+      const entry = liveDecryptors.get(handle)
+      if (!entry) return
       liveDecryptors.delete(handle)
+      try {
+        entry.decryptor.free()
+      } catch {
+        // Already consumed: nothing to free.
+      } finally {
+        wipeKey(entry.key)
+      }
+    },
+
+    /**
+     * Turn a decryptor that has opened chunk 0 into a random-access reader
+     * handle. The reader owns the key copy, file id, v2 version id and the
+     * format chunk 0 established; the decryptor is freed. Nothing in
+     * `openChunkAt` takes a key, format or version id from the page.
+     *
+     * It REFUSES format 1 when the pin says v2 (a downgrade): with a v2 pin,
+     * core only ever opens v2 frames, and this is the belt to that suspender.
+     */
+    createChunkReader(decryptorHandle: number): number {
+      const entry = decryptor(decryptorHandle)
+      const d = entry.decryptor
+      if (d.chunksDecrypted < 1) {
+        throw new Error('createChunkReader needs chunk 0 to be pushed first')
+      }
+      const format = d.format
+      if (format !== 1 && format !== 2) {
+        throw new Error(`decryptor reports unknown chunk format ${String(format)}`)
+      }
+      if (entry.pin === PIN_V2 && format === 1) {
+        // A downgrade is an authentication failure of the claimed format.
+        throw chunkAuthError(new Error('refusing format 1 for a file whose pin says v2'))
+      }
+      const versionId = d.versionId ? d.versionId.slice() : new Uint8Array(0)
+      // A-R3: the reader takes its decryptor's handle (retired here), so a
+      // page whose reply was lost can still close it by a handle it knows.
+      const handle = decryptorHandle
+      liveReaders.set(handle, {
+        key: entry.requestReaderHandle === undefined ? entry.key : new Uint8Array(0),
+        fileId: entry.fileId,
+        versionId,
+        format,
+        requestReaderHandle: entry.requestReaderHandle,
+      })
+      // The key copy moves to the reader; keep the decryptor entry from wiping
+      // it on dispose.
+      entry.key = new Uint8Array(0)
+      liveDecryptors.delete(decryptorHandle)
       try {
         d.free()
       } catch {
-        // Already consumed: nothing to free.
+        // Consumed already: nothing to free.
       }
+      return handle
+    },
+
+    /**
+     * Open ONE frame at its own index. The caller passes only the index, the
+     * `is_last` flag and the frame; the key, format and version id stay in the
+     * worker.
+     */
+    openChunkAt(handle: number, index: number, isLast: boolean, frame: Uint8Array): Uint8Array {
+      const r = reader(handle)
+      if (r.requestReaderHandle !== undefined) {
+        return openRequestFrame(r.requestReaderHandle, r.versionId, index, isLast, r.format, frame)
+      }
+      try {
+        return wasm.decrypt_chunk_frame(
+          r.key,
+          r.fileId,
+          r.versionId.length ? r.versionId : new Uint8Array(0),
+          index,
+          isLast,
+          r.format,
+          frame,
+        )
+      } catch (err) {
+        // The frame did not open at this index (and last flag, for v2).
+        throw chunkAuthError(err)
+      }
+    },
+
+    /** Close a reader and wipe its key copy. Idempotent. */
+    closeChunkReader(handle: number): void {
+      const r = liveReaders.get(handle)
+      if (!r) return
+      liveReaders.delete(handle)
+      wipeKey(r.key)
     },
 
     /** Decryptors not yet finished or disposed (the worker never recycles while one is live). */
     liveDecryptorCount(): number {
       return liveDecryptors.size
+    },
+
+    // ── §15 (2326): a request row's decrypt-only reader ─────────────────────
+    //
+    // Core's `resolveRequestRow` hands back a `WasmRequestContentReader`; it
+    // never exposes the row's content key. The reader stays in this worker
+    // alongside the other handles, so no key crosses to the page.
+
+    /** Register a reader core produced; returns its worker handle. */
+    registerRequestReader(reader: Wasm.WasmRequestContentReader): number {
+      const handle = nextHandle++
+      liveRequestReaders.set(handle, reader)
+      return handle
+    },
+
+    /**
+     * A FRESH sequential decryptor at chunk 0, registered like any other
+     * decryptor so `decryptorPushFrame/Finish/Dispose` drive it.
+     */
+    requestReaderDecryptor(readerHandle: number): number {
+      const reader = liveRequestReaders.get(readerHandle)
+      if (!reader) throw new Error(`No live request reader for handle ${readerHandle}`)
+      const d = reader.decryptor()
+      const handle = nextHandle++
+      liveDecryptors.set(handle, {
+        decryptor: d,
+        key: new Uint8Array(0),
+        fileId: reader.fileId,
+        pin: toContentPin(reader.chunkFormat),
+        requestReaderHandle: readerHandle,
+      })
+      return handle
+    },
+
+    /** Open ONE frame at `index` through the request reader (seek / range read). */
+    requestReaderOpenFrame(
+      readerHandle: number,
+      versionId: Uint8Array,
+      index: number,
+      isLast: boolean,
+      format: number,
+      frame: Uint8Array,
+    ): Uint8Array {
+      return openRequestFrame(readerHandle, versionId, index, isLast, format, frame)
+    },
+
+    /** Free a request reader. Idempotent. */
+    requestReaderFree(readerHandle: number): void {
+      const reader = liveRequestReaders.get(readerHandle)
+      if (!reader) return
+      liveRequestReaders.delete(readerHandle)
+      try {
+        reader.free()
+      } catch {
+        // already freed
+      }
+    },
+
+    /** Request readers not yet freed. */
+    liveRequestReaderCount(): number {
+      return liveRequestReaders.size
+    },
+
+    /** Random-access readers not yet closed (the worker never recycles while one is live). */
+    liveReaderCount(): number {
+      return liveReaders.size
     },
 
     /**

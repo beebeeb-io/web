@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 1536 pat create step up spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

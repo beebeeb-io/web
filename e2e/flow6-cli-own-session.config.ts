@@ -1,3 +1,4 @@
+// Standalone Playwright config for the flow6 cli own session spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 
 /**

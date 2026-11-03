@@ -6,7 +6,7 @@ const root = join(import.meta.dir, '..')
 
 describe('HEIC preview routing', () => {
   test('routes HEIC/HEIF files through the dedicated client-side converter', () => {
-    const source = readFileSync(join(root, 'src/components/preview/file-preview.tsx'), 'utf8')
+    const source = readFileSync(join(root, 'src/components/preview/pick-renderer.tsx'), 'utf8')
 
     expect(source).toContain("import { HeicPreview } from './heic-preview'")
     expect(source).toContain('<HeicPreview')

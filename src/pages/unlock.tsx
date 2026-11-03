@@ -1,3 +1,4 @@
+// The /unlock route: unlock the vault after a reload.
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'

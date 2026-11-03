@@ -1,3 +1,4 @@
+// The storage-quota warning with remaining-bytes calculation.
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Icon } from '@beebeeb/shared'

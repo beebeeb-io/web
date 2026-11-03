@@ -1,3 +1,4 @@
+// The web chip primitive for compact labels and filters.
 import type { ReactNode } from 'react'
 
 type Variant = 'default' | 'amber' | 'green'

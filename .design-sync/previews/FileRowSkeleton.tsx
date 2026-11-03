@@ -1,3 +1,4 @@
+// Design-sync preview of FileRowSkeleton for the Claude Design project.
 import { FileRowSkeleton } from '@beebeeb/shared'
 
 export const Rows = () => (

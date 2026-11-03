@@ -13,6 +13,10 @@ import {
   type DecryptSummary,
   type PinnedMetadata,
 } from '../lib/content-crypto'
+import { decodeEnvelope, encodeEnvelope, type EnvelopeBytes } from '../lib/metadata-envelope'
+import { ownedItemWorkerOps } from './crypto-owned-item'
+import { requestRowWorkerOps } from './crypto-request-row'
+import { l16WorkerOps } from './crypto-l16'
 
 // Import the .wasm binary URL via Vite's ?url suffix so it resolves
 // correctly inside a bundled worker (import.meta.url in the wasm-pack
@@ -274,6 +278,16 @@ const cryptoWorker = {
     return wasm.decrypt_chunk(fileKey, nonce, ciphertext)
   },
 
+  /** Core's canonical metadata-envelope writer (W-P3-2). */
+  async encodeMetadataEnvelope(nonce: Uint8Array, ciphertext: Uint8Array): Promise<string> {
+    return encodeEnvelope(await ensureWasm(), nonce, ciphertext)
+  },
+
+  /** Core's tolerant metadata-envelope reader (W-P3-2). */
+  async decodeMetadataEnvelope(payload: string): Promise<EnvelopeBytes> {
+    return decodeEnvelope(await ensureWasm(), payload)
+  },
+
   /** Encrypt a filename / metadata string with AES-256-GCM. */
   async encryptFilename(
     fileKey: Uint8Array,
@@ -352,9 +366,36 @@ const cryptoWorker = {
     ;(await content()).decryptorDispose(handle)
   },
 
+  /**
+   * Turn a decryptor that opened chunk 0 into a random-access reader handle.
+   * The reader owns the key in the worker; the page never sees it.
+   */
+  async createChunkReader(decryptorHandle: number): Promise<number> {
+    return (await content()).createChunkReader(decryptorHandle)
+  },
+
+  /** Open ONE frame at its own index; the plaintext buffer is transferred back. */
+  async openChunkAt(handle: number, index: number, isLast: boolean, frame: Uint8Array): Promise<Uint8Array> {
+    const plaintext = (await content()).openChunkAt(handle, index, isLast, frame)
+    return Comlink.transfer(plaintext, [plaintext.buffer])
+  },
+
+  /** Close a reader and wipe its key. Idempotent. */
+  async closeChunkReader(handle: number): Promise<void> {
+    ;(await content()).closeChunkReader(handle)
+  },
+
+  // §15 request-row readers (same file-size ratchet as the owner ops).
+  ...requestRowWorkerOps(content),
+
   /** Live decryptors: the owner never recycles this worker while one is live. */
   liveDecryptorCount(): number {
     return contentOps ? contentOps.liveDecryptorCount() : 0
+  },
+
+  /** Live random-access readers: also never recycled while one is open. */
+  liveReaderCount(): number {
+    return contentOps ? contentOps.liveReaderCount() : 0
   },
 
   /** Seal a note of an existing file under the rule of its recorded pin. */
@@ -366,6 +407,19 @@ const cryptoWorker = {
   async decryptNote(fileKey: Uint8Array, noteEncrypted: string): Promise<string> {
     return (await content()).decryptNote(fileKey, noteEncrypted)
   },
+
+  // Owner reads, id minting, the resolver and the wrap comparison live in
+  // crypto-owned-item.ts (same file-size ratchet); spread in so the Comlink
+  // surface is unchanged.
+  ...ownedItemWorkerOps(
+    ensureWasm,
+    (enc) => {
+      const handle = nextEncryptorHandle++
+      liveEncryptors.set(handle, enc)
+      return handle
+    },
+    async (reader) => (await content()).registerRequestReader(reader),
+  ),
 
   /** Generate a 12-word BIP39 recovery phrase and the corresponding master key. */
   async generateRecoveryPhrase(): Promise<{
@@ -530,7 +584,10 @@ const cryptoWorker = {
     return wasm.unwrapFolderCustody(masterKey, folderId, wrapped) as Uint8Array
   },
 
-  /** L6: a link's K_c, sealed to the owner and bound to the share id. */
+  // L16 actor names and link labels live in crypto-l16.ts (same file-size
+  // ratchet); spread in so the Comlink surface is unchanged.
+  ...l16WorkerOps(ensureWasm),
+
   async wrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, linkKey: Uint8Array): Promise<Uint8Array> {
     const wasm = await ensureWasm()
     return wasm.wrapLinkOwnerKey(masterKey, shareId, linkKey) as Uint8Array
@@ -1062,17 +1119,6 @@ const cryptoWorker = {
       e_pub: Uint8Array
       wrapped_key: Uint8Array
     }
-  },
-
-  /** Open a sealed request upload (owner decrypt path). Recovers the content key. */
-  async openRequestUpload(
-    rPriv: Uint8Array,
-    ePub: Uint8Array,
-    fileId: Uint8Array,
-    wrappedKey: Uint8Array,
-  ): Promise<Uint8Array> {
-    const wasm = await ensureWasm()
-    return wasm.open_request_upload(rPriv, ePub, fileId, wrappedKey) as Uint8Array
   },
 
   // ─── Constellation peer transfer ──────────────────────────────────────────

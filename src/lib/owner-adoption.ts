@@ -19,8 +19,11 @@ import {
   wrapOwnerFileKey as coreWrapOwnerFileKey,
 } from './crypto'
 import { adoptOwnerFileKey, getFile, getSentInvites, getSharedFolder, type ShareInvite, type SharedFolderInfo } from './api'
+import { listSharedFolderKeys } from './api-folder-links'
+import { collectAllChildItems } from './folder-share-crypto'
 import { assertNeverSawCustody, assertNoSeenAncestor, markCustodySeen } from './custody-memory'
 import { forgetFeatureFlags, sharedFoldersEnabled } from './use-feature-flag'
+import { ownedItem } from './owned-item'
 import {
   activeFolderInvites,
   noCustodyRecord,
@@ -172,13 +175,51 @@ export interface AdoptableFile {
 }
 
 /**
- * True when this row's key is not derivable from the master key, so the owner
- * needs the shared-folder path (or the owner wrap) to open it.
+ * L12 (contract 2275): the id class decides whose key path a row is on, never
+ * attribution columns — a server fills those in and can lie about them. This
+ * is core's answer for one id.
+ */
+export async function itemIsForeign(itemId: string): Promise<boolean> {
+  return ownedItem.isForeign(itemId)
+}
+
+/**
+ * Session memory of the id class, so list rendering can mark a row without an
+ * async call per row. Filled by `classifyItemIds` (core); a row that was never
+ * classified is NOT treated as foreign by the synchronous readers below.
+ */
+const foreignIds = new Set<string>()
+const ownerIds = new Set<string>()
+
+/** Ask core for these ids' class and remember it. Non-canonical ids are skipped. */
+export async function classifyItemIds(ids: Iterable<string>): Promise<void> {
+  for (const id of ids) {
+    if (foreignIds.has(id) || ownerIds.has(id)) continue
+    try {
+      ;(await ownedItem.isForeign(id)) ? foreignIds.add(id) : ownerIds.add(id)
+    } catch {
+      /* not a canonical id: never an F item, and never displayed as one */
+    }
+  }
+}
+
+/** Sync view of `classifyItemIds`' answer; false until the id has been classified. */
+export function isForeignItemById(itemId: string): boolean {
+  return foreignIds.has(itemId)
+}
+
+/**
+ * True when the owner must open this row through the shared-folder path. The
+ * class is authoritative; the attribution fields are only a hint used until
+ * this client has classified the row (a listing render), because they are
+ * server-supplied and must never decide key handling.
  */
 export function needsOwnership(
-  f: Pick<AdoptableFile, 'acted_via_share_id' | 'uploaded_by'>,
+  f: Pick<AdoptableFile, 'acted_via_share_id' | 'uploaded_by'> & { id?: string },
   viewerId?: string | null,
 ): boolean {
+  if (f.id && foreignIds.has(f.id)) return true
+  if (f.id && ownerIds.has(f.id)) return false
   return f.acted_via_share_id != null || (!!f.uploaded_by && f.uploaded_by !== viewerId)
 }
 
@@ -194,6 +235,11 @@ export async function wrapFileKeyToMaster(
   fileId: string,
   fileKey: Uint8Array,
 ): Promise<string> {
+  // L12: core's wrap refuses an O id. Refuse here first so the caller sees the
+  // reason, not a generic wasm error.
+  if (!(await itemIsForeign(fileId))) {
+    throw new Error('an owner wrap is written for a foreign (F) item id only (L12)')
+  }
   return toBase64(await coreWrapOwnerFileKey(masterKey, fileId, fileKey))
 }
 
@@ -272,6 +318,13 @@ export async function adoptGuestFile(args: {
   encryptedFileKeyB64: string
 }): Promise<{ adopted: boolean; fileKey: Uint8Array }> {
   const { masterKey, folderId, file, encryptedFileKeyB64 } = args
+  // L12: adoption writes an L8 envelope for an F id only. An O row's key is
+  // derived from the master, so there is nothing to adopt — and core's wrap
+  // refuses an O id anyway. Never post a key for a row the server made to look
+  // foreign.
+  if (!(await itemIsForeign(file.id))) {
+    throw new Error('owner adoption is for a foreign (F) item id only (L12)')
+  }
   const root = await rootKeyAndFormat(masterKey, folderId)
   if (!root) throw new Error('The folder key is not available on this device.')
   let fileKey: Uint8Array
@@ -402,6 +455,9 @@ export async function foreignRowKey(args: {
 }): Promise<Uint8Array | null> {
   const { masterKey, file, viewerId, keyIndexFor } = args
   if (!needsOwnership(file, viewerId)) return null
+  // The server's columns are a hint only (L12): an id that is not foreign is
+  // the owner's own row, and its wrap path is never taken for it.
+  if (!(await itemIsForeign(file.id))) return null
   if (!(await sharedFoldersEnabled())) return null
   if (file.owner_wrapped_file_key) {
     const owned = await unwrapOwnerFileKey(masterKey, file.id, file.owner_wrapped_file_key)
@@ -484,4 +540,161 @@ export async function sharedRootFor(
   }
   if (!parent || parent === startFolderId) return null
   return rootFromFolder(parent)
+}
+
+/** A refused move-out: F items under the folder could not be adopted first. */
+export class MoveNeedsAdoptionError extends Error {
+  constructor(readonly itemIds: string[]) {
+    super('This folder has items added by someone else that could not be saved to your account first, so it was not moved.')
+    this.name = 'MoveNeedsAdoptionError'
+  }
+}
+
+/** L12 bound: at most this many F items are adopted for one move. */
+export const ADOPTION_MAX_ITEMS = 10_000
+
+/** A move that would sweep more than `ADOPTION_MAX_ITEMS` F items. */
+export class AdoptionTooLargeError extends Error {
+  constructor(readonly total: number) {
+    super(
+      `This folder holds more than ${ADOPTION_MAX_ITEMS} items added by someone else, so it was not moved.`,
+    )
+    this.name = 'AdoptionTooLargeError'
+  }
+}
+
+/** Two core-resolved keys are the same key (the check, not a crypto step). */
+function keysEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i += 1) diff |= a[i] ^ b[i]
+  return diff === 0
+}
+
+/** The wraps a custody root holds, by item id (owner or member read). */
+async function keysUnderRoot(rootId: string): Promise<Map<string, string>> {
+  const index = new Map<string, string>()
+  let cursor: string | null = null
+  do {
+    const page = await listSharedFolderKeys(rootId, { cursor })
+    for (const row of page.keys) index.set(row.file_id, row.encrypted_file_key)
+    cursor = page.next_cursor
+  } while (cursor)
+  return index
+}
+
+/**
+ * L12 (2275): before an owner moves an F item, or a folder with F descendants,
+ * out of its shared root, every one of those F items is adopted under the
+ * owner's master and READ BACK. Anything that cannot be adopted refuses the
+ * move (`MoveNeedsAdoptionError`); a move that quietly dropped someone else's
+ * key would strand their item.
+ */
+export async function adoptForeignTreeBeforeMove(args: {
+  masterKey: Uint8Array
+  rootId: string
+  itemIds: string[]
+  /** The moved rows' kinds, when the caller has them (F4): a folder's
+   * descendants are only adopted when it is known to be a folder. */
+  items?: ReadonlyArray<{ id: string; is_folder: boolean }>
+}): Promise<{ adopted: number }> {
+  const { masterKey, rootId, itemIds } = args
+  const index = await keysUnderRoot(rootId)
+  const kinds = new Map((args.items ?? []).map((item) => [item.id, item.is_folder]))
+  const queue: { id: string; isFolder: boolean }[] = []
+  for (const id of itemIds) {
+    const known = kinds.get(id)
+    // F4: a moved folder seeded as a file never had its contents adopted. Take
+    // the kind from the caller's row, else from the server row for this id.
+    const isFolder = known ?? !!(await getFile(id).catch(() => null))?.is_folder
+    queue.push({ id, isFolder })
+  }
+
+  // Pass 1 — enumerate the tree and classify it. This pass writes nothing, so
+  // the cap is decided on the whole tree before the first adoption lands.
+  const seen = new Set<string>()
+  const targets: {
+    id: string
+    isFolder: boolean
+    row: Awaited<ReturnType<typeof getFile>> | null
+  }[] = []
+  let foreign = 0
+  while (queue.length) {
+    const item = queue.shift()!
+    if (seen.has(item.id)) continue
+    seen.add(item.id)
+    if (item.isFolder) {
+      for (const child of await collectAllChildItems(item.id)) {
+        queue.push({ id: child.id, isFolder: child.isFolder })
+      }
+    }
+    if (!(await itemIsForeign(item.id))) continue
+    // L12 bound: only F items count, and the count is complete before any
+    // write. A tree with more F items is refused whole.
+    foreign += 1
+    if (foreign > ADOPTION_MAX_ITEMS) throw new AdoptionTooLargeError(foreign)
+    const row = await getFile(item.id).catch(() => null)
+    if (row?.owner_wrapped_file_key) {
+      const opened = await unwrapOwnerFileKey(masterKey, item.id, row.owner_wrapped_file_key)
+      if (opened) {
+        zeroize(opened)
+        continue
+      }
+    }
+    targets.push({ id: item.id, isFolder: item.isFolder, row })
+  }
+
+  // Pass 2 — every F item is known and under the cap, so adopt.
+  const failed: string[] = []
+  let adopted = 0
+  for (const item of targets) {
+    const { row } = item
+    const wrapped = index.get(item.id)
+    if (!wrapped) {
+      failed.push(item.id)
+      continue
+    }
+    try {
+      const res = await adoptGuestFile({
+        masterKey,
+        folderId: rootId,
+        file: { id: item.id, parent_id: row?.parent_id ?? null, is_folder: item.isFolder, name_encrypted: row?.name_encrypted },
+        encryptedFileKeyB64: wrapped,
+      })
+      if (!res.adopted) {
+        // Write-once: a wrap another owner client stored is proof only when it
+        // holds the key this client adopted — opening for this item is not
+        // proof that the server kept the right key.
+        // Read the row again: a concurrent owner client may have stored the
+        // winning wrap after this pass collected its row.
+        const readBackRow = await getFile(item.id).catch(() => null)
+        const readBack = readBackRow?.owner_wrapped_file_key ?? null
+        let stored: Uint8Array | null = null
+        try {
+          stored = readBack ? await unwrapOwnerFileKey(masterKey, item.id, readBack) : null
+        } catch {
+          stored = null
+        }
+        const holdsAdopted = !!stored && keysEqual(stored, res.fileKey)
+        if (stored) zeroize(stored)
+        zeroize(res.fileKey)
+        if (!holdsAdopted) failed.push(item.id)
+        continue
+      }
+      adopted += 1
+      // F13: the stored wrap must hold the key this client just adopted, not
+      // merely open for this item — a server that accepted the adoption could
+      // store a wrap of its own. Both sides come from core; compare the keys.
+      const readBack = await getFile(item.id).catch(() => null)
+      const stored = await unwrapOwnerFileKey(masterKey, item.id, readBack?.owner_wrapped_file_key ?? '')
+      const holdsAdopted = !!stored && keysEqual(stored, res.fileKey)
+      if (stored) zeroize(stored)
+      zeroize(res.fileKey)
+      if (!holdsAdopted) failed.push(item.id)
+    } catch {
+      failed.push(item.id)
+    }
+  }
+  if (failed.length) throw new MoveNeedsAdoptionError(failed)
+  return { adopted }
 }

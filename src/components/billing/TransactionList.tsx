@@ -1,6 +1,8 @@
+// The billing transaction list with amount, status, and date per charge.
 import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import type { BillingTransaction } from '../../lib/api'
+import { formatMoneyCents } from '../../lib/billing/money'
 
 interface TransactionListProps {
   transactions: BillingTransaction[]
@@ -25,18 +27,6 @@ function formatDate(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
-/**
- * Format signed integer cents as a EUR amount, e.g. 3995 → "EUR 39.95",
- * -1099 → "− EUR 10.99" (refunds are stored negative). The minus uses a real
- * minus sign so it reads as money, not a hyphen.
- */
-function formatCents(cents: number, currency: string): string {
-  if (!Number.isFinite(cents)) cents = 0
-  const cur = (currency || 'EUR').toUpperCase()
-  const abs = (Math.abs(cents) / 100).toFixed(2)
-  return cents < 0 ? `− ${cur} ${abs}` : `${cur} ${abs}`
 }
 
 /** Human label for a Mollie payment method. NULL → "Unknown" (we don't store it on pre-0936 rows). */
@@ -166,7 +156,7 @@ export function TransactionList({ transactions, variant = 'plain', onExport, exp
                     </div>
                     <span className="text-[12.5px] text-ink-2">{formatDate(tx.date)}</span>
                     <span className={`font-mono text-xs font-semibold ${amountClass}`}>
-                      {formatCents(tx.amount_gross_cents, tx.currency)}
+                      {formatMoneyCents(tx.amount_gross_cents, tx.currency)}
                     </span>
                     <span>
                       <BBChip variant={statusVariant(tx.status)}>{statusLabel(tx.status)}</BBChip>
@@ -188,7 +178,7 @@ export function TransactionList({ transactions, variant = 'plain', onExport, exp
                         )}
                       </div>
                       <div className={`font-mono text-sm font-semibold ${amountClass} shrink-0`}>
-                        {formatCents(tx.amount_gross_cents, tx.currency)}
+                        {formatMoneyCents(tx.amount_gross_cents, tx.currency)}
                       </div>
                     </div>
                   </div>
@@ -272,7 +262,7 @@ export function TransactionList({ transactions, variant = 'plain', onExport, exp
                     )}
                   </div>
                   <span className={`font-mono text-xs font-semibold ${amountClass}`}>
-                    {formatCents(tx.amount_gross_cents, tx.currency)}
+                    {formatMoneyCents(tx.amount_gross_cents, tx.currency)}
                   </span>
                   <span>
                     <BBChip variant={statusVariant(tx.status)}>{statusLabel(tx.status)}</BBChip>
@@ -299,7 +289,7 @@ export function TransactionList({ transactions, variant = 'plain', onExport, exp
                       )}
                     </div>
                     <div className={`font-mono text-sm font-semibold ${amountClass} shrink-0`}>
-                      {formatCents(tx.amount_gross_cents, tx.currency)}
+                      {formatMoneyCents(tx.amount_gross_cents, tx.currency)}
                     </div>
                   </div>
                 </div>

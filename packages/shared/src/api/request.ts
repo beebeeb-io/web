@@ -28,6 +28,7 @@
 import { ApiError, readErrorResponse } from './errors'
 import { getApiUrl, provenanceHeaders, expectedUserHeaders } from './config'
 import { clearToken, getToken } from './token'
+import { decideRetry, parseRetryAfterHeader, type RetryPolicy } from './retry'
 import {
   fireAccountDeleted,
   fireAccountMismatch,
@@ -50,6 +51,27 @@ const RATE_PACE_THRESHOLD = 0.2
 // automatic retry). Anything above it (hourly/daily quota limiters) must
 // throw immediately instead of blocking the caller for hours — see task 1148.
 const RATE_LIMIT_MAX_AUTO_RETRY_SECONDS = 10
+// What the server sends when a 429 carries no usable Retry-After (absent, or
+// not delta-seconds): the same 5 s the helper has always assumed.
+const DEFAULT_RETRY_AFTER_SECONDS = 5
+
+// This client's policies. The ladder, the jitter bounds and the decision are
+// core's (`./retry`); what stays here is the transport's choice — how many
+// tries it is willing to make, and how long its own ladder is. Both are
+// single-step ladders on purpose: this client retries 429s only, never a 5xx,
+// and a raw network failure gets exactly one 800 ms second chance.
+const NETWORK_RETRY_POLICY: RetryPolicy = {
+  max_attempts: 2,
+  base_ms: RETRY_DELAY_MS,
+  cap_ms: RETRY_DELAY_MS,
+  jitter: 'none',
+}
+const RATE_LIMIT_RETRY_POLICY: RetryPolicy = {
+  max_attempts: RATE_LIMIT_MAX_RETRIES + 1,
+  base_ms: RETRY_DELAY_MS,
+  cap_ms: RETRY_DELAY_MS,
+  jitter: 'none',
+}
 
 function formatRetryAfter(seconds: number): string {
   if (seconds < 60) return `${seconds} second${seconds === 1 ? '' : 's'}`
@@ -157,7 +179,7 @@ export async function request<T>(
       // that check and also risk a retry re-issuing the same request after
       // the caller has already moved on.
       if (options.signal?.aborted) throw firstErr
-      await delay(RETRY_DELAY_MS)
+      await delay((await decideRetry(NETWORK_RETRY_POLICY, 1, 'network', null)) ?? RETRY_DELAY_MS)
       try {
         res = await fetch(`${apiUrl}${path}`, init)
       } catch (secondErr) {
@@ -177,13 +199,23 @@ export async function request<T>(
     updateRateLimitState(res)
 
     if (res.status === 429) {
-      const retryAfter = parseInt(res.headers.get('retry-after') ?? '5', 10)
+      // `Retry-After` is parsed by core: delta-seconds only, trimmed, leading
+      // zeros fine, anything else (a date, a fraction, a sign) is "no
+      // instruction". A 429 without one keeps the helper's 5 s assumption.
+      const retryAfter =
+        (await parseRetryAfterHeader(res.headers.get('retry-after'))) ?? DEFAULT_RETRY_AFTER_SECONDS
       // Only auto-retry short windows (brief-burst smoothing). A long
       // Retry-After (hourly/daily quota limiter) must throw immediately —
       // sleeping for it would hang the caller for hours (task 1148).
-      if (retryAfter <= RATE_LIMIT_MAX_AUTO_RETRY_SECONDS && attempt < RATE_LIMIT_MAX_RETRIES) {
-        await delay(retryAfter * 1000)
-        continue
+      if (retryAfter <= RATE_LIMIT_MAX_AUTO_RETRY_SECONDS) {
+        // Core decides whether another try fits the policy; a server
+        // Retry-After replaces the ladder exactly, so the sleep is the
+        // server's number of seconds.
+        const waitMs = await decideRetry(RATE_LIMIT_RETRY_POLICY, attempt + 1, { status: 429 }, retryAfter)
+        if (waitMs !== null) {
+          await delay(waitMs)
+          continue
+        }
       }
       if (retryAfter > RATE_LIMIT_MAX_AUTO_RETRY_SECONDS) {
         throw new ApiError(

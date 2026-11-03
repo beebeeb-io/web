@@ -72,7 +72,8 @@ void apiReal
 const share = await import('../src/lib/folder-share-crypto')
 const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 const adoption = await import('../src/lib/owner-adoption')
-const { publishOwnerUploadKey } = await import('../src/lib/owner-upload-key')
+const { publishOwnerUploadKey, publishOrDeferOwnerUpload } = await import('../src/lib/owner-upload-key')
+const { noteFolderClick } = await import('../src/lib/publish-anchor')
 
 function custodyRecord(): CustodyAnswer {
   const wrapped = wasm.wrapFolderCustody(MASTER, ROOT, FOLDER_KEY) as Uint8Array
@@ -136,7 +137,7 @@ describe('L7b: a custody folder is strictly L7 on every path', () => {
 
   test('owner upload: the published wrap is L7 for (root, file, file) and not a legacy seal', async () => {
     reset(custodyRecord())
-    await publishOwnerUploadKey(MASTER, ROOT, FILE_ID, FILE_KEY)
+    await publishOwnerUploadKey(ROOT, FILE_ID, FILE_KEY, false, { rootId: ROOT, folderKey: FOLDER_KEY })
     expect(published).toHaveLength(1)
     const wrap = published[0].keys[0].encrypted_file_key
     const opened = await share.openChildKey(FOLDER_KEY, { rootId: ROOT, itemId: FILE_ID, isFolder: false }, wrap)
@@ -146,9 +147,13 @@ describe('L7b: a custody folder is strictly L7 on every path', () => {
 
   test('owner upload into a folder WITHOUT custody publishes nothing (no legacy write here)', async () => {
     reset({ kind: 'status', status: 501 })
-    // A flag-off invite-only share: the root is found through its invite.
+    // A flag-off invite-only share: the root is found through its invite (the
+    // live path checks the format before it seals; there is no proven root).
     sentInvites = [{ id: 'inv', is_folder_share: true, file_id: ROOT, status: 'approved', created_at: '2026-10-01T00:00:00Z' }]
-    await publishOwnerUploadKey(MASTER, ROOT, FILE_ID, FILE_KEY)
+    noteFolderClick(ROOT)
+    expect(
+      await publishOrDeferOwnerUpload({ masterKey: MASTER, parentId: ROOT, fileId: FILE_ID, fileKey: FILE_KEY }),
+    ).toBe('not_published')
     expect(published).toHaveLength(0)
   })
 

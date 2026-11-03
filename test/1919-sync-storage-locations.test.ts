@@ -145,7 +145,7 @@ describe('rowsSignature renders the country', () => {
 })
 
 describe('the drive wires it', () => {
-  const drive = readFileSync(fileURLToPath(new URL('../src/pages/drive.tsx', import.meta.url)), 'utf8')
+  const drive = readFileSync(fileURLToPath(new URL('../src/pages/drive/use-drive-files.ts', import.meta.url)), 'utf8')
 
   test('sync-derived rows take their pool location; API lists teach it', () => {
     // The mapper attaches the learned location of the node's pool.

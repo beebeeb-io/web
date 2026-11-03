@@ -1,3 +1,4 @@
+// Standalone Playwright config for the 1918 erase request spec, with no shared setup or storage state.
 import { defineConfig } from '@playwright/test'
 import path from 'path'
 

@@ -1,3 +1,4 @@
+// Design-sync preview of BBCheckbox for the Claude Design project.
 import { useState } from 'react'
 import { BBCheckbox } from '@beebeeb/shared'
 

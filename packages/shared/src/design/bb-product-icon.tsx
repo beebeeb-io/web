@@ -1,3 +1,4 @@
+// BBProductIcon: the glyph for each Beebeeb product name (task 2322).
 import { iconPath } from './icons'
 import type { IconName } from './icons'
 

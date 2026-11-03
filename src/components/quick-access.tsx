@@ -1,3 +1,4 @@
+// The sidebar quick-access list of pinned folders.
 import { useState, useEffect, useCallback } from 'react'
 import {
   DndContext,
@@ -18,6 +19,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { Icon } from './icons'
 import { ApiError } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
+import { isRequestContentSource } from '../lib/request-row'
 import { setPreference, getFile } from '../lib/api'
 import { decryptFileMetadata } from '../lib/crypto'
 import { getFolderColorDot } from '../lib/folder-colors'
@@ -180,7 +182,9 @@ export function QuickAccess() {
           try {
             const file = await getFile(id)
             const fileKey = await getFileKeyForFile(file)
-            const { name } = await decryptFileMetadata(fileKey, file.name_encrypted)
+            const { name } = isRequestContentSource(fileKey)
+              ? { name: fileKey.name ?? 'Encrypted file' }
+              : await decryptFileMetadata(fileKey, file.name_encrypted)
             if (name !== 'Encrypted file') {
               resolved = name
               break
