@@ -662,10 +662,23 @@ export async function adoptForeignTreeBeforeMove(args: {
         encryptedFileKeyB64: wrapped,
       })
       if (!res.adopted) {
+        // Write-once: a wrap another owner client stored is proof only when it
+        // holds the key this client adopted — opening for this item is not
+        // proof that the server kept the right key.
+        // Read the row again: a concurrent owner client may have stored the
+        // winning wrap after this pass collected its row.
+        const readBackRow = await getFile(item.id).catch(() => null)
+        const readBack = readBackRow?.owner_wrapped_file_key ?? null
+        let stored: Uint8Array | null = null
+        try {
+          stored = readBack ? await unwrapOwnerFileKey(masterKey, item.id, readBack) : null
+        } catch {
+          stored = null
+        }
+        const holdsAdopted = !!stored && keysEqual(stored, res.fileKey)
+        if (stored) zeroize(stored)
         zeroize(res.fileKey)
-        // Write-once: a wrap another owner client stored is proof enough.
-        const readBack = row?.owner_wrapped_file_key ?? null
-        if (!readBack || !(await unwrapOwnerFileKey(masterKey, item.id, readBack))) failed.push(item.id)
+        if (!holdsAdopted) failed.push(item.id)
         continue
       }
       adopted += 1

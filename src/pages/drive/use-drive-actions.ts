@@ -245,9 +245,10 @@ export function useDriveActions(params: DriveActionsParams) {
   // ─── Drop to folder handler ────────────────────────
 
   async function handleDropToFolder(ids: string[], targetFolder: DriveFile, knownFolderName?: string) {
-    // L15 (b)3: drops are disabled while a navigation is in flight — the site
-    // the user dropped onto is not settled, so nothing may be anchored from it.
-    if (!navigationSettled()) return
+    // L15 (b)3: while a navigation is in flight the drop site is not settled,
+    // so nothing may be anchored from it — the move still happens, owner-only,
+    // and the toast below says so. Anchoring never gates the user's write.
+    const anchored = navigationSettled()
     // Use the pre-decrypted name from the event if available (covers pinned
     // folders that may not be in the current `files` list / decryptedNames map).
     const targetName = knownFolderName || displayName(targetFolder) || 'folder'
@@ -260,9 +261,17 @@ export function useDriveActions(params: DriveActionsParams) {
       if (ids.length === 1) {
         const movedFile = files.find((f) => f.id === ids[0])
         const movedName = movedFile ? displayName(movedFile) : 'File'
-        showToast({ icon: 'folder', title: `Moved to ${targetName}`, description: movedName || undefined })
+        showToast({
+          icon: 'folder',
+          title: `Moved to ${targetName}`,
+          description: anchored ? movedName || undefined : 'Only you can open this until you share it.',
+        })
       } else {
-        showToast({ icon: 'folder', title: `Moved ${ids.length} items to ${targetName}` })
+        showToast({
+          icon: 'folder',
+          title: `Moved ${ids.length} items to ${targetName}`,
+          description: anchored ? undefined : 'Only you can open this until you share it.',
+        })
       }
       fetchFiles()
     } catch (err) {

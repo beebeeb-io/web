@@ -34,6 +34,8 @@ const adoptCalls: Array<{ fileId: string; wrapped: string }> = []
 let adoptResult: { adopted: boolean } = { adopted: true }
 /** What the server stores instead of the posted wrap (F13 read-back tests). */
 let storedWrapOverride: string | null = null
+/** What the server already holds when it refuses a write-once adoption. */
+let refusedWrap: string | null = null
 let custody: { owner_wrapped_folder_key: string } | null = null
 
 const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
@@ -94,8 +96,9 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
     adoptCalls.push({ fileId, wrapped })
     const row = files.get(fileId)
     // Write-once on the server: the first accepted wrap is the stored one.
-    if (adoptResult.adopted && row && !row.owner_wrapped_file_key) {
-      row.owner_wrapped_file_key = storedWrapOverride ?? wrapped
+    if (row && !row.owner_wrapped_file_key) {
+      if (adoptResult.adopted) row.owner_wrapped_file_key = storedWrapOverride ?? wrapped
+      else if (refusedWrap) row.owner_wrapped_file_key = refusedWrap
     }
     return adoptResult
   },
@@ -164,6 +167,7 @@ beforeEach(() => {
   adoptCalls.length = 0
   adoptResult = { adopted: true }
   storedWrapOverride = null
+  refusedWrap = null
   keyIndex = new Map()
   files = new Map()
   clearSharedFolderLookups()
@@ -459,6 +463,22 @@ describe('A19: F descendants are adopted before a move out of the root (L12)', (
     // opens for this item under the owner's master, so "it opens" is not proof
     // that it holds the key this client adopted.
     storedWrapOverride = l8(file.id, new Uint8Array(32).fill(0x77))
+    const { adoptForeignTreeBeforeMove, MoveNeedsAdoptionError } = await import('../src/lib/owner-adoption')
+    await expect(
+      adoptForeignTreeBeforeMove({ masterKey: MASTER, rootId: FOLDER_ID, itemIds: [file.id] }),
+    ).rejects.toBeInstanceOf(MoveNeedsAdoptionError)
+  })
+
+  test('write-once: a stored wrap that opens but holds a different key refuses the move', async () => {
+    seedCustody()
+    const file = seedFile()
+    keyIndex.set(file.id, l7(file.id))
+    // Another owner client already stored a wrap, so this adoption is refused.
+    // The stored wrap opens for the item but holds a key this client did not
+    // adopt: server write-once is not proof that it kept the right key.
+    files.set(file.id, { id: file.id, parent_id: FOLDER_ID, name_encrypted: file.name_encrypted })
+    adoptResult = { adopted: false }
+    refusedWrap = l8(file.id, new Uint8Array(32).fill(0x77))
     const { adoptForeignTreeBeforeMove, MoveNeedsAdoptionError } = await import('../src/lib/owner-adoption')
     await expect(
       adoptForeignTreeBeforeMove({ masterKey: MASTER, rootId: FOLDER_ID, itemIds: [file.id] }),

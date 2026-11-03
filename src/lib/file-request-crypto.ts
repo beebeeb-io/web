@@ -62,40 +62,6 @@ export function isRequestUpload(file: Pick<DriveFile, 'file_request_id' | 'sende
 }
 
 /**
- * Recover the content key C for a single request-uploaded file.
- *
- * @param file        DriveFile carrying file_request_id + sender_ephemeral_pubkey + wrapped_content_key
- * @param masterKey   the owner's 32-byte master key
- * @param requestById a lookup of the owner's requests by id (so R_priv can be unwrapped)
- * @returns the 32-byte content key, usable anywhere a normal file key is
- */
-export async function resolveRequestFileKey(
-  file: Pick<DriveFile, 'file_request_id' | 'sender_ephemeral_pubkey' | 'wrapped_content_key'>,
-  masterKey: Uint8Array,
-  requestById: Map<string, FileRequest>,
-): Promise<Uint8Array> {
-  if (!isRequestUpload(file)) {
-    throw new Error('resolveRequestFileKey called on a non-request file')
-  }
-  const req = requestById.get(file.file_request_id!)
-  if (!req || !req.wrapped_private_key || !req.wrap_nonce) {
-    throw new Error('owning file request (or its wrapped key) not found — cannot decrypt')
-  }
-
-  const wrappedPriv = fromBase64(req.wrapped_private_key)
-  const wrapNonce = fromBase64(req.wrap_nonce)
-  const ePub = fromBase64(file.sender_ephemeral_pubkey!)
-  const wrappedKey = fromBase64(file.wrapped_content_key!)
-
-  const rPriv = await unwrapRequestPrivate(masterKey, wrappedPriv, wrapNonce)
-  try {
-    return await openRequestUpload(rPriv, ePub, wrappedKey)
-  } finally {
-    zeroize(rPriv)
-  }
-}
-
-/**
  * Build an id→request lookup for the current owner. Convenience for callers
  * that need to decrypt several request files at once.
  */
