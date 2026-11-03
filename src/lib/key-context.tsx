@@ -63,6 +63,7 @@ import { decryptLinkLabel } from './link-label'
 import { useAuth } from './auth-context'
 import { isImpersonationSessionActive, shouldReconcileLock } from './impersonation-context'
 import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver, type ResolvedRowKeys } from './file-request-crypto'
+import { fetchOwnerFirstChunkFrames } from './owner-write-guard'
 import { backfillRecoveryCheckIfAbsent, recoveredKeyMatchesAccount } from './recovery-validation'
 import { getAuthStamp, setExpectedUserProvider, registerAccountMismatchHandler } from '@beebeeb/shared'
 
@@ -95,6 +96,18 @@ export function isKeyBoundToUser(
   targetUserId: string | null,
 ): boolean {
   return hasKey && residentUserId === targetUserId
+}
+
+export interface FileKeyOptions {
+  /** See `getFileKey`. */
+  expectedUserId?: string
+  /**
+   * L12 read path: a plaintext-named owner FILE picks its key convention from
+   * chunk 0, so the resolver fetches that frame and passes it to core. Only
+   * reads (download, zip, preview, rename) opt in; share-link creation must
+   * not, or a link would wrap a key it could not authenticate from the name.
+   */
+  plaintextChunk?: boolean
 }
 
 interface KeyState {
@@ -153,7 +166,7 @@ interface KeyState {
    *  files use the normal derive_file_key(master, id) path. Prefer this over
    *  getFileKey wherever the full file object is available (naming, preview,
    *  download). `expectedUserId` — see `getFileKey`. */
-  getFileKeyForFile: (file: DriveFile, expectedUserId?: string) => Promise<Uint8Array>
+  getFileKeyForFile: (file: DriveFile, options?: FileKeyOptions) => Promise<Uint8Array>
   /** 2275 L13 / A9c: BOTH keys of a row. A request row's content stays under
    *  the sealed content key C while its name key is derived-or-C (derived
    *  first), because an old client may have renamed the row under the string
@@ -650,8 +663,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     return labels
   }))
 
-  const getFileKeyForFile = useCallback(async (file: DriveFile, expectedUserId?: string): Promise<Uint8Array> => {
-    if (!isBoundTo(expectedUserId)) {
+  const getFileKeyForFile = useCallback(async (file: DriveFile, options: FileKeyOptions = {}): Promise<Uint8Array> => {
+    if (!isBoundTo(options.expectedUserId)) {
       throw new Error('Vault is locked — unlock first')
     }
     const key = masterKeyRef.current as Uint8Array
@@ -671,6 +684,9 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       viewerId: residentKeyUserIdRef.current,
       keyIndexFor: (root, fileId) => sharedFolderCacheRef.current.forFile(root, fileId),
     })
+    if (options.plaintextChunk) {
+      return resolveOwnerKeyForRead(key, file, residentKeyUserIdRef.current, shared)
+    }
     return resolveOwnerKeyForFile(key, file, residentKeyUserIdRef.current, shared)
   }, [isBoundTo])
 
@@ -690,7 +706,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       if (!requestResolverRef.current) requestResolverRef.current = createRequestKeyResolver()
       return requestResolverRef.current.resolveRow(file, masterKeyRef.current as Uint8Array)
     }
-    const key = await getFileKeyForFile(file, expectedUserId)
+    const key = await getFileKeyForFile(file, { expectedUserId })
     return { contentKey: key, nameKey: key, nameOrigin: 'single', name: null }
   }, [isBoundTo, getFileKeyForFile])
 
@@ -1003,6 +1019,7 @@ export async function resolveOwnerKeyForFile(
   viewerId: string | null,
   sharedKey: Uint8Array | null,
   sharedFoldersOn: () => Promise<boolean> = sharedFoldersEnabled,
+  firstChunkFrame?: Uint8Array | null,
 ): Promise<Uint8Array> {
   if (sharedKey) return sharedKey
   if (needsOwnership(file, viewerId)) {
@@ -1017,6 +1034,7 @@ export async function resolveOwnerKeyForFile(
       itemId: file.id,
       kind: file.is_folder ? 2 : 1,
       nameEncrypted: file.name_encrypted,
+      firstChunkFrame,
     })
   } catch {
     // Core could not authenticate the served name under any key it may use.
@@ -1034,6 +1052,54 @@ export async function resolveOwnerKeyForFile(
         : null
   if (convention) rememberOwnerRepairKey(file.id, { fileKey: resolved.key, convention })
   return resolved.key
+}
+
+/**
+ * L12 read path (review-2 N3): an owner FILE with a plaintext name has no
+ * authenticated name, so core picks its key convention from the content's
+ * first chunk and refuses to resolve the row without that frame. The read
+ * paths fetch chunk 0 and try each candidate length; the first that core
+ * authenticates is the row's key. Folders, shared-folder rows, request uploads
+ * and rows needing ownership take the ordinary path unchanged, and a failed
+ * fetch or no authenticating frame stays unavailable — never a guessed key.
+ */
+export async function resolveOwnerKeyForRead(
+  masterKey: Uint8Array,
+  file: DriveFile,
+  viewerId: string | null,
+  sharedKey: Uint8Array | null,
+  deps: {
+    sharedFoldersOn?: () => Promise<boolean>
+    fetchFrames?: (file: DriveFile) => Promise<Uint8Array[]>
+  } = {},
+): Promise<Uint8Array> {
+  const plaintextName = !file.name_encrypted.trimStart().startsWith('{')
+  if (sharedKey || file.is_folder || !plaintextName || needsOwnership(file, viewerId)) {
+    return resolveOwnerKeyForFile(masterKey, file, viewerId, sharedKey, deps.sharedFoldersOn)
+  }
+  let frames: Uint8Array[] = []
+  try {
+    frames = await (deps.fetchFrames ?? fetchOwnerFirstChunkFrames)(file)
+  } catch {
+    frames = []
+  }
+  for (const frame of frames) {
+    try {
+      return await resolveOwnerKeyForFile(
+        masterKey,
+        file,
+        viewerId,
+        sharedKey,
+        deps.sharedFoldersOn,
+        frame,
+      )
+    } catch {
+      // This length was not frame 0's; the next candidate may be.
+    }
+  }
+  // Nothing authenticated: the ordinary resolver reports the row unavailable
+  // (or opens it through a wrap that needs no content frame).
+  return resolveOwnerKeyForFile(masterKey, file, viewerId, sharedKey, deps.sharedFoldersOn)
 }
 
 export function useKeys(): KeyState {

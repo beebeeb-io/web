@@ -165,7 +165,7 @@ export function useDriveActions(params: DriveActionsParams) {
         residentUserId: getResidentUserId(),
         masterKey: getMasterKey(),
         getFileKey,
-        getFileKeyForFile,
+        getFileKeyForFile: (f) => getFileKeyForFile(f, { plaintextChunk: true }),
         readName: readFileMetadata,
       })
       void reindexFields(renameFileId, { name: newName })
@@ -401,7 +401,7 @@ export function useDriveActions(params: DriveActionsParams) {
     try {
       const { errorCount } = await downloadAsZip(
         selectedItems,
-        getFileKeyForFile,
+        (f) => getFileKeyForFile(f, { plaintextChunk: true }),
         {
           onProgress: (done, tot) => setBulkZipProgress({ done, total: tot }),
           zipFilename: `beebeeb-files-${new Date().toISOString().slice(0, 10)}.zip`,

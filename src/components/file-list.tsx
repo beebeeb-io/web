@@ -738,7 +738,7 @@ export function FileList({
         viewerId: null,
         residentUserId: getResidentUserId(),
         masterKey: getMasterKey(),
-        getFileKey: async () => getFileKeyForFile(file),
+        getFileKey: async () => getFileKeyForFile(file, { plaintextChunk: true }),
         getFileKeyForFile,
         readName: readFileMetadata,
       })

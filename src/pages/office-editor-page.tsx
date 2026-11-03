@@ -90,7 +90,7 @@ export function OfficeEditorPage() {
     async function load() {
       try {
         const file = await getFile(fileId!)
-        const fileKey = await getFileKeyForFile(file)
+        const fileKey = await getFileKeyForFile(file, { plaintextChunk: true })
         // Codex P2 on PR #123: a corrupt name blob or a wrong file key fails
         // HERE, before the content download; it is the same honest kind.
         const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted).catch((err: unknown) => {

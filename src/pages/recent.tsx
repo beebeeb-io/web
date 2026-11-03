@@ -87,7 +87,7 @@ export function Recent() {
   async function handleFileDownload(file: DriveFile) {
     if (!isUnlocked || !cryptoReady || file.is_folder) return
     try {
-      const fileKey = await getFileKeyForFile(file)
+      const fileKey = await getFileKeyForFile(file, { plaintextChunk: true })
       await encryptedDownload(
         file.id,
         fileKey,
@@ -130,7 +130,7 @@ export function Recent() {
         residentUserId: getResidentUserId(),
         masterKey: getMasterKey(),
         getFileKey,
-        getFileKeyForFile,
+        getFileKeyForFile: (f) => getFileKeyForFile(f, { plaintextChunk: true }),
         readName: readFileMetadata,
       })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })

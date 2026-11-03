@@ -209,13 +209,13 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       return { key: row.contentKey, nameKey: row.nameKey, ownerDerived: false }
     }
     if (!sharedFile) {
-      const key = await getFileKeyForFile(file)
+      const key = await getFileKeyForFile(file, { plaintextChunk: true })
       return { key, nameKey: key, ownerDerived: true }
     }
     // rv-web198d R1: with the flag off there is no shared-folder walk for the
     // owner (no invites read, no link route asked); the key is derived, as on main.
     if (!(await sharedFoldersEnabled())) {
-      const key = await getFileKeyForFile(file)
+      const key = await getFileKeyForFile(file, { plaintextChunk: true })
       return { key, nameKey: key, ownerDerived: true }
     }
     const root = await sharedRootFor(folderId ?? null, file.id)

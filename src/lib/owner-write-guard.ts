@@ -195,6 +195,46 @@ async function readPrefix(res: Response, want: number): Promise<Uint8Array> {
   return buf.subarray(0, have)
 }
 
+/** The row fields chunk 0's length is read from. */
+export interface Chunk0Row {
+  id: string
+  size_bytes?: number | null
+  chunk_count?: number | null
+}
+
+/**
+ * L12 read path: the candidate wire frames for a file's chunk 0, most likely
+ * length first. A plaintext-named owner FILE picks its key convention from
+ * this frame, and core refuses to resolve such a row without it. The request,
+ * the candidate lengths and the bounded prefix read are the SAME ones the
+ * write-time check uses; only this file decides how the frames are used.
+ * Throws when the download cannot be read; the caller treats that as
+ * "unavailable", never as a guessed key.
+ */
+export async function fetchOwnerFirstChunkFrames(file: Chunk0Row, signal?: AbortSignal): Promise<Uint8Array[]> {
+  const res = await requestEncryptedBody(`/api/v1/files/${file.id}/download`, signal)
+  if (!res.ok) {
+    try {
+      await res.body?.cancel()
+    } catch {
+      /* nothing to drain */
+    }
+    throw new Error(OWNER_WRITE_CHECK_FAILED)
+  }
+  const chunkCount = Math.max(1, parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? file.chunk_count ?? 1)
+  const chunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size'))
+  const candidates = chunk0Candidates(
+    file.size_bytes ?? 0,
+    chunkCount,
+    chunkSize,
+    parseHeaderInt(res.headers.get('Content-Length')),
+  )
+  const bytes = await readPrefix(res, prefixLength(candidates, chunkCount, chunkSize))
+  const lengths =
+    chunkCount <= 1 ? (bytes.length > 0 ? [bytes.length] : []) : candidates.filter((len) => len <= bytes.length)
+  return lengths.map((len) => bytes.slice(0, len))
+}
+
 type Verdict = 'writable' | 'read_only'
 
 /**

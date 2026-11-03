@@ -941,7 +941,7 @@ export function useDriveUploads(params: DriveUploadsParams) {
     if (!isUnlocked || !cryptoReady || file.is_folder) return
 
     try {
-      const fileKey = await getFileKeyForFile(file)
+      const fileKey = await getFileKeyForFile(file, { plaintextChunk: true })
       await encryptedDownload(
         file.id,
         fileKey,
