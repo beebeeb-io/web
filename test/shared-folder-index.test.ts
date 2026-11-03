@@ -131,7 +131,7 @@ describe('loadSharedIndex', () => {
 describe('pushSharedIndexDelta', () => {
   test('a new page is written with if_version 0', async () => {
     const sends: { coord: ShardCoord; ifVersion: number }[] = []
-    const index = new SharedSearchIndex(fakeProxy() as never, 64)
+    const index = new SharedSearchIndex(fakeProxy() as never, 64, [])
     const result = await pushSharedIndexDelta({
       transport: transportWith({
         putShard: async (shard, ifVersion) => {
@@ -158,7 +158,7 @@ describe('pushSharedIndexDelta', () => {
           return { bucket: shard.bucket, page: shard.page, version: 5 }
         },
       }),
-      index: new SharedSearchIndex(fakeProxy() as never, 64),
+      index: new SharedSearchIndex(fakeProxy() as never, 64, []),
       folderKey,
       dirtyBuckets: [2],
     })
@@ -175,7 +175,7 @@ describe('pushSharedIndexDelta', () => {
           throw new IndexVersionConflictError(9)
         },
       }),
-      index: new SharedSearchIndex(fakeProxy() as never, 64),
+      index: new SharedSearchIndex(fakeProxy() as never, 64, []),
       folderKey,
       dirtyBuckets: [5],
     })

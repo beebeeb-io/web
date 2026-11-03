@@ -46,10 +46,23 @@ export interface IndexFileEntry {
 export class SharedSearchIndex {
   readonly numShards: number
   #proxy: SearchIndexProxy
+  #l14Entries: readonly IndexFileEntry[] | null
 
-  constructor(proxy: SearchIndexProxy, numShards: number) {
+  /**
+   * `l14Entries` is the proof that every entry came through the L14 filter
+   * (`filterIndexRowsForSharing`): only `assembleVerifiedSharedIndex` passes
+   * it. An index loaded from the server's shards carries no proof, so it can
+   * be searched but never pushed.
+   */
+  constructor(proxy: SearchIndexProxy, numShards: number, l14Entries: readonly IndexFileEntry[] | null = null) {
     this.#proxy = proxy
     this.numShards = numShards
+    this.#l14Entries = l14Entries
+  }
+
+  /** The L14-verified entries behind this index, or null when unproven. */
+  get l14Entries(): readonly IndexFileEntry[] | null {
+    return this.#l14Entries
   }
 
   async upsert(fileId: string, name: string): Promise<number[]> {
@@ -154,6 +167,8 @@ export async function loadSharedIndex(
         : await createSharedSearchIndex([], numShards)
   }
 
+  // No `l14Entries` proof: these pages came from the server, not from this
+  // client's L14 filter, so the index may be searched but not pushed.
   const index = new SharedSearchIndex(proxy, numShards)
   const fileCount = await index.fileCount()
   return {
@@ -165,9 +180,24 @@ export async function loadSharedIndex(
   }
 }
 
+/** A push refused because its index has no L14 proof. */
+export class UnverifiedSharedIndexError extends Error {
+  constructor() {
+    super('shared index push requires an index built by the L14 filter (rebuildSharedIndexFromListing)')
+    this.name = 'UnverifiedSharedIndexError'
+  }
+}
+
+/** The only index shape a push accepts: one carrying its L14 proof. */
+type PushableIndex = Pick<SharedSearchIndex, 'encryptBuckets' | 'encryptAll' | 'l14Entries'>
+
+function assertL14Verified(index: PushableIndex): void {
+  if (!index.l14Entries) throw new UnverifiedSharedIndexError()
+}
+
 export interface PushSharedIndexDeltaArgs {
   transport: IndexTransport
-  index: Pick<SharedSearchIndex, 'encryptBuckets'>
+  index: PushableIndex
   folderKey: Uint8Array
   dirtyBuckets: number[]
 }
@@ -177,13 +207,15 @@ export interface PushSharedIndexDeltaArgs {
  * version and retries (at most `INDEX_CONFLICT_RETRIES` attempts per page);
  * a bucket that never lands is returned in `dirtyBuckets`.
  *
- * L14/T5.6: the index behind this call must have been built through
- * `rebuildSharedIndexFromListing`, whose filter is the only way an entry
- * enters a written index.
+ * L14/T5.6: an index built through `rebuildSharedIndexFromListing` (its filter
+ * is the only way an entry enters a written index) carries its proof; a push
+ * of any other index — notably one loaded from the server, whose pages this
+ * client never verified — throws `UnverifiedSharedIndexError`.
  */
 export async function pushSharedIndexDelta(
   args: PushSharedIndexDeltaArgs,
 ): Promise<{ written: number; conflicts: number; dirtyBuckets: number[] }> {
+  assertL14Verified(args.index)
   const versions = new Map<string, number>()
   const failed = new Set<number>()
   let written = 0
@@ -269,16 +301,18 @@ export async function assembleVerifiedSharedIndex(args: {
   const kept = args.entries.slice(0, SEARCH_INDEX_MAX_ENTRIES)
   const truncated = args.entries.length > SEARCH_INDEX_MAX_ENTRIES
   const proxy = await createSharedSearchIndex(kept, numShards)
-  const index = new SharedSearchIndex(proxy, numShards)
+  // The proof travels with the index so a push can prove its provenance.
+  const index = new SharedSearchIndex(proxy, numShards, kept)
   return { index, truncated, fileCount: kept.length }
 }
 
 /** Every page the index currently holds, for a full first push. */
 export async function pushSharedIndexFull(args: {
   transport: IndexTransport
-  index: SharedSearchIndex
+  index: PushableIndex
   folderKey: Uint8Array
 }): Promise<{ written: number }> {
+  assertL14Verified(args.index)
   const shards = await args.index.encryptAll(args.folderKey)
   for (const shard of shards) {
     await args.transport.putShard(shard, 0)
