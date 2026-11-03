@@ -18,15 +18,13 @@ import {
   zeroize,
   computeRecoveryCheck,
   toBase64,
-  readNameMetadata,
-  ownerRepairNameKey,
 } from './crypto'
 import {
-  ownerRepairKeyFor,
-  rememberOwnerRepairKey,
   clearOwnerRepairReadOnly,
+  rememberOwnerRepairKey,
   type OwnerRepairConvention,
 } from './owner-repair'
+import { ownedItem } from './owned-item'
 import { registerLogoutCallback, registerLoginBroadcastCallback } from './auth-context'
 import {
   wrapAndStore,
@@ -989,9 +987,13 @@ export function KeyProvider({ children }: { children: ReactNode }) {
  *   gets the derived key exactly as on main (rv-web198d R1: "with it off this
  *   asks nothing") and fails its own integrity check honestly; it is never
  *   offered the owner repair key;
- * - otherwise the client's DERIVED key is tried first, so a cached repair key
- *   never takes precedence over a normal key that opens;
- * - only a name that fails to open asks core for the owner repair key.
+ * - otherwise core's `resolveOwnedKey` decides the key: it tries the string
+ *   derivation, then the binary one, then the read-only upper repair, and
+ *   returns a key only when the served name authenticates under it. A
+ *   plaintext name authenticates nothing for a FILE (core needs chunk 0 to
+ *   pick the convention), so such a row is unavailable — never a guessed
+ *   derivation handed to a share link. Core also marks an upper-repair row
+ *   read-only, which this function records.
  *
  * `sharedFoldersOn` is read only for a foreign row (injected by tests).
  */
@@ -1008,37 +1010,30 @@ export async function resolveOwnerKeyForFile(
     if (await sharedFoldersOn()) throw new Error("Can't open this file")
     return deriveFileKey(masterKey, file.id)
   }
-  const derived = await deriveFileKey(masterKey, file.id)
-  let opens = true
-  if (file.name_encrypted.startsWith('{')) {
-    try {
-      await readNameMetadata(derived, file.name_encrypted)
-    } catch {
-      opens = false
-    }
+  let resolved
+  try {
+    resolved = await ownedItem.resolve({
+      masterKey,
+      itemId: file.id,
+      kind: file.is_folder ? 2 : 1,
+      nameEncrypted: file.name_encrypted,
+    })
+  } catch {
+    // Core could not authenticate the served name under any key it may use.
+    // Unavailable, never a key the client guessed for the link to wrap.
+    throw new Error("Can't open this file")
   }
-  if (opens) return derived
-  const cached = ownerRepairKeyFor(file.id)
-  if (cached) {
-    zeroize(derived)
-    return new Uint8Array(cached)
-  }
-  if (file.name_encrypted.startsWith('{')) {
-    try {
-      const repair = await ownerRepairNameKey(masterKey, file.id, file.name_encrypted)
-      if (repair.key instanceof Uint8Array) {
-        rememberOwnerRepairKey(file.id, {
-          fileKey: repair.key,
-          convention: repair.convention as OwnerRepairConvention,
-        })
-        zeroize(derived)
-        return repair.key
-      }
-    } catch {
-      /* not repairable: report the ordinary integrity failure */
-    }
-  }
-  return derived
+  // Core's origin names the convention; a repair key is remembered so the
+  // content fallback knows which key this row's name resolved to (and an
+  // upper-repair row is marked read-only).
+  const convention: OwnerRepairConvention | null =
+    resolved.origin === 'derived_binary'
+      ? 'binary'
+      : resolved.origin === 'derived_upper_repair'
+        ? 'upper_repair'
+        : null
+  if (convention) rememberOwnerRepairKey(file.id, { fileKey: resolved.key, convention })
+  return resolved.key
 }
 
 export function useKeys(): KeyState {

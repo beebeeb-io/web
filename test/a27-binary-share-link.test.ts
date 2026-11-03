@@ -66,4 +66,18 @@ describe('A27: a file link for a binary-convention item', () => {
     // And the string key does NOT open it (the disclosure was load-bearing).
     expect(() => wasm.decrypt_name_metadata_with_key(STRING_KEY, NAME)).toThrow()
   })
+
+  test('a name the server garbled to plaintext discloses nothing', async () => {
+    // The row is still sealed under the binary convention (its content and any
+    // real name are), but the server served a plaintext name. Nothing in the
+    // row authenticates the string derivation: a link must not wrap a guess.
+    const garbled = { ...row, name_encrypted: 'legacy-binary.bin' } as unknown as DriveFile
+    await expect(
+      shareFileKey(FILE_ID, {
+        file: garbled,
+        getFileKey: async () => STRING_KEY,
+        getFileKeyForFile: (file) => resolveOwnerKeyForFile(MASTER, file, 'me', null, async () => true),
+      }),
+    ).rejects.toThrow("Can't open this file")
+  })
 })

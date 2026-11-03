@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import * as wasm from 'beebeeb-wasm'
 import { createContentOps, type ContentOps, type ContentPin } from '../../src/lib/content-crypto'
-import type { DecryptorPort, StreamingDecryptor } from '../../src/lib/crypto'
+import type { DecryptorPort, ResolveOwnedItemArgs, StreamingDecryptor } from '../../src/lib/crypto'
 import { decodeEnvelope, encodeEnvelope } from '../../src/lib/metadata-envelope'
 import { mockModuleScoped } from './scoped-module-mock'
 
@@ -111,6 +111,34 @@ export async function installWasmCryptoMirror(
         const r = w.ownerFileKeyForContent(masterKey, fileId, firstChunkFrame) as { key: Uint8Array; convention: string }
         mirror.contentRepairKeys.push(r.key)
         return r
+      },
+      // 2275 L12: key-context resolves an owner row through core, never a local
+      // derivation, so the owner resolver crossing is mirrored too.
+      resolveOwnedItemWorker: async (args: ResolveOwnedItemArgs) => {
+        const r = w.resolveOwnedKey(
+          args.masterKey,
+          args.itemId,
+          args.kind,
+          args.ownerWrap ?? null,
+          args.nameEncrypted,
+          args.sharedFolderId ?? null,
+          args.folderKey ?? null,
+          args.folderWrap ?? null,
+          args.firstChunkFrame ?? null,
+        ) as {
+          key: Uint8Array
+          contentKey?: Uint8Array | null
+          origin: string
+          name?: unknown
+          writeTarget?: unknown
+        }
+        return {
+          key: r.key,
+          contentKey: r.contentKey ?? null,
+          origin: r.origin,
+          name: (r.name ?? null) as never,
+          writeTarget: (r.writeTarget ?? null) as never,
+        }
       },
     }
   })
