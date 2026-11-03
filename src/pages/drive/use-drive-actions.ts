@@ -9,6 +9,8 @@ import { renameOwnerRow } from '../../lib/owner-rename'
 import { bulkTrashFiles, getFile } from '../../lib/api'
 import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../../lib/bulk-download'
 import { userFriendlyError } from '../../lib/user-friendly-error'
+import { isRequestUpload } from '../../lib/request-row'
+import { cannotShareReason } from '../../lib/share-missing-items'
 
 import type { useSync } from '../../lib/sync-context'
 import type { useAuth } from '../../lib/auth-context'
@@ -371,6 +373,18 @@ export function useDriveActions(params: DriveActionsParams) {
     const selected = files.filter((f) => ids.includes(f.id))
     if (selected.some((f) => f.is_folder)) {
       showToast({ icon: 'share', title: 'Folders can’t be bundled', description: 'A multi-file share link covers files only. Deselect folders and try again.' })
+      return
+    }
+    // 2326 review2 P2-2 (L15): a row received through a file request has no
+    // key a bundle can wrap; refuse the selection with the share panel's copy
+    // instead of publishing an undecryptable item.
+    if (selected.some((f) => isRequestUpload(f))) {
+      showToast({
+        icon: 'share',
+        title: 'Files can’t be shared',
+        description: cannotShareReason('request_row')!,
+        danger: true,
+      })
       return
     }
     if (selected.length < 2) {

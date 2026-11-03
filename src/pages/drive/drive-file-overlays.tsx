@@ -12,6 +12,7 @@ import type { FileActivityEntry, FileDetailsMeta } from '../../components/file-d
 import type { TrustFile } from '../../components/trust-details-panel'
 import type { DriveFile, MyShare } from '../../lib/api'
 import { fileStorageCountry } from '../../lib/storage-regions'
+import type { BundleShareFile } from '../../lib/bundle-share'
 
 type MoveOwn = ComponentProps<typeof MoveModal>
 type RenameOwn = ComponentProps<typeof RenameDialog>
@@ -43,7 +44,7 @@ export interface DriveFileOverlaysProps {
   shareFile: DriveFile | null
   onCloseShare: () => void
   onShareCreated: () => void
-  bundleFiles: { id: string; name: string; size: number }[]
+  bundleFiles: BundleShareFile[]
   onCloseBundle: () => void
   manageSharesFileId: string | null
   onCloseManageShares: () => void

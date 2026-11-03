@@ -50,6 +50,7 @@ import { useKeys } from '../lib/key-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { isTypedRefusal } from '../lib/no-card-trial'
 import { contentKeyBytes } from '../lib/request-row'
+import { resolveBundleSelections, type BundleShareFile } from '../lib/bundle-share'
 import { buildFullShareLink } from '../lib/share-full-link'
 import { SHARED_FOLDERS_FLAG } from '../lib/flags'
 import { sharedFoldersEnabledForWrite, useFeatureFlag } from '../lib/use-feature-flag'
@@ -78,9 +79,11 @@ interface ShareDialogProps {
    * tab mints ONE bundle link covering all of them (an explicit branch in
    * handleGenerate — it does NOT fall through the single-file/folder paths,
    * which would share only one item's key). One file (or absent) → single-file.
-   * Each entry must be a real file (folders are not bundle items).
+   * Each entry must be a real file (folders are not bundle items) and carries
+   * its row so the bundle can resolve the key that opens it, never a derived
+   * one (2326 review2 P2-2: a request row is refused).
    */
-  bundleFiles?: Array<{ id: string; name: string; size: number }>
+  bundleFiles?: BundleShareFile[]
   /** Fires once a share link is successfully created. Used by the first-share onboarding tour. */
   onShareCreated?: (info: { fileId: string; shareUrl: string }) => void
 }
@@ -669,8 +672,15 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
               })),
             )
           : null
-        const selections =
-          folderSelections ?? bundleFiles!.map((f, i) => ({ fileId: f.id, position: i }))
+        // 2326 review2 P2-2: a flat multi-select bundle resolves each item's
+        // key through the key context and REFUSES the whole bundle when any
+        // selection is a request row (L15 "can't be shared"). An id-only
+        // selection would fall back to `deriveFileKey` and publish an item
+        // nobody can open.
+        const bundleSelections = folderSelections
+          ? null
+          : await resolveBundleSelections(bundleFiles!, getFileKeyForFile)
+        const selections = folderSelections ?? bundleSelections!
         if (selections.length === 0) {
           setError('Nothing to share yet')
           setLoading(false)
@@ -688,7 +698,7 @@ function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFo
           ;({ items, keyForUrl, ownerWrappedKey } = await prepareBundleShareItems(masterKey, selections))
         } finally {
           // Supplied keys are ours to clear (the helper never zeroizes them).
-          for (const sel of folderSelections ?? []) sel.fileKey.fill(0)
+          for (const sel of selections) sel.fileKey.fill(0)
         }
 
         const buildRequest = async (): Promise<CreateBundleShareRequest> => {

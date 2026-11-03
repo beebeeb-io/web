@@ -898,7 +898,9 @@ export function Drive() {
   const bundleFiles = bundleFileIds
     .map((id) => files.find((f) => f.id === id))
     .filter((f): f is DriveFile => !!f && !f.is_folder)
-    .map((f) => ({ id: f.id, name: displayName(f), size: f.size_bytes }))
+    // The row travels with each entry: a bundle must wrap the key that opens
+    // it, not an id-derived one (2326 review2 P2-2).
+    .map((f) => ({ id: f.id, name: displayName(f), size: f.size_bytes, file: f }))
 
   // Task 1700: while the sync client exists but its tree coverage is not
   // complete, an empty list is not proof of an empty vault — keep the boot
