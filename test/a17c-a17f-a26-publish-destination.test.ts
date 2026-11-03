@@ -49,10 +49,13 @@ const wasm = loadWasm()
 const enc = new TextEncoder()
 const MASTER = new Uint8Array(32).fill(7)
 const FOLDER_KEY = new Uint8Array(32).fill(0x5a)
+const FOLDER_KEY_2 = new Uint8Array(32).fill(0x33)
 
 const ROOT = '11111111-1111-4111-8111-111111111111'
 const DEST = '22222222-2222-4222-8222-222222222222'
 const OUTSIDE = '33333333-3333-4333-8333-333333333333'
+/** A second custody root the server may name on a later parent walk (N2). */
+const R2 = '44444444-4444-4444-8444-444444444444'
 const PLAIN_DEST = '55555555-5555-4555-8555-555555555555'
 const DECOY = '66666666-6666-4666-8666-666666666666'
 const TAXES = '99999999-9999-4999-8999-999999999999'
@@ -114,16 +117,17 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => ({
     }
   },
   getSharedFolder: async (folderId: string) => {
-    if (folderId !== ROOT) {
+    if (folderId !== ROOT && folderId !== R2) {
       const NotFound = r.ApiError as unknown as new (message: string, status: number) => Error
       throw new NotFound('Not found.', 404)
     }
+    const key = folderId === ROOT ? FOLDER_KEY : FOLDER_KEY_2
     return {
-      folder_id: ROOT,
+      folder_id: folderId,
       role: 'owner',
       access_level: 'edit',
       key_version: 1,
-      owner_wrapped_folder_key: Buffer.from(wasm.wrapFolderCustody(MASTER, ROOT, FOLDER_KEY) as Uint8Array).toString('base64'),
+      owner_wrapped_folder_key: Buffer.from(wasm.wrapFolderCustody(MASTER, folderId, key) as Uint8Array).toString('base64'),
       wrapped_folder_key: null,
     }
   },
@@ -185,7 +189,7 @@ await mockModuleScoped('../src/lib/owned-item', import.meta.dir, (r) => ({
   },
 }))
 
-const { publishOrDeferOwnerUpload } = await import('../src/lib/owner-upload-key')
+const { publishOrDeferOwnerUpload, publishOwnerUploadKey } = await import('../src/lib/owner-upload-key')
 const { noteFolderClick, noteUrlFolder, resetAnchorsForTests, readDeferredPublishes, PUBLISH_QUEUE_KEY } =
   await import('../src/lib/publish-anchor')
 const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
@@ -305,6 +309,22 @@ describe('A26: a plaintext-named O folder is not a proven publish destination', 
     noteUrlFolder(PLAIN_DEST)
     expect(await create(PLAIN_DEST)).toBe('published')
     expect(published).toHaveLength(1)
+  })
+})
+
+describe('N2: the seal uses the proven root, not a second parent walk', () => {
+  test('a later walk that names R2 publishes nothing under R2', async () => {
+    // The L14 proof named ROOT and unwrapped ROOT's folder key. Afterwards the
+    // server (and the 10 s parent cache) answers the next step of the walk with
+    // a different custody root R2. The seal must stay under the proven ROOT.
+    rows[DEST] = { ...rows[DEST], parent_id: R2 }
+    await publishOwnerUploadKey(MASTER, DEST, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', new Uint8Array(32).fill(9), false, {
+      rootId: ROOT,
+      folderKey: FOLDER_KEY,
+    })
+    expect(published).toHaveLength(1)
+    expect(published[0].folderId).toBe(ROOT)
+    expect(published.some((p) => p.folderId === R2)).toBe(false)
   })
 })
 

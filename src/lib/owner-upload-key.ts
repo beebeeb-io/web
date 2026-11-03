@@ -23,12 +23,24 @@ import {
   readDeferredPublishes,
 } from './publish-anchor'
 
+/** The root and folder key an L14 destination proof already established. */
+export interface ProvenRoot {
+  rootId: string
+  folderKey: Uint8Array
+}
+
 /**
  * Publish the wrap of an item the owner just added under its shared root: a
  * file's content key, or a new folder's own name key. No-op outside a shared
  * folder, and for a folder without a custody record (L7b: a flag-off
  * invite-only share, whose route answers 404 anyway). With custody the wrap is
  * L7, bound to (root, this item, file or folder).
+ *
+ * `proven` is the root the caller's L14 proof named, with the folder key it
+ * unwrapped. When given, the seal uses it and does NOT walk the server's parent
+ * chain again: that walk can name another root (a concurrent move, the 10 s
+ * parent cache, a server-paced inventory page) and the wrap would be sealed
+ * and published where nothing proved it belongs.
  */
 export async function publishOwnerUploadKey(
   masterKey: Uint8Array,
@@ -36,6 +48,7 @@ export async function publishOwnerUploadKey(
   fileId: string,
   fileKey: Uint8Array,
   isFolder = false,
+  proven?: ProvenRoot,
 ): Promise<void> {
   // rv-web198c P2-1: with the flag off there is nothing to publish to, and the
   // walk below must not run (or fail) after an upload already committed.
@@ -48,11 +61,23 @@ export async function publishOwnerUploadKey(
     await assertNoSeenCustodyAbove(parentId)
     return
   }
-  const root = await sharedRootFor(parentId, parentId)
-  if (!root) return
-  if ((await folderWrapFormat(root, parentId)) !== 'l7') return
-  const folderKey = await folderKeyForRoot(masterKey, root)
-  if (!folderKey) throw new Error('The shared folder key is not available on this device.')
+  let root: string
+  let folderKey: Uint8Array
+  let ownsFolderKey: boolean
+  if (proven) {
+    root = proven.rootId
+    folderKey = proven.folderKey
+    ownsFolderKey = false
+  } else {
+    const walked = await sharedRootFor(parentId, parentId)
+    if (!walked) return
+    if ((await folderWrapFormat(walked, parentId)) !== 'l7') return
+    const unwrapped = await folderKeyForRoot(masterKey, walked)
+    if (!unwrapped) throw new Error('The shared folder key is not available on this device.')
+    root = walked
+    folderKey = unwrapped
+    ownsFolderKey = true
+  }
   try {
     await publishSharedFolderKeys(root, [{
       file_id: fileId,
@@ -68,7 +93,8 @@ export async function publishOwnerUploadKey(
     }
     throw error
   } finally {
-    zeroize(folderKey)
+    // A proven key belongs to the caller's proof; it zeroes it after the seal.
+    if (ownsFolderKey) zeroize(folderKey)
   }
 }
 
@@ -284,7 +310,7 @@ export async function publishOrDeferOwnerUpload(args: {
     if (!(await destinationProven(masterKey, parentId, root, folderKey))) {
       return deferOwnerCreate(fileId, parentId, root)
     }
-    await publishOwnerUploadKey(masterKey, parentId, fileId, fileKey, isFolder)
+    await publishOwnerUploadKey(masterKey, parentId, fileId, fileKey, isFolder, { rootId: root, folderKey })
     return 'published'
   } finally {
     zeroize(folderKey)
@@ -312,36 +338,38 @@ export async function flushDeferredOwnerPublishes(masterKey: Uint8Array): Promis
   const done: string[] = []
   for (const row of rows) {
     try {
-      const root = await sharedRootFor(row.parentId, row.parentId)
-      if (root !== row.rootId) continue
+      // The row's root is pinned. Nothing walks the parent chain again: only
+      // (b)2 re-runs, against this root, and the seal uses the same key.
+      const root = row.rootId
       if ((await folderWrapFormat(root, row.parentId)) !== 'l7') continue
       const folderKey = await folderKeyForRoot(masterKey, root)
       if (!folderKey) continue
-      let proven = false
       try {
-        proven = await destinationProven(masterKey, row.parentId, root, folderKey)
+        if (!(await destinationProven(masterKey, row.parentId, root, folderKey))) continue
+        const file = await getFile(row.id).catch(() => null)
+        if (!file) {
+          done.push(row.id)
+          continue
+        }
+        const resolved = await ownedItem.resolve({
+          masterKey,
+          itemId: row.id,
+          kind: file.is_folder ? 2 : 1,
+          nameEncrypted: file.name_encrypted,
+        })
+        try {
+          await publishOwnerUploadKey(masterKey, row.parentId, row.id, resolved.key, !!file.is_folder, {
+            rootId: root,
+            folderKey,
+          })
+        } finally {
+          zeroize(resolved.key)
+          if (resolved.contentKey) zeroize(resolved.contentKey)
+        }
+        done.push(row.id)
       } finally {
         zeroize(folderKey)
       }
-      if (!proven) continue
-      const file = await getFile(row.id).catch(() => null)
-      if (!file) {
-        done.push(row.id)
-        continue
-      }
-      const resolved = await ownedItem.resolve({
-        masterKey,
-        itemId: row.id,
-        kind: file.is_folder ? 2 : 1,
-        nameEncrypted: file.name_encrypted,
-      })
-      try {
-        await publishOwnerUploadKey(masterKey, row.parentId, row.id, resolved.key, !!file.is_folder)
-      } finally {
-        zeroize(resolved.key)
-        if (resolved.contentKey) zeroize(resolved.contentKey)
-      }
-      done.push(row.id)
     } catch {
       // Keep the deferral: a later click may still fire it.
     }
