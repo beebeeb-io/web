@@ -263,14 +263,12 @@ describe('A17f: no removed trigger anchors a publish', () => {
   ]
 
   for (const [name, apply] of triggers) {
-    test(`${name}: deferred, nothing published`, async () => {
+    test(`${name}: owner-only, nothing queued`, async () => {
       apply()
-      expect(await create(DEST)).toBe('deferred')
+      expect(await create(DEST)).toBe('not_published')
       expect(published).toEqual([])
-      const queue = readDeferredPublishes(store)
-      expect(queue).toHaveLength(1)
-      expect(queue[0]).toMatchObject({ parentId: DEST, rootId: ROOT, own: true })
-      expect(store.getItem(PUBLISH_QUEUE_KEY)).not.toBeNull()
+      expect(readDeferredPublishes(store)).toEqual([])
+      expect(store.getItem(PUBLISH_QUEUE_KEY)).toBeNull()
     })
   }
 
@@ -318,8 +316,8 @@ describe('A17 decoy: a member folder shown at My files > Taxes > 2024', () => {
     noteFolderClick(TAXES)
     noteFolderClick(DECOY)
     noteUrlFolder(DECOY)
-    expect(await create(DECOY)).toBe('deferred')
+    expect(await create(DECOY)).toBe('not_published')
     expect(published).toEqual([])
-    expect(readDeferredPublishes(store)).toHaveLength(1)
+    expect(readDeferredPublishes(store)).toEqual([])
   })
 })

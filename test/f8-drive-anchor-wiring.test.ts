@@ -159,8 +159,10 @@ describe('F8: the drive wires the anchor trail in production', () => {
     expect(published[0].keys.map((k) => k.file_id)).toEqual([FILE_ID])
   })
 
-  test('A14: a create deferred under a URL-only view publishes when the user then clicks into R', async () => {
-    // A deep link / ?folder= shows R without a click: the upload defers.
+  test('A17f: a create under a URL-only view is never published, even by a later click', async () => {
+    // A deep link / ?folder= shows R without a click. The publish table says
+    // an owner create the user did not see R for is owner-only: no publish,
+    // and NOTHING is queued, so no later click can publish it.
     noteDriveUrlFolder(ROOT)
     const first = await publishOrDeferOwnerUpload({
       masterKey: MASTER,
@@ -168,25 +170,24 @@ describe('F8: the drive wires the anchor trail in production', () => {
       fileId: FILE_ID,
       fileKey: FILE_KEY,
     })
-    expect(first).toBe('deferred')
+    expect(first).toBe('not_published')
     expect(published).toEqual([])
-    expect(readDeferredPublishes(globalThis.localStorage).map((r) => r.id)).toEqual([FILE_ID])
+    expect(readDeferredPublishes(globalThis.localStorage)).toEqual([])
 
-    // The user clicks into R: the drive flushes what is now due.
+    // The user clicks into R afterwards: the unanchored create stays unpublished.
     noteDriveFolderClick(ROOT)
     const flushed = await publishDeferredOnAnchoredSite(MASTER)
-    expect(flushed).toBe(1)
-    expect(published).toHaveLength(1)
-    expect(published[0].keys.map((k) => k.file_id)).toEqual([FILE_ID])
+    expect(flushed).toBe(0)
+    expect(published).toEqual([])
     expect(readDeferredPublishes(globalThis.localStorage)).toEqual([])
   })
 
-  test('a URL navigation alone still never anchors: the deferral stays', async () => {
+  test('a URL navigation alone still never anchors: nothing is queued', async () => {
     noteDriveUrlFolder(ROOT)
     await publishOrDeferOwnerUpload({ masterKey: MASTER, parentId: ROOT, fileId: FILE_ID, fileKey: FILE_KEY })
     expect(await publishDeferredOnAnchoredSite(MASTER)).toBe(0)
     expect(published).toEqual([])
-    expect(readDeferredPublishes(globalThis.localStorage).map((r) => r.id)).toEqual([FILE_ID])
+    expect(readDeferredPublishes(globalThis.localStorage)).toEqual([])
   })
 
   test('the drive page and its hook call the wiring (no dead exports)', async () => {

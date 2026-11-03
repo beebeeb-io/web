@@ -268,6 +268,11 @@ export async function publishOrDeferOwnerUpload(args: {
   if (!(await sharedFoldersEnabled())) return 'not_published'
   const root = await sharedRootFor(parentId, parentId)
   if (!root) return 'not_published'
+  // L15 publish table: an owner create the user did not see R for is
+  // owner-only. It is NOT deferred: deferral is only for an anchored create
+  // whose destination is still unproven (a pinned folder), and a queued row is
+  // published later without the user ever having seen R.
+  if (!canPublishAnchored(parentId, root)) return 'not_published'
   if ((await folderWrapFormat(root, parentId)) !== 'l7') return 'not_published'
   // L15 (b)2: the root is the one this client can PROVE it holds — the custody
   // key unwrapped with the master key — never merely the id the server's parent
@@ -279,11 +284,8 @@ export async function publishOrDeferOwnerUpload(args: {
     if (!(await destinationProven(masterKey, parentId, root, folderKey))) {
       return deferOwnerCreate(fileId, parentId, root)
     }
-    if (canPublishAnchored(parentId, root)) {
-      await publishOwnerUploadKey(masterKey, parentId, fileId, fileKey, isFolder)
-      return 'published'
-    }
-    return deferOwnerCreate(fileId, parentId, root)
+    await publishOwnerUploadKey(masterKey, parentId, fileId, fileKey, isFolder)
+    return 'published'
   } finally {
     zeroize(folderKey)
   }
@@ -294,10 +296,12 @@ export async function publishOrDeferOwnerUpload(args: {
  * (parent, root) the tab's trail now anchors. Runs from the drive's own wiring
  * (src/lib/drive-anchors.ts) after a folder click lands.
  *
- * At fire time the three checks are re-run: the destination must still walk to
- * the PINNED root, still hold an L7 format, and still prove by L14. The key is
- * re-resolved through core (the queue stores ids only). A row whose item is
- * gone is dropped; any other failure keeps the deferral for a later site.
+ * Every row was anchored when it was enqueued (an unanchored create is never
+ * queued). At fire time only L15 (b)2 is re-run, against the PINNED root: the
+ * destination must still walk to that root, still hold an L7 format, and still
+ * prove by L14. The anchor is not re-checked. The key is re-resolved through
+ * core (the queue stores ids only). A row whose item is gone is dropped; any
+ * other failure keeps the deferral for a later site.
  */
 export async function flushDeferredOwnerPublishes(masterKey: Uint8Array): Promise<number> {
   const store = localStorageQueue()
@@ -307,7 +311,6 @@ export async function flushDeferredOwnerPublishes(masterKey: Uint8Array): Promis
   if (rows.length === 0) return 0
   const done: string[] = []
   for (const row of rows) {
-    if (!canPublishAnchored(row.parentId, row.rootId)) continue
     try {
       const root = await sharedRootFor(row.parentId, row.parentId)
       if (root !== row.rootId) continue
@@ -339,8 +342,8 @@ export async function flushDeferredOwnerPublishes(masterKey: Uint8Array): Promis
         if (resolved.contentKey) zeroize(resolved.contentKey)
       }
       done.push(row.id)
-    } catch (e) {
-      console.error('[flush debug]', String(e))
+    } catch {
+      // Keep the deferral: a later click may still fire it.
     }
   }
   if (done.length > 0) dropDeferredForItems(store, done)

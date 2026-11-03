@@ -7,8 +7,9 @@
  * server's parent_id walk, a reload, a deep link or `?folder=`, a pinned folder,
  * Recent, Quick Access, search or the command palette never anchors, and
  * nothing anchors while a navigation is in flight (the URL folder differs from
- * the trail's last segment). When a create is not anchored its publish is
- * DEFERRED, never published on trust of the server's parent id.
+ * the trail's last segment). A create that is not anchored is owner-only: it
+ * is never published and never queued. Only an anchored create whose
+ * destination is not yet proven is deferred.
  */
 export const PUBLISH_QUEUE_KEY = 'beebeeb.owner-publish-queue.v1'
 export const PUBLISH_QUEUE_TTL_MS = 7 * 24 * 60 * 60 * 1000
