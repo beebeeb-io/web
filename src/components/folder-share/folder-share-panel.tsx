@@ -20,8 +20,7 @@ import {
   revokeFolderLink,
   updateFolderLink,
 } from '../../lib/api'
-import { fromBase64 } from '../../lib/crypto'
-import { openFolderCustody } from '../../lib/folder-share-crypto'
+import { withOwnerFolderKey } from '../../lib/folder-share-key-scope'
 import { decryptLinkLabel } from '../../lib/link-label'
 import { rebuildFolderLinkUrl } from '../../lib/shared-folder-link-crypto'
 import { SHARED_FOLDERS_FLAG } from '../../lib/flags'
@@ -219,7 +218,7 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
   const [confirmingRevokeId, setConfirmingRevokeId] = useState<string | null>(null)
   const [tab, setTab] = useState<'people' | 'activity'>('people')
   // L15: the owner's "Share N items with this folder" list, from the resolver.
-  const [folderKey, setFolderKey] = useState<Uint8Array | null>(null)
+  const [folderKeyReady, setFolderKeyReady] = useState(false)
   const [isOwner, setIsOwner] = useState(false)
   const [share, setShare] = useState<ShareCandidatesResult | null>(null)
   const [shareLoading, setShareLoading] = useState(false)
@@ -273,28 +272,25 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
         )
         if (live) setLabels(Object.fromEntries(entries))
 
-        const openedFolderKey = custody?.owner_wrapped_folder_key
-          ? await openFolderCustody(key, folderId, fromBase64(custody.owner_wrapped_folder_key))
-          : null
-        if (openedFolderKey) {
+        // L15: only the owner publishes; the list is the client's proof of
+        // what has no L14-passing wrap, shown by name before confirming.
+        // P3 (review F10): the custody key is opened for this one read and
+        // zeroized when it returns; a confirm opens its own the same way.
+        if (custody?.role === 'owner') {
           if (live) {
-            setFolderKey(openedFolderKey)
-            // L15: only the owner publishes; the list is the client's proof of
-            // what has no L14-passing wrap, shown by name before confirming.
-            if (custody?.role === 'owner') {
-              setIsOwner(true)
-              setShareLoading(true)
-              void collectShareCandidates({ rootId: folderId, masterKey: key, folderKey: openedFolderKey })
-                .then((result) => {
-                  if (live) setShare(result)
-                })
-                .catch((e) => {
-                  if (live) setError(errorText(e))
-                })
-                .finally(() => {
-                  if (live) setShareLoading(false)
-                })
-            }
+            setIsOwner(true)
+            setFolderKeyReady(true)
+            setShareLoading(true)
+          }
+          try {
+            const result = await withOwnerFolderKey({ folderId, masterKey: key, custody }, (folderKey) =>
+              collectShareCandidates({ rootId: folderId, masterKey: key, folderKey }),
+            )
+            if (live && result) setShare(result)
+          } catch (e) {
+            if (live) setError(errorText(e))
+          } finally {
+            if (live) setShareLoading(false)
           }
         }
       } catch (e) {
@@ -353,16 +349,20 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
   // L15: publish exactly the tuples the owner confirmed, then re-read the list.
   const confirmShare = useCallback(
     async (confirmed: ShareCandidate[]) => {
-      if (!folderKey) return
+      if (!folderKeyReady) return
+      const key = masterKey ?? new Uint8Array()
       setSharing(true)
       setShareMessage(null)
+      setShareLoading(true)
       try {
-        const { written } = await publishShareCandidates({ rootId: folderId, folderKey, confirmed })
-        setShareMessage(`Shared ${written} item${written === 1 ? '' : 's'}. Everyone with access can open them now.`)
-        disposeShareCandidates(share?.candidates ?? [])
-        setShare(null)
-        setShareLoading(true)
-        setShare(await collectShareCandidates({ rootId: folderId, masterKey: masterKey ?? new Uint8Array(), folderKey }))
+        const result = await withOwnerFolderKey({ folderId, masterKey: key }, async (folderKey) => {
+          const { written } = await publishShareCandidates({ rootId: folderId, folderKey, confirmed })
+          setShareMessage(`Shared ${written} item${written === 1 ? '' : 's'}. Everyone with access can open them now.`)
+          disposeShareCandidates(share?.candidates ?? [])
+          setShare(null)
+          return collectShareCandidates({ rootId: folderId, masterKey: key, folderKey })
+        })
+        if (result) setShare(result)
       } catch (e) {
         setError(errorText(e))
       } finally {
@@ -370,11 +370,11 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
         setSharing(false)
       }
     },
-    [folderId, folderKey, masterKey, share],
+    [folderId, folderKeyReady, masterKey, share],
   )
 
   const shareSlot =
-    isOwner && folderKey ? (
+    isOwner && folderKeyReady ? (
       <div className="px-1">
         <ShareMissingItemsAction
           result={share}
