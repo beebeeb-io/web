@@ -2,7 +2,7 @@
  * Task 1757 — the no-card trial on the web (server task 1755). Pure decisions and the
  * drawn components, from the vendored contract fixtures (no jsdom: server-side render).
  */
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
@@ -30,6 +30,14 @@ import { parseOnboardingDocument } from '../src/lib/onboarding/parse'
 import type { OnboardingDocument } from '../src/lib/onboarding/types'
 import { userFriendlyError } from '../src/lib/user-friendly-error'
 import { fixtureJson } from './helpers/onboarding-fixtures'
+import { ensureWasm } from '../src/lib/format'
+
+// The allowance and trial sentences carry core's SI sizes; until the wasm
+// module is in memory the fallback prints raw bytes. The import starts it,
+// but a loaded runner can reach the first assertion first — wait for it.
+beforeAll(async () => {
+  await ensureWasm()
+})
 
 function doc(name: string, mutate?: (d: Record<string, any>) => void): OnboardingDocument {
   const raw = fixtureJson(name)
