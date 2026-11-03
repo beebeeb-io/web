@@ -739,7 +739,7 @@ export function FileList({
         residentUserId: getResidentUserId(),
         masterKey: getMasterKey(),
         getFileKey: async () => getFileKeyForFile(file, { plaintextChunk: true }),
-        getFileKeyForFile,
+        getFileKeyForFile: (f) => getFileKeyForFile(f, { plaintextChunk: true }),
         readName: readFileMetadata,
       })
       onRefresh?.()

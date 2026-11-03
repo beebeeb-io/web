@@ -57,6 +57,7 @@ const { resolveOwnerKeyForFile } = await import('../src/lib/key-context')
 const { resolveOwnerKeyForRead } = await import('../src/lib/key-context')
 const { fetchOwnerFirstChunkFrames } = await import('../src/lib/owner-write-guard')
 const { shareFileKey } = await import('../src/lib/share-file-key')
+const { renameKeyFor } = await import('../src/lib/owner-rename')
 
 describe('N3: a plaintext-named owner file', () => {
   test('without chunk 0 core refuses it (the regression this fixes)', async () => {
@@ -75,6 +76,28 @@ describe('N3: a plaintext-named owner file', () => {
     // The key is the read path's key: it opens chunk 0 (download and preview).
     const opened = wasm.decrypt_chunk(key, sealed.nonce, sealed.ciphertext) as Uint8Array
     expect(new TextDecoder().decode(opened)).toBe('the first chunk of a plaintext-named file')
+  })
+
+  test('the inline rename resolves a plaintext-named file with chunk 0', async () => {
+    // The file-list's rename path hands renameOwnerRow the resolved-key
+    // callback; it must opt into chunk 0 exactly like the download/preview
+    // read paths, or the rename refuses a plaintext-named file.
+    const key = await renameKeyFor({
+      fileId: FILE_ID,
+      file,
+      viewerId: 'me',
+      getFileKey: async () => KEY,
+      getFileKeyForFile: (row) => resolveOwnerKeyForRead(MASTER, row, 'me', null),
+      readName: async () => {
+        throw new Error('a plaintext name has no sealed read')
+      },
+    })
+    expect(hex(key)).toBe(hex(KEY))
+  })
+
+  test('the inline rename wires getFileKeyForFile with chunk 0', async () => {
+    const list = await Bun.file(new URL('../src/components/file-list.tsx', import.meta.url)).text()
+    expect(list).toMatch(/getFileKeyForFile:\s*\(f\)\s*=>\s*getFileKeyForFile\(f,\s*\{\s*plaintextChunk:\s*true\s*\}\)/)
   })
 
   test('a share link for it still refuses: no chunk 0 on the share path', async () => {
