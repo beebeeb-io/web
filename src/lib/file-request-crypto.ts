@@ -30,7 +30,10 @@ import { listFileRequests, type FileRequest } from './api'
 import {
   FILE_REQUEST_EMPTY_ID,
   fromBase64,
+  isForeignItemIdWorker,
   openRequestUpload,
+  readNameMetadata,
+  resolveOwnedItemWorker,
   resolveRequestRowWorker,
   unwrapRequestPrivate,
   zeroize,
@@ -160,21 +163,79 @@ export function createRequestKeyResolver(): RequestKeyResolver {
     return { ...req, wrapped_private_key: req.wrapped_private_key, wrap_nonce: req.wrap_nonce }
   }
 
+  /** The unwrapped R_priv for a request, unwrapped at most once and cached. */
+  const privateFor = async (requestId: string, masterKey: Uint8Array): Promise<Uint8Array> => {
+    let rPriv = rPrivCache.get(requestId)
+    if (!rPriv) {
+      const req = await requestFor(requestId)
+      rPriv = await unwrapRequestPrivate(masterKey, fromBase64(req.wrapped_private_key), fromBase64(req.wrap_nonce))
+      rPrivCache.set(requestId, rPriv)
+    }
+    return rPriv
+  }
+
+  /**
+   * R5: the pre-2236 request reader. Production (upload-request.tsx) seals C
+   * with the FIXED EMPTY context, while core's bound `resolveRequestRow` opens
+   * the seal with the row id, so a production row cannot open there.
+   *
+   * INVARIANT: not a general request-row reader. A caller reaches it only
+   * after core refused the row, and only when both gates pass — the same two
+   * the CLI applies (cli a3887e2):
+   *   1. the id is OWNER class (a foreign id never resolves through a request
+   *      envelope; core refuses it and no fallback may override that), and
+   *   2. the name is an encrypted envelope (a plaintext name authenticates
+   *      nothing, so opening it would show an unproven row as proven).
+   * The legacy shape can prove no more than that; it is not authentication.
+   */
+  const legacyRowKeys = async (
+    file: Pick<DriveFile, 'id' | 'name_encrypted' | 'file_request_id' | 'sender_ephemeral_pubkey' | 'wrapped_content_key'>,
+    masterKey: Uint8Array,
+  ): Promise<ResolvedRowKeys> => {
+    const rPriv = await privateFor(file.file_request_id!, masterKey)
+    // Empty seal context — what the shipped web uploader wrote.
+    const contentKey = await openRequestUpload(
+      rPriv,
+      fromBase64(file.sender_ephemeral_pubkey!),
+      fromBase64(file.wrapped_content_key!),
+    )
+
+    // Name: derived first (a rename by an L13 client), else C (the original).
+    try {
+      const derived = await resolveOwnedItemWorker({
+        masterKey,
+        itemId: file.id,
+        kind: 1,
+        nameEncrypted: file.name_encrypted,
+      })
+      return {
+        contentKey,
+        nameKey: derived.key,
+        nameOrigin: derived.origin,
+        name: derived.name?.name ?? null,
+        mimeType: derived.name?.mimeType ?? null,
+        chunkFormat: derived.name?.chunkFormat,
+      }
+    } catch {
+      // Core's own strict reader: throws for a wrong key or a bad envelope.
+      const meta = await readNameMetadata(contentKey, file.name_encrypted)
+      return {
+        contentKey,
+        nameKey: contentKey,
+        nameOrigin: 'request_content',
+        name: meta.name,
+        mimeType: meta.mimeType,
+        chunkFormat: meta.pin,
+      }
+    }
+  }
+
   return {
     async resolveFileKey(file, masterKey) {
       if (!isRequestUpload(file)) {
         throw new Error('resolveFileKey called on a non-request file')
       }
-      const requestId = file.file_request_id!
-
-      // Reuse the unwrapped R_priv if we've already opened a file for this request.
-      let rPriv = rPrivCache.get(requestId)
-      if (!rPriv) {
-        const req = await requestFor(requestId)
-        rPriv = await unwrapRequestPrivate(masterKey, fromBase64(req.wrapped_private_key), fromBase64(req.wrap_nonce))
-        rPrivCache.set(requestId, rPriv)
-      }
-
+      const rPriv = await privateFor(file.file_request_id!, masterKey)
       const ePub = fromBase64(file.sender_ephemeral_pubkey!)
       const wrappedKey = fromBase64(file.wrapped_content_key!)
       return openRequestUpload(rPriv, ePub, wrappedKey)
@@ -185,25 +246,40 @@ export function createRequestKeyResolver(): RequestKeyResolver {
         throw new Error('resolveRow called on a non-request file')
       }
       const req = await requestFor(file.file_request_id!)
-      const row = await resolveRequestRowWorker({
-        masterKey,
-        itemId: file.id,
-        // Core opens the per-upload seal with the ROW's id bytes as HKDF info,
-        // while the request-private wrap uses the fixed EMPTY convention.
-        requestId: FILE_REQUEST_EMPTY_ID,
-        wrappedRequestPrivate: fromBase64(req.wrapped_private_key),
-        wrapNonce: fromBase64(req.wrap_nonce),
-        senderEphemeralPubkey: fromBase64(file.sender_ephemeral_pubkey!),
-        wrappedContentKey: fromBase64(file.wrapped_content_key!),
-        nameEncrypted: file.name_encrypted,
-      })
-      return {
-        contentKey: row.contentKey,
-        nameKey: row.nameKey,
-        nameOrigin: row.nameOrigin,
-        name: row.name,
-        mimeType: row.mimeType,
-        chunkFormat: row.chunkFormat,
+      try {
+        const row = await resolveRequestRowWorker({
+          masterKey,
+          itemId: file.id,
+          // Core opens the per-upload seal with the ROW's id bytes as HKDF info,
+          // while the request-private wrap uses the fixed EMPTY convention.
+          requestId: FILE_REQUEST_EMPTY_ID,
+          wrappedRequestPrivate: fromBase64(req.wrapped_private_key),
+          wrapNonce: fromBase64(req.wrap_nonce),
+          senderEphemeralPubkey: fromBase64(file.sender_ephemeral_pubkey!),
+          wrappedContentKey: fromBase64(file.wrapped_content_key!),
+          nameEncrypted: file.name_encrypted,
+        })
+        return {
+          contentKey: row.contentKey,
+          nameKey: row.nameKey,
+          nameOrigin: row.nameOrigin,
+          name: row.name,
+          mimeType: row.mimeType,
+          chunkFormat: row.chunkFormat,
+        }
+      } catch (err) {
+        // Only a row core refused for "not a bound envelope" may try R5. The
+        // class and name gates are the minimum the legacy shape can prove; a
+        // failure of either re-throws core's refusal unchanged.
+        let foreign = true
+        try {
+          foreign = await isForeignItemIdWorker(file.id)
+        } catch {
+          // Not a canonical id at all: core would refuse it — no fallback.
+        }
+        if (foreign) throw err
+        if (!file.name_encrypted.startsWith('{')) throw err
+        return legacyRowKeys(file, masterKey)
       }
     },
 

@@ -10,10 +10,23 @@
  * returns BOTH keys, read-only, so a reader opens the name with the name key
  * and the content with C.
  *
- * These tests prove both branches against the real core:
+ * The material here is sealed EXACTLY as production uploads it:
+ * `src/pages/upload-request.tsx` calls `sealToRequest(rPub, contentKey)` with
+ * the FIXED EMPTY file id, not the row's id. Core's bound
+ * `resolveRequestRow`, however, opens the per-upload seal with the ROW id
+ * bytes as HKDF info, so it cannot open a production seal. The read path
+ * therefore falls back to the R5 legacy request reader (the pre-2236 empty
+ * context, through core's own file-request functions) — but only behind the
+ * same two gates the CLI applies: the row must be an owner-class id and its
+ * name must be an encrypted envelope.
+ *
+ * These tests prove all of it against the real core:
  *  1. name sealed under C  → nameKey is C, the name opens.
  *  2. name sealed under the derivation → nameKey is the derived key, the name
  *     opens under it and NOT under C.
+ *  3. a listing of production-sealed rows resolves content and names.
+ *  4. a foreign-class row core refuses is NOT opened by the fallback.
+ *  5. a plaintext name is refused.
  */
 import { describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
@@ -33,13 +46,13 @@ const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex')
 
 // ── Real request material, built once ────────────────────────────────────
 // A request's content key C is sealed to the sender's ephemeral public key;
-// the request's private key is wrapped under the owner's master key. The
-// request-private wrap uses the fixed EMPTY id as HKDF info (the server
-// assigns the request UUID after wrapping — src/lib/crypto/file-requests.ts).
-// Core's `resolveRequestRow`, however, opens the per-upload seal with the
-// ROW's own id bytes as HKDF info, so this material seals C under FILE_ID.
+// the request's private key is wrapped under the owner's master key. BOTH use
+// the fixed EMPTY id as HKDF info — that is what upload-request.tsx and
+// src/lib/crypto/file-requests.ts write. Core's bound `resolveRequestRow`
+// opens the per-upload seal with the ROW id instead, so it refuses this
+// material and the gated R5 legacy reader has to open it.
 const rPub = wasm.derive_x25519_public(RPRIV) as Uint8Array
-const sealed = wasm.seal_to_request(rPub, encoder.encode(FILE_ID), CONTENT) as {
+const sealed = wasm.seal_to_request(rPub, EMPTY, CONTENT) as {
   e_pub: Uint8Array
   wrapped_key: Uint8Array
 }
@@ -100,6 +113,54 @@ await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
       mimeType: x.mimeType ?? null,
       chunkFormat: x.chunkFormat,
     }
+  },
+  // The R5 legacy reader's primitives, in process over the same core build.
+  isForeignItemIdWorker: async (itemId: string) => wasm.isForeignItemId(itemId),
+  unwrapRequestPrivate: async (
+    masterKey: Uint8Array,
+    wrapped: Uint8Array,
+    nonce: Uint8Array,
+    requestId: Uint8Array = EMPTY,
+  ) => wasm.unwrap_request_private(masterKey, requestId, wrapped, nonce),
+  openRequestUpload: async (
+    rPriv: Uint8Array,
+    ePub: Uint8Array,
+    wrappedKey: Uint8Array,
+    fileId: Uint8Array = EMPTY,
+  ) => wasm.open_request_upload(rPriv, ePub, fileId, wrappedKey),
+  resolveOwnedItemWorker: async (args: {
+    masterKey: Uint8Array
+    itemId: string
+    kind: number
+    ownerWrap?: Uint8Array | null
+    nameEncrypted: string
+  }) => {
+    const x = wasm.resolveOwnedKey(
+      args.masterKey,
+      args.itemId,
+      args.kind,
+      args.ownerWrap ?? null,
+      args.nameEncrypted,
+    ) as {
+      key: Uint8Array
+      contentKey: Uint8Array | null
+      origin: string
+      name: { name?: string; mimeType?: string | null; plaintext?: string; chunkFormat: number } | null
+      writeTarget: unknown
+    }
+    return { ...x, origin: x.origin }
+  },
+  // Core's strict file-name reader (throws on plaintext or a wrong key).
+  readNameMetadata: async (fileKey: Uint8Array, nameEncrypted: string) => {
+    const { nonce, ciphertext } = wasm.decodeMetadataEnvelope(nameEncrypted) as {
+      nonce: Uint8Array
+      ciphertext: Uint8Array
+    }
+    const meta = JSON.parse(wasm.decrypt_metadata(fileKey, nonce, ciphertext) as string) as {
+      name: string
+      mime_type: string | null
+    }
+    return { name: meta.name, mimeType: meta.mime_type, pin: 0 }
   },
 }))
 
@@ -165,5 +226,39 @@ describe('A9c: a request row resolves its name key and its content key separatel
     }
     expect(() => wasm.decrypt_metadata(CONTENT, nonce, ciphertext)).toThrow()
     expect(JSON.parse(wasm.decrypt_metadata(DERIVED, nonce, ciphertext) as string).name).toBe('renamed.txt')
+  })
+
+  test('a listing of production-sealed request uploads opens and lists its names', async () => {
+    // The drive's list path resolves every row and then shows the returned
+    // name. The material is sealed with the EMPTY id, as upload-request.tsx
+    // does, so this fails unless the read path opens what production writes.
+    const listing = [requestRow(NAME_UNDER_C), requestRow(NAME_UNDER_DERIVED)]
+    const rows = []
+    const resolver = createRequestKeyResolver()
+    for (const file of listing) {
+      const row = await resolver.resolveRow(file, MASTER)
+      rows.push({ content: hex(row.contentKey), name: row.name })
+    }
+    expect(rows).toEqual([
+      { content: hex(CONTENT), name: 'original.txt' },
+      { content: hex(CONTENT), name: 'renamed.txt' },
+    ])
+  })
+
+  test('a foreign-class id core refuses is NOT opened by the legacy reader', async () => {
+    // L12: a request row is an owner item. Without the class gate the legacy
+    // reader would happily open this seal (it is bound to nothing) and show a
+    // foreign row as an owner request upload.
+    const foreignId = (wasm.newForeignItemId(MASTER) as { idText: string }).idText
+    const row = { ...requestRow(NAME_UNDER_C), id: foreignId }
+    await expect(createRequestKeyResolver().resolveRow(row, MASTER)).rejects.toThrow()
+  })
+
+  test('a plaintext name is refused', async () => {
+    // A plaintext name authenticates nothing, so it never reaches the R5
+    // reader: core refuses it and the encrypted-name gate refuses it too.
+    await expect(
+      createRequestKeyResolver().resolveRow(requestRow('plain-note.txt'), MASTER),
+    ).rejects.toThrow(/encrypted envelope/i)
   })
 })
