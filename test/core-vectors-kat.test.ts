@@ -71,7 +71,7 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // encryptChunk/decryptChunk, encryptFilename/decryptFilename,
 // recoverFromPhrase, deriveX25519Public/Private, computeRecoveryCheck,
 // x25519SharedSecret, deriveShareKey, wrapRequestPrivate/unwrapRequestPrivate,
-// sealToRequest/openRequestUpload — all in src/lib/crypto.ts) funnel through
+// sealToRequest — all re-exported from src/lib/crypto.ts) funnel through
 // `withProxy()` → a Comlink Web Worker (src/workers/crypto.worker.ts) that
 // imports the wasm binary via a Vite-only `?url` suffix and reads
 // `import.meta.env.PROD` — neither resolves under `bun test` (no Vite
@@ -368,7 +368,7 @@ describe('core vectors KAT (production code paths)', () => {
     }
   })
 
-  test('file_request_seal_open — unwrapRequestPrivate/openRequestUpload (src/lib/crypto.ts:796,817) + WASM derive_request_wrap_key/derive_x25519_public', () => {
+  test('file_request_seal_open — WASM unwrap_request_private/open_request_upload/derive_request_wrap_key/derive_x25519_public (web wrapper: src/lib/crypto/file-requests.ts:49)', () => {
     const v = vectors.file_request_seal_open
     const masterKey = hexToBytes(v.master_key_hex)
     const requestId = hexToBytes(v.request_id_hex)
@@ -381,9 +381,10 @@ describe('core vectors KAT (production code paths)', () => {
 
     // derive_request_wrap_key is exposed by the WASM binding but web never
     // calls it as a standalone step — wrapRequestPrivate/unwrapRequestPrivate
-    // (crypto.ts:787,796) derive it internally on the Rust side. Verified
-    // directly against the WASM export (the same code those crypto.ts
-    // functions call into) since there's no separate crypto.ts wrapper to cite.
+    // (src/lib/crypto/file-requests.ts) derive it internally on the Rust side.
+    // Verified directly against the WASM export (the same code those wrappers
+    // call into) since there's no separate web wrapper to cite. The content-key
+    // open below is core's open_request_upload with no web wrapper at all.
     const wrapKey = derive_request_wrap_key(masterKey, requestId) as Uint8Array
     expect(toHex(wrapKey)).toBe(v.expected_wrap_key_hex)
 
