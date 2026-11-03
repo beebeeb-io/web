@@ -140,11 +140,16 @@ export type StoredRow =
  * the record's id while the upload stays on it, none otherwise (for a fresh id
  * the record is another id's, and `encryptedUpload` drops it).
  */
+export interface MintedResumeId {
+  idText: string
+  tag: Uint8Array
+}
+
 export type ResumePlan =
   | { kind: 'resume'; fileId: string; resumeFileId: string }
   | { kind: 'restart-version'; fileId: string; resumeFileId: string; replaceOf: { nameEncrypted: string } }
   | { kind: 'refuse'; fileId: string; resumeFileId: undefined; reason: 'gone' | 'unverified' }
-  | { kind: 'restart-new'; fileId: string; resumeFileId: undefined }
+  | { kind: 'restart-new'; fileId: string; resumeFileId: undefined; newItemId?: MintedResumeId }
 
 /** Shown when a paused new version's file is no longer there (nothing is uploaded). */
 export const PAUSED_VERSION_GONE_COPY =
@@ -198,7 +203,10 @@ export function pausedRowCheckFailedMessage(err: unknown): string {
  */
 export async function planResume(
   record: Pick<UploadState, 'fileId' | 'selfMinted' | 'replace_pin' | 'replace_pin_file_id'>,
-  deps: { mintId: () => string | Promise<string>; lookupRow: (fileId: string) => Promise<StoredRow> },
+  deps: {
+    mintId: () => string | MintedResumeId | Promise<string | MintedResumeId>
+    lookupRow: (fileId: string) => Promise<StoredRow>
+  },
 ): Promise<ResumePlan> {
   if (record.selfMinted === true) {
     return { kind: 'resume', fileId: record.fileId, resumeFileId: record.fileId }
@@ -223,7 +231,11 @@ export async function planResume(
   // as a version of whatever row its id names (SF-0001 round 4): that id may
   // be the server's, or a row the user can write but does not own (a
   // shared-folder upload). Its row is not looked up.
-  return { kind: 'restart-new', fileId: await deps.mintId(), resumeFileId: undefined }
+  const minted = await deps.mintId()
+  if (typeof minted === 'string') {
+    return { kind: 'restart-new', fileId: minted, resumeFileId: undefined }
+  }
+  return { kind: 'restart-new', fileId: minted.idText, resumeFileId: undefined, newItemId: minted }
 }
 
 /**

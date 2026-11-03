@@ -28,7 +28,7 @@
  * dropped connection under that id.
  */
 import { createOwnerFolder } from './owner-upload-key'
-import { ownedItem } from './owned-item'
+import { ownedItem, type NewItemIdHandle } from './owned-item'
 import { deriveFileKey, encryptFilename, serializeEncryptedBlob, zeroize } from './crypto'
 import { encryptedUpload } from './encrypted-upload'
 import { errorRetryable } from './user-friendly-error'
@@ -44,7 +44,7 @@ export interface ImportFolderTree {
 
 export interface ImportFolderTreeOptions {
   /** Mints each folder's id; core's NewItemId by default (L13). */
-  mintId?: () => string | Promise<string>
+  mintId?: () => NewItemIdHandle | Promise<NewItemIdHandle>
   /**
    * Called ONCE for a folder whose create failed (not again for the folders
    * and files under it), so the import can say which folder stopped and why.
@@ -57,16 +57,16 @@ export function createImportFolderTree(
   masterKey: Uint8Array,
   options: ImportFolderTreeOptions = {},
 ): ImportFolderTree {
-  const mintId =
-    options.mintId ?? (() => ownedItem.mint(masterKey, 'owner').then((minted) => minted.idText))
+  const mintId = options.mintId ?? (() => ownedItem.mint(masterKey, 'owner'))
   // Keyed by the normalised path ('/A/B'). The promise is kept unless it
   // rejects with a transient error: any other rejection keeps the subtree
   // stopped for the whole run.
   const byPath = new Map<string, Promise<string>>()
   // Each folder's id, minted ONCE per run, and the name sealed ONCE for it: a
   // retry sends the very same request, so a create an earlier call committed
-  // is recognised byte for byte (createOwnerFolder's landed check).
-  const mintedFor = new Map<string, { folderId: string; nameEncrypted: string }>()
+  // is recognised byte for byte (createOwnerFolder's landed check). The minted
+  // handle keeps its tag, so the retried create proves the id (F9).
+  const mintedFor = new Map<string, { folderId: string; nameEncrypted: string; newItemId: NewItemIdHandle }>()
 
   async function create(key: string, parts: string[]): Promise<string> {
     // A parent that failed rejects here with its own error; it was reported
@@ -75,14 +75,15 @@ export function createImportFolderTree(
     const name = parts[parts.length - 1]
     try {
       const minted = mintedFor.get(key)
-      const folderId = minted?.folderId ?? (await mintId())
+      const newItemId = minted?.newItemId ?? (await mintId())
+      const folderId = newItemId.idText
       const nameKey = await deriveFileKey(masterKey, folderId)
       try {
         let nameEncrypted = minted?.nameEncrypted
         if (nameEncrypted === undefined) {
           const sealed = await encryptFilename(nameKey, name)
           nameEncrypted = await serializeEncryptedBlob(sealed.nonce, sealed.ciphertext)
-          mintedFor.set(key, { folderId, nameEncrypted })
+          mintedFor.set(key, { folderId, nameEncrypted, newItemId })
         }
         // Inside a shared folder its name-key wrap is published too.
         // It aborts unless the answer names `folderId` (L13 echo check).
@@ -92,6 +93,7 @@ export function createImportFolderTree(
           folderId,
           nameKey,
           masterKey,
+          newItemId,
         })
         return folder.id
       } finally {
@@ -147,15 +149,17 @@ export async function importFileInto(args: {
   args.onBytes(blob.size)
 
   args.onStatus('encrypting')
-  // L13: a create's id is core's, never a JS v4.
-  const fileId = (await ownedItem.mint(args.masterKey, 'owner')).idText
+  // L13: a create's id is core's, never a JS v4. F9: keep the tag and hand it
+  // to the upload, so a create it retries re-proves the same id.
+  const newItemId = await ownedItem.mint(args.masterKey, 'owner')
+  const fileId = newItemId.idText
   const fileKey = await deriveFileKey(args.masterKey, fileId)
   try {
     args.onStatus('uploading')
     const file = new File([blob], args.name, { type: blob.type || 'application/octet-stream' })
     await encryptedUpload(file, fileId, fileKey, args.masterKey, parentId, (p) => {
       if (p.stage === 'Uploading' && p.bytesUploaded) args.onBytes(p.bytesUploaded)
-    }, undefined, undefined, args.signal)
+    }, undefined, undefined, args.signal, { newItemId })
   } finally {
     zeroize(fileKey)
   }

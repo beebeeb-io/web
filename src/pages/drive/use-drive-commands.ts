@@ -16,6 +16,7 @@ import type { useToast } from '../../components/toast'
 import { timeAgo } from '../../components/file-list'
 import { createNamedOwnerFolder, folderCreateFailureToast } from '../../lib/new-folder'
 import { createOwnerFolder, moveOwnerItems } from '../../lib/owner-upload-key'
+import { ownedItem } from '../../lib/owned-item'
 import { foldName, NewDocumentNameClashError } from '../../lib/new-document'
 import { blankDocumentBytes } from '../../lib/office/blank-documents'
 import { FEATURE_OFFICE_EDITOR } from '../../lib/flags'
@@ -156,10 +157,12 @@ export function useDriveCommands(params: DriveCommandsParams) {
     if (type.editor === 'office' && !FEATURE_OFFICE_EDITOR) {
       return Promise.reject(new Error('The Office editor is not enabled on this device.'))
     }
-    const fileId = crypto.randomUUID()
+    // A tab handle, not the create id: the id is minted in core below, after
+    // this function has already returned to the click that opened the tab.
+    const tabToken = crypto.randomUUID()
     let tab: Window | null = null
     if (type.editor === 'office') {
-      tab = window.open('', `bb-office-${fileId}`)
+      tab = window.open('', `bb-office-${tabToken}`)
       if (tab) {
         try {
           tab.document.title = `Creating ${name}`
@@ -193,6 +196,9 @@ export function useDriveCommands(params: DriveCommandsParams) {
         }
         const bytes = await blankDocumentBytes(type)
         const file = new File([bytes as BlobPart], name, { type: type.mimeType })
+        // F9: the create's id is core's; its tag travels with the upload.
+        const newItemId = await ownedItem.mint(getMasterKey(), 'owner')
+        const fileId = newItemId.idText
         const fileKey = await getFileKey(fileId)
         const created = await encryptedUpload(
           file,
@@ -204,6 +210,7 @@ export function useDriveCommands(params: DriveCommandsParams) {
           undefined,
           undefined,
           undefined,
+          { newItemId },
         )
         const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
         const now = new Date().toISOString()
@@ -262,11 +269,12 @@ export function useDriveCommands(params: DriveCommandsParams) {
 
     setSuggestionCreating(true)
     try {
-      const folderId = crypto.randomUUID()
+      const folderNewItemId = await ownedItem.mint(getMasterKey(), 'owner')
+      const folderId = folderNewItemId.idText
       const folderKey = await getFileKey(folderId)
       const enc = await encryptFileMetadata(folderKey, folderName)
       const nameEncrypted = await serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      const result = await createOwnerFolder({ nameEncrypted, folderId })
+      const result = await createOwnerFolder({ nameEncrypted, folderId, masterKey: getMasterKey(), newItemId: folderNewItemId })
 
       // Move all matching files into it
       // A folder created for the suggestion is not a picker answer for a

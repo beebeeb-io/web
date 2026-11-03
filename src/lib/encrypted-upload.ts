@@ -141,8 +141,7 @@ const uploadAdmission = new WorkQueue(2)
  * A fresh id for an upload that may not reuse the id it found: minted in core
  * (L13), never a JS v4, so the id carries the tag a create proposes.
  */
-const mintFileId = async (masterKey: Uint8Array): Promise<string> =>
-  (await ownedItem.mint(masterKey, 'owner')).idText
+const mintFileId = async (masterKey: Uint8Array) => ownedItem.mint(masterKey, 'owner')
 
 /** All upload entry points share admission, including retries and folder uploads. */
 export function encryptedUpload(...args: Parameters<typeof uploadFile>): ReturnType<typeof uploadFile> {
@@ -216,6 +215,10 @@ async function uploadFileWith(
   // real photos in (see photo-library.ts).
   const isMedia = isMediaMime && !isLikelyAlbumArtOrIcon(file.name, file.size, mimeType)
   let activeFileKey = fileKey
+  // F9: the core-minted handle this create proposes. It starts as the caller's
+  // and, when a stored session restarts under a fresh id, becomes the id minted
+  // here — so the restart re-proves its tag instead of discarding it.
+  let newItemId = options.newItemId
 
   // Replace only: the existing file's recorded pin, read BEFORE anything
   // reaches the server. A new file stays `null` and never applies a pin.
@@ -508,6 +511,15 @@ async function uploadFileWith(
       await removeUploadState(record.fileId)
       throw new PausedVersionRefusedError(plan.reason)
     } else {
+      // F9: a fresh id minted here keeps its tag; core re-checks it before the
+      // restarted create seals anything under that id (L13).
+      if (plan.kind === 'restart-new' && plan.newItemId) {
+        if (plan.newItemId.idText !== plan.fileId) {
+          throw new Error('new-item id mismatch: the restarted upload writes an id it did not mint')
+        }
+        await ownedItem.resume(masterKey, plan.newItemId.idText, plan.newItemId.tag)
+        newItemId = plan.newItemId
+      }
       await removeUploadState(record.fileId)
       await writeUnderOwnId(plan.fileId)
     }
@@ -665,8 +677,8 @@ async function uploadFileWith(
     // version writes under the listed row's own id, as before. An explicit
     // server chunk size has no forNewItem variant, so that rare path keeps the
     // id-bound derive (the tag was already checked above).
-    const enc = options.newItemId && isCreate() && !serverOverrodeChunkSize
-      ? await startEncryptedStreamForNewItem(masterKey, options.newItemId, file.size, 'web')
+    const enc = newItemId && isCreate() && !serverOverrodeChunkSize
+      ? await startEncryptedStreamForNewItem(masterKey, newItemId, file.size, 'web')
       : serverOverrodeChunkSize
         ? await startEncryptedStreamWithChunkSize(masterKey, serverFileId, file.size, chunkBytes)
         : await startEncryptedStream(masterKey, serverFileId, file.size, 'web')

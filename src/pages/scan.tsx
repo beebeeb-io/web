@@ -7,6 +7,7 @@ import { useKeys } from '../lib/key-context'
 import { useToast } from '../components/toast'
 import { usePlanBlock } from '../hooks/use-plan-block'
 import { encryptedUpload } from '../lib/encrypted-upload'
+import { ownedItem } from '../lib/owned-item'
 
 // ─── PDF generation (no external deps) ──────────────────────────────────────
 // Builds a minimal valid PDF that embeds one JPEG per page.
@@ -313,7 +314,9 @@ export function ScanPage() {
       const filename = formatScanFilename()
       const file = uint8ArrayToFile(pdfBytes, filename, 'application/pdf')
 
-      const fileId = crypto.randomUUID()
+      // F9: the create's id is core's; its tag travels with the upload.
+      const newItemId = await ownedItem.mint(getMasterKey(), 'owner')
+      const fileId = newItemId.idText
       const fileKey = await getFileKey(fileId)
       setSaveProgress(40)
 
@@ -322,7 +325,7 @@ export function ScanPage() {
       await encryptedUpload(file, fileId, fileKey, getMasterKey(), undefined, (p) => {
         // Map upload progress (0-100) to our 40-100 range
         setSaveProgress(40 + Math.round(p.progress * 0.6))
-      })
+      }, undefined, undefined, undefined, { newItemId })
 
       setSaveProgress(100)
       setStep('done')

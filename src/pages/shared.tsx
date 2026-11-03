@@ -34,6 +34,7 @@ import { userFriendlyError } from '../lib/user-friendly-error'
 import { readNameMetadata, decryptFileMetadata, decryptChunk, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { encryptedUpload } from '../lib/encrypted-upload'
+import { ownedItem } from '../lib/owned-item'
 import { useWsEvent } from '../lib/ws-context'
 import { EmptyShared } from '../components/empty-states/empty-shared'
 import { LoadingSkeleton, SectionHeader } from './shared/sections'
@@ -358,9 +359,11 @@ export function Shared() {
           zeroize(sharedFileKey)
           // Re-encrypt with own key and upload
           const file = new File([plaintext], filename, { type: invite.mime_type ?? 'application/octet-stream' })
-          const newFileId = crypto.randomUUID()
+          // F9: the create's id is core's; its tag travels with the upload.
+          const newItemId = await ownedItem.mint(getMasterKey(), 'owner')
+          const newFileId = newItemId.idText
           const newFileKey = await getFileKey(newFileId)
-          await encryptedUpload(file, newFileId, newFileKey, getMasterKey(), undefined, () => {}, undefined, undefined)
+          await encryptedUpload(file, newFileId, newFileKey, getMasterKey(), undefined, () => {}, undefined, undefined, undefined, { newItemId })
           zeroize(newFileKey)
           showToast({ icon: 'check', title: 'Copy saved', description: `${filename} saved to your vault.` })
         } catch (e) {

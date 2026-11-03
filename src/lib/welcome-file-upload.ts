@@ -7,6 +7,7 @@
  */
 
 import { encryptedUpload } from './encrypted-upload'
+import { ownedItem } from './owned-item'
 import { deriveFileKey } from './crypto'
 import { getPreference, setPreference } from './api'
 import { WELCOME_FILE_NAME, WELCOME_FILE_PREF, ensureDeferredWelcomeFile, welcomeFileContent } from './welcome-file'
@@ -15,7 +16,9 @@ export async function uploadWelcomeFile(masterKey: Uint8Array): Promise<void> {
   const file = new File([new TextEncoder().encode(welcomeFileContent())], WELCOME_FILE_NAME, {
     type: 'text/markdown',
   })
-  const fileId = crypto.randomUUID()
+  // F9: the create's id is core's; its tag travels with the upload.
+  const newItemId = await ownedItem.mint(masterKey, 'owner')
+  const fileId = newItemId.idText
   const fileKey = await deriveFileKey(masterKey, fileId)
   await encryptedUpload(
     file,
@@ -26,6 +29,8 @@ export async function uploadWelcomeFile(masterKey: Uint8Array): Promise<void> {
     undefined,
     undefined,
     undefined,
+    undefined,
+    { newItemId },
   )
 }
 

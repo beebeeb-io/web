@@ -113,7 +113,19 @@ export async function createOwnerFolder(args: {
   folderId: string
   nameKey?: Uint8Array
   masterKey?: Uint8Array
+  /** The core-minted id this folder was named under, with its tag (L13/F9). */
+  newItemId?: { idText: string; tag: Uint8Array }
 }): Promise<DriveFile> {
+  // F9: a caller that mints through core keeps the tag, so a retried create
+  // proves the same id instead of a JS v4 with no provenance. `resume` checks
+  // the tag opens this id before anything is sent.
+  if (args.newItemId) {
+    if (args.newItemId.idText !== args.folderId) {
+      throw new Error('new-item id mismatch: the folder writes an id it did not mint')
+    }
+    if (!args.masterKey) throw new Error('a core-minted folder id needs the master key')
+    await ownedItem.resume(args.masterKey, args.newItemId.idText, args.newItemId.tag)
+  }
   // L13 (contract 2275, SF-0001): the folder's name is sealed under the key
   // derived from the id THIS client chose. createFolder throws on an answer
   // with any other id — before a wrap is published here, and before the

@@ -41,7 +41,8 @@ export async function createNamedOwnerFolder(args: {
   const masterKey = args.getMasterKey()
   // L13: the id is core's (NewItemId), never a JS v4: the tag it returns is
   // what lets a retried create prove the same id.
-  const folderId = (await ownedItem.mint(masterKey, 'owner')).idText
+  const minted = await ownedItem.mint(masterKey, 'owner')
+  const folderId = minted.idText
   const nameKey = await args.getFileKey(folderId)
   try {
     const sealed = await args.seal(nameKey, args.name)
@@ -53,6 +54,7 @@ export async function createNamedOwnerFolder(args: {
       folderId,
       nameKey,
       masterKey,
+      newItemId: minted,
     })
   } finally {
     zeroize(nameKey)

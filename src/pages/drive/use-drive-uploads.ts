@@ -155,7 +155,7 @@ export function useDriveUploads(params: DriveUploadsParams) {
         let plan: Awaited<ReturnType<typeof planResume>>
         try {
           plan = await planResume(match, {
-            mintId: () => ownedItem.mint(getMasterKey(), 'owner').then((minted) => minted.idText),
+            mintId: () => ownedItem.mint(getMasterKey(), 'owner'),
             lookupRow: (id) => lookupOwnRow(id, recordKey),
           })
         } catch (err) {
@@ -237,8 +237,13 @@ export function useDriveUploads(params: DriveUploadsParams) {
           // A member's upload into a folder shared with this user (F7).
           sharedFolderContext,
           undefined,
-          // A version restart sends the row's own stored name, byte for byte.
-          plan.kind === 'restart-version' ? { replaceOf: plan.replaceOf } : undefined,
+          // A version restart sends the row's own stored name, byte for byte;
+          // a fresh-id restart carries the core-minted tag of the id it uses.
+          plan.kind === 'restart-version'
+            ? { replaceOf: plan.replaceOf }
+            : plan.kind === 'restart-new' && plan.newItemId
+              ? { newItemId: plan.newItemId }
+              : undefined,
         )
         setUploads((prev) => prev.filter((u) => u.id !== uploadId))
         showToast({ icon: 'check', title: plan.kind === 'resume' ? 'Upload resumed' : 'Uploaded', description: file.name })
@@ -817,14 +822,22 @@ export function useDriveUploads(params: DriveUploadsParams) {
         const parentPath = parts.slice(0, -1).join('/')
         const parentId = parentPath ? folderIdMap[parentPath] : currentParentId
 
-        const folderId = crypto.randomUUID()
+        const folderNewItemId = await ownedItem.mint(getMasterKey(), 'owner')
+        const folderId = folderNewItemId.idText
         const folderKey = await getFileKey(folderId)
         const enc = await encryptFileMetadata(folderKey, folderName)
         const nameEncrypted = await serializeEncryptedBlob(enc.nonce, enc.ciphertext)
 
         // Inside a shared folder its name-key wrap is published too, so guests
         // and members can read the new folder's name.
-        const result = await createOwnerFolder({ nameEncrypted, parentId, folderId, nameKey: folderKey, masterKey: getMasterKey() })
+        const result = await createOwnerFolder({
+          nameEncrypted,
+          parentId,
+          folderId,
+          nameKey: folderKey,
+          masterKey: getMasterKey(),
+          newItemId: folderNewItemId,
+        })
         folderIdMap[folderPath] = result.id
 
         // Index the folder in the search index
@@ -857,7 +870,8 @@ export function useDriveUploads(params: DriveUploadsParams) {
         const parentPath = parts.slice(0, -1).join('/')
         const parentId = parentPath ? folderIdMap[parentPath] : currentParentId
 
-        const fileId = crypto.randomUUID()
+        const fileNewItemId = await ownedItem.mint(getMasterKey(), 'owner')
+        const fileId = fileNewItemId.idText
         const fileKey = await getFileKey(fileId)
 
         const uploadedFile = await encryptedUpload(ff.file, fileId, fileKey, getMasterKey(), parentId, (p) => {
@@ -882,7 +896,7 @@ export function useDriveUploads(params: DriveUploadsParams) {
                 : u,
             ),
           )
-        }, undefined, undefined, undefined)
+        }, undefined, undefined, undefined, { newItemId: fileNewItemId })
 
         // Index each file
         const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')

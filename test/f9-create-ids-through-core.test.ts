@@ -20,8 +20,9 @@ import { mockModuleScoped } from './helpers/scoped-module-mock'
 const CORE_IDS = ['core-minted-folder-id', 'core-minted-second-id', 'core-minted-file-id']
 let minted = 0
 const mintedIds: string[] = []
-const createdFolders: Array<{ folderId: string; parentId?: string }> = []
+const createdFolders: Array<{ folderId: string; parentId?: string; newItemId?: { idText: string; tag: Uint8Array } }> = []
 const uploadedFileIds: string[] = []
+const uploadedNewItemIds: Array<{ idText: string; tag: Uint8Array } | undefined> = []
 
 await mockModuleScoped('../src/lib/owned-item', import.meta.dir, (real) => ({
   ...real,
@@ -46,15 +47,17 @@ await mockModuleScoped('../src/lib/crypto', import.meta.dir, {
 })
 
 await mockModuleScoped('../src/lib/owner-upload-key', import.meta.dir, {
-  createOwnerFolder: async (args: { folderId: string; parentId?: string }) => {
-    createdFolders.push({ folderId: args.folderId, parentId: args.parentId })
+  createOwnerFolder: async (args: { folderId: string; parentId?: string; newItemId?: { idText: string; tag: Uint8Array } }) => {
+    createdFolders.push({ folderId: args.folderId, parentId: args.parentId, newItemId: args.newItemId })
     return { id: args.folderId }
   },
 })
 
 await mockModuleScoped('../src/lib/encrypted-upload', import.meta.dir, {
-  encryptedUpload: async (_file: File, fileId: string) => {
+  encryptedUpload: async (_file: File, fileId: string, ...rest: unknown[]) => {
     uploadedFileIds.push(fileId)
+    const options = rest[7] as { newItemId?: { idText: string; tag: Uint8Array } } | undefined
+    uploadedNewItemIds.push(options?.newItemId)
     return { id: fileId }
   },
 })
@@ -83,6 +86,8 @@ describe('F9: a create mints through core (NewItemId)', () => {
     })
     expect(minted).toBe(before + 1)
     expect(createdFolders.at(-1)?.folderId).toBe(mintedIds.at(-1)!)
+    expect(createdFolders.at(-1)?.newItemId?.idText).toBe(mintedIds.at(-1)!)
+    expect(createdFolders.at(-1)?.newItemId?.tag.length).toBe(32)
     expect(created.id).toBe(mintedIds.at(-1)!)
   })
 
@@ -93,6 +98,8 @@ describe('F9: a create mints through core (NewItemId)', () => {
     expect(first).toBe(mintedIds.at(-2)!)
     expect(second).toBe(mintedIds.at(-1)!)
     expect(createdFolders.slice(-2).map((f) => f.folderId)).toEqual([first, second])
+    expect(createdFolders.slice(-2).map((f) => f.newItemId?.idText)).toEqual([first, second])
+    expect(createdFolders.slice(-2).every((f) => f.newItemId?.tag.length === 32)).toBe(true)
   })
 
   test("an import's file create mints its id through core", async () => {
@@ -108,6 +115,8 @@ describe('F9: a create mints through core (NewItemId)', () => {
       onBytes: () => {},
     })
     expect(uploadedFileIds.at(-1)).toBe(mintedIds.at(-1)!)
+    expect(uploadedNewItemIds.at(-1)?.idText).toBe(mintedIds.at(-1)!)
+    expect(uploadedNewItemIds.at(-1)?.tag.length).toBe(32)
   })
 
   test('an editor "Keep Both" mints through core and carries the tag', async () => {
@@ -130,5 +139,23 @@ describe('F9: a create mints through core (NewItemId)', () => {
     expect(upload).not.toContain('crypto.randomUUID()')
     const banner = source('src/pages/drive/use-drive-uploads.ts')
     expect(banner).toContain("ownedItem.mint(getMasterKey(), 'owner')")
+  })
+
+  test('every listed create site mints its id in core, never crypto.randomUUID()', () => {
+    // The review's nine remaining create sites. Each id is minted by the
+    // owned-item port; a bare JS v4 has no tag, so no create would be provable.
+    for (const path of [
+      'src/pages/drive/use-drive-uploads.ts',
+      'src/pages/drive/use-drive-commands.ts',
+      'src/pages/photos.tsx',
+      'src/pages/receive.tsx',
+      'src/pages/scan.tsx',
+      'src/pages/shared.tsx',
+      'src/lib/welcome-file-upload.ts',
+    ]) {
+      const src = source(path)
+      expect(src).toContain('ownedItem.mint(')
+      expect(src).not.toMatch(/(fileId|folderId|newFileId) = crypto\.randomUUID\(\)/)
+    }
   })
 })

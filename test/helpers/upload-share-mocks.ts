@@ -140,6 +140,9 @@ export async function installMocks(): Promise<void> {
     planChunks: async () => ({ chunk_size_bytes: 4, chunk_count: 1 }),
     startEncryptedStream: async (masterKey: Uint8Array) => stubStream(masterKey),
     startEncryptedStreamWithChunkSize: async (masterKey: Uint8Array) => stubStream(masterKey),
+    // F9: a restart that carries the id it minted starts core's new-item
+    // encryptor (it re-checks the tag); the stub answers like a fresh stream.
+    startEncryptedStreamForNewItem: async (masterKey: Uint8Array) => stubStream(masterKey),
     encryptFilename: async (fileKey: Uint8Array, plaintext: string) => {
       cap.encryptedMetadataKeys.push(fileKey[0])
       cap.sealedPlaintexts.push(plaintext)
@@ -162,6 +165,11 @@ export async function installMocks(): Promise<void> {
     // v4 with a 32-byte tag; the real mint is proven in
     // f9-create-ids-through-core.test.ts over a mocked port.
     mintItemIdWorker: async () => ({ idText: crypto.randomUUID(), tag: new Uint8Array(32) }),
+    // F9: a create folder/openers that carry a minted handle re-prove it with
+    // `resume`; the stub accepts the pair it minted (the real rule is core's).
+    resumeItemIdWorker: async (_masterKey: Uint8Array, itemId: string, tag: Uint8Array) => ({ idText: itemId, tag }),
+    // L12: an F id is UUID v8; everything else core calls an owner id.
+    isForeignItemIdWorker: async (itemId: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(itemId),
     // A fresh array per call (callers zeroize what they derive); 0xd0 marks a
     // key derived inside the code under test rather than passed in by a test.
     deriveFileKey: async (_masterKey: Uint8Array, id: string) => {
