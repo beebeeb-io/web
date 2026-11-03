@@ -52,7 +52,7 @@ export class SharedSearchIndex {
    * `l14Entries` is the proof that every entry came through the L14 filter
    * (`filterIndexRowsForSharing`): only `assembleVerifiedSharedIndex` passes
    * it. An index loaded from the server's shards carries no proof, so it can
-   * be searched but never pushed.
+   * be searched but never written.
    */
   constructor(proxy: SearchIndexProxy, numShards: number, l14Entries: readonly IndexFileEntry[] | null = null) {
     this.#proxy = proxy
@@ -65,7 +65,18 @@ export class SharedSearchIndex {
     return this.#l14Entries
   }
 
+  /**
+   * Add or update an entry. Writes carry the same L14 duty as a push: an index
+   * with no proof refuses every upsert, and a proven index accepts only an
+   * entry the filter itself produced (same id and same name). A caller that
+   * needs a new name rebuilds from the listing instead of upserting it in.
+   */
   async upsert(fileId: string, name: string): Promise<number[]> {
+    const proof = this.#l14Entries
+    if (!proof) throw new UnverifiedSharedIndexError()
+    if (!proof.some((entry) => entry.fileId === fileId && entry.name === name)) {
+      throw new UnverifiedSharedIndexError()
+    }
     return this.#proxy.upsert(fileId, name)
   }
 
@@ -180,10 +191,10 @@ export async function loadSharedIndex(
   }
 }
 
-/** A push refused because its index has no L14 proof. */
+/** A write refused because its index, or the entry, has no L14 proof. */
 export class UnverifiedSharedIndexError extends Error {
   constructor() {
-    super('shared index push requires an index built by the L14 filter (rebuildSharedIndexFromListing)')
+    super('shared index writes require entries built by the L14 filter (rebuildSharedIndexFromListing)')
     this.name = 'UnverifiedSharedIndexError'
   }
 }

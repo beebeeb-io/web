@@ -21,9 +21,10 @@ import type { ShardCoord } from '../src/lib/shared-folder-index-shards'
 
 const folderKey = new Uint8Array(32).fill(0x11)
 
-function fakeProxy(): unknown {
+function fakeProxy(onUpsert?: () => void): unknown {
   return {
     async upsert() {
+      onUpsert?.()
       return [1]
     },
     async remove() {
@@ -76,6 +77,27 @@ describe('F12: a shared-index push enforces L14', () => {
     expect(delta).toEqual({ written: 1, conflicts: 0, dirtyBuckets: [] })
     const full = await pushSharedIndexFull({ transport: transport(), index: proven, folderKey })
     expect(full).toEqual({ written: 1 })
+  })
+
+  test('an upsert on an index with no proof is refused before it reaches the proxy', async () => {
+    let upserts = 0
+    const loaded = new SharedSearchIndex(fakeProxy(() => (upserts += 1)) as never, 64)
+    await expect(loaded.upsert('a', 'a.pdf')).rejects.toBeInstanceOf(UnverifiedSharedIndexError)
+    expect(upserts).toBe(0)
+  })
+
+  test('an upsert cannot inject an entry the L14 filter did not prove', async () => {
+    let upserts = 0
+    const proven = new SharedSearchIndex(fakeProxy(() => (upserts += 1)) as never, 64, [
+      { fileId: 'a', name: 'a.pdf' },
+    ])
+    await expect(proven.upsert('evil', 'evil.pdf')).rejects.toBeInstanceOf(UnverifiedSharedIndexError)
+    await expect(proven.upsert('a', 'renamed.pdf')).rejects.toBeInstanceOf(UnverifiedSharedIndexError)
+    expect(upserts).toBe(0)
+
+    // The entry the filter proved still upserts normally.
+    await expect(proven.upsert('a', 'a.pdf')).resolves.toEqual([1])
+    expect(upserts).toBe(1)
   })
 
   test('the proof is stamped only where the L14 filter assembled the index', async () => {
