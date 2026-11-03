@@ -674,26 +674,34 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       throw new Error('Vault is locked — unlock first')
     }
     const key = masterKeyRef.current as Uint8Array
-    if (isRequestUpload(file)) {
-      if (!requestResolverRef.current) requestResolverRef.current = createRequestRowResolver()
-      return (await requestResolverRef.current.resolveRow(file, key)).content
-    }
-    // Task 2237b: a row a link guest or another member added to a shared
-    // folder is not sealed under a key we derive. Every caller (download, zip,
-    // rename, versions, thumbnails), not only the listing, must take the
-    // shared-folder path for it. SF-0002 review: a foreign row the shared path
-    // cannot open is UNAVAILABLE — it never falls through to an owner key.
-    // Only with the flag on (rv-web198d R1): with it off this asks nothing.
-    const shared = await foreignRowKey({
-      masterKey: key,
+    return fileKeyForFileWith({
       file,
-      viewerId: residentKeyUserIdRef.current,
-      keyIndexFor: (root, fileId) => sharedFolderCacheRef.current.forFile(root, fileId),
+      requestContent: async () => {
+        // §15: only core holds the row's content key, and the reader is the way
+        // to it. An id-derived key would never open the row's name or content.
+        if (!requestResolverRef.current) requestResolverRef.current = createRequestRowResolver()
+        return (await requestResolverRef.current.resolveRow(file, key)).content
+      },
+      ownerKey: async () => {
+        // Task 2237b: a row a link guest or another member added to a shared
+        // folder is not sealed under a key we derive. Every caller (download,
+        // zip, rename, versions, thumbnails), not only the listing, must take
+        // the shared-folder path for it. SF-0002 review: a foreign row the
+        // shared path cannot open is UNAVAILABLE — it never falls through to an
+        // owner key. Only with the flag on (rv-web198d R1): off, this asks
+        // nothing.
+        const shared = await foreignRowKey({
+          masterKey: key,
+          file,
+          viewerId: residentKeyUserIdRef.current,
+          keyIndexFor: (root, fileId) => sharedFolderCacheRef.current.forFile(root, fileId),
+        })
+        if (options.plaintextChunk) {
+          return resolveOwnerKeyForRead(key, file, residentKeyUserIdRef.current, shared)
+        }
+        return resolveOwnerKeyForFile(key, file, residentKeyUserIdRef.current, shared)
+      },
     })
-    if (options.plaintextChunk) {
-      return resolveOwnerKeyForRead(key, file, residentKeyUserIdRef.current, shared)
-    }
-    return resolveOwnerKeyForFile(key, file, residentKeyUserIdRef.current, shared)
   }, [isBoundTo])
 
   /**
@@ -996,6 +1004,27 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>
+}
+
+
+/**
+ * 2275 §15 / 2326 review P3-3 — where ONE row's file key comes from.
+ *
+ * A row received through a file request has no key to hand out: core's resolver
+ * returns a decrypt-only content source, and an id-derived key would never open
+ * its name or content (an F-class row is refused outright). Every other row
+ * takes the owner / shared-folder path. The fork lives here so the refusal is
+ * testable without a React tree — download, zip, share links, the preview and
+ * the list all reach it through `getFileKeyForFile`.
+ */
+export function fileKeyForFileWith(deps: {
+  file: DriveFile
+  /** Core's decrypt-only content source for a request row. */
+  requestContent: () => Promise<ContentKey>
+  /** Owner / shared-folder key. Never taken for a request row. */
+  ownerKey: () => Promise<Uint8Array>
+}): Promise<ContentKey> {
+  return isRequestUpload(deps.file) ? deps.requestContent() : deps.ownerKey()
 }
 
 
