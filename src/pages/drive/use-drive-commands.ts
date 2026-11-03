@@ -267,7 +267,9 @@ export function useDriveCommands(params: DriveCommandsParams) {
       const result = await createOwnerFolder({ nameEncrypted, folderId })
 
       // Move all matching files into it
-      await moveOwnerItems({ ids: filesToMove.map((f) => f.id), destinationId: result.id, rows: filesToMove, masterKey: getMasterKey(), viewerId: user?.user_id ?? null })
+      // A folder created for the suggestion is not a picker answer for a
+      // shared root: no answer, so no wraps are published (L15 (b)3).
+      await moveOwnerItems({ ids: filesToMove.map((f) => f.id), destinationId: result.id, rows: filesToMove, masterKey: getMasterKey(), viewerId: user?.user_id ?? null, pickerRootId: null })
 
       showToast({
         icon: 'folder',

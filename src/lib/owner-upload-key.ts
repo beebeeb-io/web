@@ -12,7 +12,6 @@ import { ApiError, createFolder, getFile, publishSharedFolderKeys, updateFile, t
 import { collectAllChildItems, sealChildKey } from './folder-share-crypto'
 import { adoptForeignTreeBeforeMove, assertNoSeenCustodyAbove, folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
 import { zeroize } from './crypto'
-import { hasSeenCustody } from './custody-memory'
 import { ownedItem, type KeyOrigin } from './owned-item'
 import { sharedFoldersEnabled } from './use-feature-flag'
 import { withNetworkRetry } from './net-retry'
@@ -294,10 +293,12 @@ async function publishMovedItems(args: {
   const root = await sharedRootFor(destinationId, destinationId)
   if (!root) return
   if ((await folderWrapFormat(root, destinationId)) !== 'l7') return
-  // L15 (b)3: only a destination the user saw inside R. The picker's answer is
-  // authoritative; without one, this client's custody proof for R stands in.
-  const shownRoot = args.pickerRootId === undefined ? (hasSeenCustody(root) ? root : null) : args.pickerRootId
-  if (shownRoot !== root) return
+  // L15 (b)3: only a destination the move picker showed inside R. Its answer
+  // is the only proof that the user saw R for this destination: a local custody
+  // record says no more than that R was seen before, and the root above comes
+  // from the server's parent walk. No answer (undefined or null) means the
+  // destination was not shown inside a known root, so nothing is published.
+  if (args.pickerRootId !== root) return
   const byId: ReadonlyMap<string, MovableRow> = Array.isArray(rows)
     ? new Map(rows.map((row) => [row.id, row]))
     : (rows ?? new Map())

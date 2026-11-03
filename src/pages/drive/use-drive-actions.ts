@@ -118,11 +118,11 @@ export function useDriveActions(params: DriveActionsParams) {
 
   // ─── Move handler ─────────────────────────────────
 
-  async function handleMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy') {
+  async function handleMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy', pickerRootId: string | null) {
     if (!moveFileId) return
     try {
       // rv-web198c P2-5: a move into a shared folder publishes its wraps.
-      await moveOwnerItems({ ids: [moveFileId], destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null })
+      await moveOwnerItems({ ids: [moveFileId], destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null, pickerRootId })
       reindexAfterMove([moveFileId], destinationId)
       showToast({ icon: 'folder', title: 'File moved', description: 'Moved successfully.' })
       fetchFiles()
@@ -248,7 +248,10 @@ export function useDriveActions(params: DriveActionsParams) {
     // folders that may not be in the current `files` list / decryptedNames map).
     const targetName = knownFolderName || displayName(targetFolder) || 'folder'
     try {
-      await moveOwnerItems({ ids, destinationId: targetFolder.id, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null })
+      // A drop onto a row shows a destination, not a picker answer for its
+      // root: no answer, so no wraps are published (L15 (b)3). The items stay
+      // shareable through "Share N items".
+      await moveOwnerItems({ ids, destinationId: targetFolder.id, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null, pickerRootId: null })
       reindexAfterMove(ids, targetFolder.id)
       if (ids.length === 1) {
         const movedFile = files.find((f) => f.id === ids[0])
@@ -324,11 +327,11 @@ export function useDriveActions(params: DriveActionsParams) {
     })
   }
 
-  async function handleBulkMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy') {
+  async function handleBulkMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy', pickerRootId: string | null) {
     const ids = bulkMoveIds
     const count = ids.length
     try {
-      await moveOwnerItems({ ids, destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null })
+      await moveOwnerItems({ ids, destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null, pickerRootId })
       reindexAfterMove(ids, destinationId)
       showToast({ icon: 'folder', title: 'Files moved', description: `${count} file${count !== 1 ? 's' : ''} moved successfully.` })
       fetchFiles()

@@ -9,14 +9,17 @@ import { createNamedOwnerFolder, folderCreateFailureToast } from '../lib/new-fol
 import { useToast } from './toast'
 import { useKeys } from '../lib/key-context'
 import { decryptFileMetadata, encryptFilename } from '../lib/crypto'
-import { pickerFolderLabel } from '../lib/display-markers'
+import { isSharedRootById, pickerFolderLabel } from '../lib/display-markers'
 
 interface MoveModalProps {
   open: boolean
   onClose: () => void
   items: { id: string; name: string; isFolder: boolean }[]
   mode?: 'move' | 'copy'
-  onConfirm: (destinationId: string | null, mode: 'move' | 'copy') => void
+  /** `pickerRootId` is the shared root the picker showed for the destination
+   * (or null when it showed none): L15 (b)3's answer, and the only thing that
+   * lets the move publish wraps. */
+  onConfirm: (destinationId: string | null, mode: 'move' | 'copy', pickerRootId: string | null) => void
 }
 
 interface FolderNode {
@@ -158,7 +161,14 @@ export function MoveModal({
 
   const handleConfirm = (actionMode: 'move' | 'copy') => {
     const destinationId = selectedId ?? breadcrumbs[breadcrumbs.length - 1]?.id ?? null
-    onConfirm(destinationId, actionMode)
+    // L15 (b)3: the shared root this picker actually showed for the chosen
+    // destination — the selected row or any folder on the current breadcrumb
+    // trail. Its absence is an answer too: nothing is sealed under a guess.
+    const pickerRootId =
+      [selectedId, ...breadcrumbs.map((crumb) => crumb.id).reverse()].find(
+        (id): id is string => !!id && isSharedRootById(id),
+      ) ?? null
+    onConfirm(destinationId, actionMode, pickerRootId)
     onClose()
   }
 

@@ -102,11 +102,11 @@ export function Recent() {
     }
   }
 
-  async function handleMoveConfirm(destinationId: string | null) {
+  async function handleMoveConfirm(destinationId: string | null, _mode?: 'move' | 'copy', pickerRootId: string | null = null) {
     if (!moveFileId) return
     try {
       // rv-web198c P2-5: a move into a shared folder publishes its wraps.
-      await moveOwnerItems({ ids: [moveFileId], destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: null })
+      await moveOwnerItems({ ids: [moveFileId], destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: null, pickerRootId })
       showToast({ icon: 'folder', title: 'File moved', description: 'Moved successfully.' })
       fetchFiles()
     } catch (err) {

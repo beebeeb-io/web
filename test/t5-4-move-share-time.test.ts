@@ -132,7 +132,6 @@ beforeEach(() => {
 
 describe('T5.4: moveOwnerItems publishes only what the picker showed and the resolver proves', () => {
   test('a move into R the picker showed seals the resolver key of each moved row', async () => {
-    markCustodySeen(ROOT)
     await moveOwnerItems({
       ids: [FILE_ID, FOLDER_ID],
       destinationId: DEST,
@@ -142,6 +141,7 @@ describe('T5.4: moveOwnerItems publishes only what the picker showed and the res
       ],
       masterKey: MASTER,
       viewerId: 'owner-user',
+      pickerRootId: ROOT,
     })
     const keys = published.flatMap((p) => p.keys)
     expect(published.every((p) => p.root === ROOT)).toBe(true)
@@ -160,6 +160,21 @@ describe('T5.4: moveOwnerItems publishes only what the picker showed and the res
   })
 
   test('no custody proof for R (the picker never showed it): the move publishes nothing', async () => {
+    await moveOwnerItems({
+      ids: [FILE_ID],
+      destinationId: DEST,
+      rows: [{ id: FILE_ID, name_encrypted: nameOf(FILE_ID) }],
+      masterKey: MASTER,
+      viewerId: 'owner-user',
+    })
+    expect(published).toEqual([])
+  })
+
+  test('a custody record for R is not a picker answer: no answer still publishes nothing', async () => {
+    // The server can claim any parent for DEST; a local custody record says
+    // only that this client has seen R, not that the move picker showed it.
+    // Without the picker's own answer nothing may be sealed under R.
+    markCustodySeen(ROOT)
     await moveOwnerItems({
       ids: [FILE_ID],
       destinationId: DEST,
@@ -194,25 +209,25 @@ describe('T5.4: moveOwnerItems publishes only what the picker showed and the res
   })
 
   test('a plaintext-named row is shown but never sealed under a guessed derived key', async () => {
-    markCustodySeen(ROOT)
     await moveOwnerItems({
       ids: [FILE_ID],
       destinationId: DEST,
       rows: [{ id: FILE_ID, name_encrypted: 'notes.pdf' }],
       masterKey: MASTER,
       viewerId: 'owner-user',
+      pickerRootId: ROOT,
     })
     expect(published).toEqual([])
   })
 
   test('a row whose name does not authenticate under its derived key is skipped, not guessed', async () => {
-    markCustodySeen(ROOT)
     await moveOwnerItems({
       ids: [FILE_ID],
       destinationId: DEST,
       rows: [{ id: FILE_ID, name_encrypted: nameOf(FOLDER_ID) }],
       masterKey: MASTER,
       viewerId: 'owner-user',
+      pickerRootId: ROOT,
     })
     expect(published).toEqual([])
   })
