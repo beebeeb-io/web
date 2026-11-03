@@ -118,6 +118,12 @@ export function createContentOps(wasm: ContentWasm) {
     fileId: string
     /** The authenticated pin the decryptor was created under. */
     pin: ContentPin
+    /**
+     * §15/2326: set when this decryptor came from a request row's reader. Its
+     * random-access reader then opens frames THROUGH the request reader and
+     * holds no key; `requestReaderFree` owns the reader's lifetime.
+     */
+    requestReaderHandle?: number
   }
   interface LiveReader {
     key: Uint8Array
@@ -125,6 +131,8 @@ export function createContentOps(wasm: ContentWasm) {
     versionId: Uint8Array
     /** 1 = v1, 2 = v2. */
     format: number
+    /** §15/2326: frames open through this request reader; no key is held. */
+    requestReaderHandle?: number
   }
   const liveDecryptors = new Map<number, LiveDecryptor>()
   const liveReaders = new Map<number, LiveReader>()
@@ -146,6 +154,24 @@ export function createContentOps(wasm: ContentWasm) {
 
   function wipeKey(key: Uint8Array | undefined): void {
     key?.fill(0)
+  }
+
+  /** Open ONE frame through a registered request reader; no key involved. */
+  function openRequestFrame(
+    readerHandle: number,
+    versionId: Uint8Array,
+    index: number,
+    isLast: boolean,
+    format: number,
+    frame: Uint8Array,
+  ): Uint8Array {
+    const entry = liveRequestReaders.get(readerHandle)
+    if (!entry) throw new Error(`No live request reader for handle ${readerHandle}`)
+    try {
+      return entry.openFrame(versionId, index, isLast, format, frame) as Uint8Array
+    } catch (err) {
+      throw chunkAuthError(err)
+    }
   }
 
   return {
@@ -233,10 +259,11 @@ export function createContentOps(wasm: ContentWasm) {
       // page whose reply was lost can still close it by a handle it knows.
       const handle = decryptorHandle
       liveReaders.set(handle, {
-        key: entry.key,
+        key: entry.requestReaderHandle === undefined ? entry.key : new Uint8Array(0),
         fileId: entry.fileId,
         versionId,
         format,
+        requestReaderHandle: entry.requestReaderHandle,
       })
       // The key copy moves to the reader; keep the decryptor entry from wiping
       // it on dispose.
@@ -257,6 +284,9 @@ export function createContentOps(wasm: ContentWasm) {
      */
     openChunkAt(handle: number, index: number, isLast: boolean, frame: Uint8Array): Uint8Array {
       const r = reader(handle)
+      if (r.requestReaderHandle !== undefined) {
+        return openRequestFrame(r.requestReaderHandle, r.versionId, index, isLast, r.format, frame)
+      }
       try {
         return wasm.decrypt_chunk_frame(
           r.key,
@@ -313,6 +343,7 @@ export function createContentOps(wasm: ContentWasm) {
         key: new Uint8Array(0),
         fileId: reader.fileId,
         pin: toContentPin(reader.chunkFormat),
+        requestReaderHandle: readerHandle,
       })
       return handle
     },
@@ -326,13 +357,7 @@ export function createContentOps(wasm: ContentWasm) {
       format: number,
       frame: Uint8Array,
     ): Uint8Array {
-      const reader = liveRequestReaders.get(readerHandle)
-      if (!reader) throw new Error(`No live request reader for handle ${readerHandle}`)
-      try {
-        return reader.openFrame(versionId, index, isLast, format, frame) as Uint8Array
-      } catch (err) {
-        throw chunkAuthError(err)
-      }
+      return openRequestFrame(readerHandle, versionId, index, isLast, format, frame)
     },
 
     /** Free a request reader. Idempotent. */

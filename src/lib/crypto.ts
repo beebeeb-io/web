@@ -473,7 +473,7 @@ export class ChunkReader {
  * reader; this proxy is then consumed.
  */
 export async function createChunkReader(
-  decryptor: StreamingDecryptor,
+  decryptor: { handle: number; release?(): void },
   port: ChunkReaderPort = workerChunkReaderPort,
 ): Promise<ChunkReader> {
   if (decryptor.handle < 0) throw new Error('decryptor is not live')
@@ -492,7 +492,7 @@ export async function createChunkReader(
     }
     throw err
   }
-  decryptor.release()
+  decryptor.release?.()
   return new ChunkReader(handle, port)
 }
 

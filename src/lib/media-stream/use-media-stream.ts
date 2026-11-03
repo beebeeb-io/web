@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DriveFile } from '../api'
 import { openFileMetadata } from '../encrypted-download'
+import type { ContentKey } from '../request-row'
 import { apiChunkSource, realClock, type ChunkFrameSource } from './source'
 import { openStreamSession, type StreamSession } from './session'
 import { createStreamBridge, type BridgeEnv, type PortLike, type StreamBridge } from './sw-bridge'
@@ -55,7 +56,7 @@ export interface UseMediaStreamArgs {
   isUnlocked: boolean
   /** The decrypted MIME (falling back to the server field). */
   mime: string | null
-  resolveFileKey: () => Promise<Uint8Array>
+  resolveFileKey: () => Promise<ContentKey>
   /** Test seam; production resolves the API-backed source. */
   sourceFactory?: (fileId: string, objectVersionId: string) => ChunkFrameSource
   /** Test seam; production opens the PR-A session (`openStreamSession`). */

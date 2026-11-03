@@ -290,11 +290,10 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   const loadInputsRef = useRef({ file, name, effectiveMime, resolveFileKey })
   loadInputsRef.current = { file, name, effectiveMime, resolveFileKey }
 
-  /** The streaming reader's key resolver: the same lookup, key only. */
-  const resolveStreamKey = useCallback(
-    async () => contentKeyBytes((await resolveFileKey()).key),
-    [resolveFileKey],
-  )
+  /** The streaming reader's key resolver: the same lookup, key only. A request
+   *  row has no raw key: its content source reaches the worker as-is and every
+   *  frame opens through the reader's `openFrame`. */
+  const resolveStreamKey = useCallback(async () => (await resolveFileKey()).key, [resolveFileKey])
 
   // LD-0001 PR-B: the streaming session (contract §4). The path is decided
   // synchronously on this render, so the whole-file effect below can never

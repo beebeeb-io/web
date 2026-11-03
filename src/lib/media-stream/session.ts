@@ -24,6 +24,7 @@ import {
   type StreamingDecryptor,
 } from '../crypto'
 import type { FileContentRef } from '../encrypted-download'
+import type { ContentKey } from '../request-row'
 import { ApiError } from '../api'
 import {
   CHUNK_OVERHEAD,
@@ -90,7 +91,7 @@ export interface StreamReader {
 }
 
 export interface StreamHeadArgs {
-  fileKey: Uint8Array
+  fileKey: ContentKey
   fileId: string
   pin: ContentPin
   headFrame: Uint8Array
@@ -136,7 +137,7 @@ export interface StreamObserver {
 
 export interface OpenStreamOptions {
   fileId: string
-  fileKey: Uint8Array
+  fileKey: ContentKey
   /** Reserved for the SF-0002 repair path (web #204); unused until it lands. */
   masterKey?: Uint8Array
   /** From `openFileMetadata`: the file id and the authenticated content pin. */
@@ -184,8 +185,8 @@ export interface StreamSession {
  * `createChunkReader`.
  */
 export interface WorkerReaderDeps {
-  startDecryptStream(fileKey: Uint8Array, fileId: string, pin: ContentPin): Promise<StreamingDecryptor>
-  createChunkReader(decryptor: StreamingDecryptor): Promise<ChunkReader>
+  startDecryptStream(fileKey: ContentKey, fileId: string, pin: ContentPin): Promise<StreamingDecryptor>
+  createChunkReader(decryptor: { handle: number; release?(): void }): Promise<ChunkReader>
 }
 
 /**
