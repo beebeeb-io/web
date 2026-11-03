@@ -217,20 +217,20 @@ describe('rv198d N1 / contract §2: a folder with legacy rows needs the upgrade,
 describe('rv198d N2: a flag read that says off never skips a publish for a folder seen with custody', () => {
   test('control: flag on, an upload into a custody folder publishes its L7 wrap', async () => {
     custody = 'record'
-    await publishOwnerUploadKey(MASTER, ROOT, FILE_ID, CHILD_KEY)
+    await publishOwnerUploadKey(ROOT, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })
     expect(published).toEqual([FILE_ID])
   })
 
   test('flag read off, folder seen with custody: the publish throws instead of resolving with nothing sent', async () => {
     custody = 'record'; markCustodySeen(ROOT); flagOn = false
-    await expect(publishOwnerUploadKey(MASTER, ROOT, FILE_ID, CHILD_KEY)).rejects.toThrow("This folder's keys are unavailable")
+    await expect(publishOwnerUploadKey(ROOT, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })).rejects.toThrow("This folder's keys are unavailable")
     expect(published).toEqual([])
     expect(custodyCalls).toBe(0)
   })
 
-  test('flag read off, a subfolder of a folder seen with custody: also refused (the walk finds the root)', async () => {
+  test('flag read off, a subfolder of a folder seen with custody: also refused (the check finds the ancestor)', async () => {
     markCustodySeen(ROOT); flagOn = false
-    await expect(publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)).rejects.toThrow("This folder's keys are unavailable")
+    await expect(publishOwnerUploadKey(SUB, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })).rejects.toThrow("This folder's keys are unavailable")
     expect(custodyCalls).toBe(0)
   })
 
@@ -243,7 +243,7 @@ describe('rv198d N2: a flag read that says off never skips a publish for a folde
 
   test('flag off and nothing seen with custody (all of prod today): no request at all, no throw', async () => {
     flagOn = false
-    for (let i = 0; i < 3; i += 1) await publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)
+    for (let i = 0; i < 3; i += 1) await publishOwnerUploadKey(SUB, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })
     expect(custodyCalls).toBe(0)
     expect(parentCalls).toBe(0)
     expect(published).toEqual([])
@@ -388,7 +388,15 @@ describe('L7d: legacy is refused when ANY ancestor is in the set, not only the r
   test('an owner upload into SUB throws instead of skipping its publish (flag on)', async () => {
     markCustodySeen(ROOT)
     sentInvites = await subInvite()
-    await expect(publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)).rejects.toThrow("This folder's keys are unavailable")
+    // The live path: the format check that walks up past SUB finds ROOT's
+    // custody, and refuses before any proof exists, so nothing can be sealed
+    // under a key this client does not hold.
+    const { publishOrDeferOwnerUpload } = await import('../src/lib/owner-upload-key')
+    const { noteFolderClick } = await import('../src/lib/publish-anchor')
+    noteFolderClick(SUB)
+    await expect(
+      publishOrDeferOwnerUpload({ masterKey: MASTER, parentId: SUB, fileId: FILE_ID, fileKey: CHILD_KEY }),
+    ).rejects.toThrow("This folder's keys are unavailable")
     expect(published).toEqual([])
   })
 
@@ -426,7 +434,7 @@ describe('rv-web198e P3: on a write, a failed flag read aborts; it is never "off
   // under one this device has seen with custody (N2), where it fails.
   test('after a commit, an unanswered flag read with nothing seen above skips: no request, no throw', async () => {
     flagReadFails = true
-    await publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)
+    await publishOwnerUploadKey(SUB, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })
     await moveOwnerItems({ ids: [FILE_ID], destinationId: SUB, rows: [{ id: FILE_ID }], masterKey: MASTER, viewerId: null })
     expect(published).toEqual([])
     expect(custodyCalls + parentCalls).toBe(0)
@@ -435,7 +443,7 @@ describe('rv-web198e P3: on a write, a failed flag read aborts; it is never "off
   test('after a commit, an unanswered flag read under a folder seen with custody still fails', async () => {
     flagReadFails = true
     markCustodySeen(ROOT)
-    await expect(publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)).rejects.toThrow("This folder's keys are unavailable")
+    await expect(publishOwnerUploadKey(SUB, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })).rejects.toThrow("This folder's keys are unavailable")
     await expect(moveOwnerItems({ ids: [FILE_ID], destinationId: SUB, rows: [{ id: FILE_ID }], masterKey: MASTER, viewerId: null }))
       .rejects.toThrow(MOVED_BUT_UNPUBLISHED)
     expect(published).toEqual([])
@@ -444,7 +452,7 @@ describe('rv-web198e P3: on a write, a failed flag read aborts; it is never "off
   test('control: a real "off" answer is still off for writes (nothing asked, legacy invite build as on main)', async () => {
     flagOn = false
     expect(await share.custodyFolderKey(MASTER, ROOT)).toBeNull()
-    await publishOwnerUploadKey(MASTER, ROOT, FILE_ID, CHILD_KEY)
+    await publishOwnerUploadKey(ROOT, FILE_ID, CHILD_KEY, false, { rootId: ROOT, folderKey: CUSTODY_KEY })
     expect(custodyCalls).toBe(0)
   })
 

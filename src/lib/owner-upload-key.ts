@@ -12,6 +12,7 @@ import { ApiError, createFolder, getFile, listSharedFolderKeys, publishSharedFol
 import { collectAllChildItems, sealChildKey } from './folder-share-crypto'
 import { adoptForeignTreeBeforeMove, assertNoSeenCustodyAbove, folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
 import { fromBase64, zeroize } from './crypto'
+import { isSealedName } from './sealed-name'
 import { ownedItem, type KeyOrigin } from './owned-item'
 import { sharedFoldersEnabled } from './use-feature-flag'
 import { withNetworkRetry } from './net-retry'
@@ -37,21 +38,22 @@ export interface ProvenRoot {
  * L7, bound to (root, this item, file or folder).
  *
  * `proven` is the root the caller's L14 proof named, with the folder key it
- * unwrapped. When given, the seal uses it and does NOT walk the server's parent
- * chain again: that walk can name another root (a concurrent move, the 10 s
- * parent cache, a server-paced inventory page) and the wrap would be sealed
- * and published where nothing proved it belongs.
+ * unwrapped, and it is required: the seal uses it and does NOT walk the
+ * server's parent chain. That walk can name another root (a concurrent move,
+ * the 10 s parent cache, a server-paced inventory page) and the wrap would be
+ * sealed and published where nothing proved it belongs. Every caller reaches
+ * here through publishOrDeferOwnerUpload()'s proof, or with the root it pinned
+ * at enqueue (the flush), so there is no walk to fall back to.
  */
 export async function publishOwnerUploadKey(
-  masterKey: Uint8Array,
   parentId: string,
   fileId: string,
   fileKey: Uint8Array,
   isFolder = false,
-  proven?: ProvenRoot,
+  proven: ProvenRoot,
 ): Promise<void> {
   // rv-web198c P2-1: with the flag off there is nothing to publish to, and the
-  // walk below must not run (or fail) after an upload already committed.
+  // seal below must not run (or fail) after an upload already committed.
   // rv-web198d N2: except under a folder this client has seen with custody,
   // where "off" must fail loudly, never skip. This runs AFTER the write
   // committed, so an unanswered flag read reads as off here (final review P2:
@@ -61,23 +63,8 @@ export async function publishOwnerUploadKey(
     await assertNoSeenCustodyAbove(parentId)
     return
   }
-  let root: string
-  let folderKey: Uint8Array
-  let ownsFolderKey: boolean
-  if (proven) {
-    root = proven.rootId
-    folderKey = proven.folderKey
-    ownsFolderKey = false
-  } else {
-    const walked = await sharedRootFor(parentId, parentId)
-    if (!walked) return
-    if ((await folderWrapFormat(walked, parentId)) !== 'l7') return
-    const unwrapped = await folderKeyForRoot(masterKey, walked)
-    if (!unwrapped) throw new Error('The shared folder key is not available on this device.')
-    root = walked
-    folderKey = unwrapped
-    ownsFolderKey = true
-  }
+  const root = proven.rootId
+  const folderKey = proven.folderKey
   try {
     await publishSharedFolderKeys(root, [{
       file_id: fileId,
@@ -92,9 +79,6 @@ export async function publishOwnerUploadKey(
       return
     }
     throw error
-  } finally {
-    // A proven key belongs to the caller's proof; it zeroes it after the seal.
-    if (ownsFolderKey) zeroize(folderKey)
   }
 }
 
@@ -152,9 +136,11 @@ export async function createOwnerFolder(args: {
     created = landed
   }
   if (args.parentId && args.nameKey && args.masterKey) {
-    // Review F2: same L15 (b)3 rule as an owner upload. A create from a site
-    // that did not show R (an import, a drop) defers its name-key wrap; only
-    // this tab's own click trail may publish it now.
+    // Review F2: same L15 (b)3 rule as an owner upload. Only this tab's own
+    // click trail may publish the name-key wrap; a create from a site that did
+    // not show R (an import, a drop) is owner-only — nothing is sent, and
+    // nothing is queued. Only an ANCHORED create whose destination is not yet
+    // proven is deferred.
     await publishOrDeferOwnerUpload({
       masterKey: args.masterKey,
       parentId: args.parentId,
@@ -322,7 +308,7 @@ export async function publishOrDeferOwnerUpload(args: {
     if (!(await destinationProven(masterKey, parentId, root, folderKey))) {
       return deferOwnerCreate(fileId, parentId, root)
     }
-    await publishOwnerUploadKey(masterKey, parentId, fileId, fileKey, isFolder, { rootId: root, folderKey })
+    await publishOwnerUploadKey(parentId, fileId, fileKey, isFolder, { rootId: root, folderKey })
     return 'published'
   } finally {
     zeroize(folderKey)
@@ -335,11 +321,11 @@ export async function publishOrDeferOwnerUpload(args: {
  * (src/lib/drive-anchors.ts) after a folder click lands.
  *
  * Every row was anchored when it was enqueued (an unanchored create is never
- * queued). At fire time only L15 (b)2 is re-run, against the PINNED root: the
- * destination must still walk to that root, still hold an L7 format, and still
- * prove by L14. The anchor is not re-checked. The key is re-resolved through
- * core (the queue stores ids only). A row whose item is gone is dropped; any
- * other failure keeps the deferral for a later site.
+ * queued). At fire time nothing walks the parent chain again: the row's PINNED
+ * root is the one that is checked, and L15 (b)2 is re-run against it — still
+ * an L7 format, still proven by L14. The anchor is not re-checked. The key is
+ * re-resolved through core (the queue stores ids only). A row whose item is
+ * gone is dropped; any other failure keeps the deferral for a later site.
  */
 export async function flushDeferredOwnerPublishes(masterKey: Uint8Array): Promise<number> {
   const store = localStorageQueue()
@@ -370,7 +356,7 @@ export async function flushDeferredOwnerPublishes(masterKey: Uint8Array): Promis
           nameEncrypted: file.name_encrypted,
         })
         try {
-          await publishOwnerUploadKey(masterKey, row.parentId, row.id, resolved.key, !!file.is_folder, {
+          await publishOwnerUploadKey(row.parentId, row.id, resolved.key, !!file.is_folder, {
             rootId: root,
             folderKey,
           })
@@ -417,7 +403,7 @@ async function destinationProven(
     const row = await getFile(parentId)
     // Core's own rule (resolve_owned_key): a sealed name is a `{` envelope; a
     // plaintext name has no owner key convention to prove it with.
-    if (!row.is_folder || !row.name_encrypted.startsWith('{')) return false
+    if (!row.is_folder || !isSealedName(row.name_encrypted)) return false
     let wrapped: string | undefined
     let cursor: string | null = null
     do {

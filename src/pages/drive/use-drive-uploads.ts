@@ -615,8 +615,9 @@ export function useDriveUploads(params: DriveUploadsParams) {
       })
       const uploadedFileId = uploadedFile.id
       // L15 (2275): publish only from an anchored call site — this tab's own
-      // click trail must contain the destination; otherwise the key is
-      // deferred (localStorage) and no wrap is sent on trust of parent_id.
+      // click trail must contain the destination; otherwise nothing is sent
+      // and nothing is queued (the item stays owner-only). Only an anchored
+      // create whose destination is not yet proven is deferred.
       if (identity && currentParentId) {
         await publishOrDeferOwnerUpload({
           masterKey: getMasterKey(),

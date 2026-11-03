@@ -167,7 +167,7 @@ describe('P2-1: with the flag OFF, owner uploads and folder creates never ask fo
     flagOn = false
     custodyStatus = 500 // even a failing custody route cannot fail the committed upload
     sentInvites = await legacyInvite()
-    for (let i = 0; i < 5; i++) await publishOwnerUploadKey(MASTER, ROOT, FILE_ID, FILE_KEY)
+    for (let i = 0; i < 5; i++) await publishOwnerUploadKey(ROOT, FILE_ID, FILE_KEY, false, { rootId: ROOT, folderKey: FOLDER_KEY })
     await createOwnerFolder({ nameEncrypted: '{}', parentId: ROOT, folderId: FILE_ID, nameKey: FILE_KEY, masterKey: MASTER })
     expect(custodyCalls).toBe(0)
   })
@@ -180,10 +180,10 @@ describe('P2-1: with the flag OFF, owner uploads and folder creates never ask fo
     expect(custodyCalls).toBe(0)
   })
 
-  test('with the flag ON a definitive legacy answer is cached: 5 publishes make 1 custody request', async () => {
+  test('with the flag ON a definitive legacy answer is cached: 5 root lookups make 1 custody request', async () => {
     custodyStatus = 404
     sentInvites = await legacyInvite()
-    for (let i = 0; i < 5; i++) await publishOwnerUploadKey(MASTER, ROOT, FILE_ID, FILE_KEY)
+    for (let i = 0; i < 5; i++) await adoption.sharedRootFor(ROOT, ROOT)
     expect(custodyCalls).toBe(1)
   })
 })

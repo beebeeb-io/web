@@ -59,6 +59,7 @@ import { sharedFoldersEnabled } from './use-feature-flag'
 import { forgetSharedFolderSession, foreignRowKey, folderKeyForRoot, needsOwnership, openOwnerFile } from './owner-adoption'
 import { createSharedFolderKeyCache } from './shared-folder-key-cache'
 import { activeFolderInvites } from './folder-share-crypto'
+import { isSealedName } from './sealed-name'
 import { decryptLinkLabel } from './link-label'
 import { useAuth } from './auth-context'
 import { isImpersonationSessionActive, shouldReconcileLock } from './impersonation-context'
@@ -1073,7 +1074,7 @@ export async function resolveOwnerKeyForRead(
     fetchFrames?: (file: DriveFile) => Promise<Uint8Array[]>
   } = {},
 ): Promise<Uint8Array> {
-  const plaintextName = !file.name_encrypted.trimStart().startsWith('{')
+  const plaintextName = !isSealedName(file.name_encrypted)
   if (sharedKey || file.is_folder || !plaintextName || needsOwnership(file, viewerId)) {
     return resolveOwnerKeyForFile(masterKey, file, viewerId, sharedKey, deps.sharedFoldersOn)
   }
