@@ -16,10 +16,10 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { loadWasm } from './helpers/wasm-crypto-mirror'
+import { hexToBytes, loadVectors, loadWasm } from './helpers/wasm-crypto-mirror'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { FakeChunkSource, FakeClock } from './helpers/media-stream-fixtures'
-import { createContentOps } from '../src/lib/content-crypto'
+import { createContentOps, isChunkAuthenticationError } from '../src/lib/content-crypto'
 import { openFileMetadata } from '../src/lib/encrypted-download'
 import { resolveRequestRowWith } from '../src/lib/request-row'
 import { toBase64 } from '../src/lib/crypto/helpers'
@@ -252,5 +252,125 @@ describe('2326 P2-1: the real request-row source streams through the worker port
     expect(body).toContain('resolveFileKey')
     expect(body).toContain('.key')
     expect(body).not.toContain('contentKeyBytes')
+  })
+})
+
+/**
+ * 2326 review2 P3-1: the stream test also has to prove the v2 (pin 2) path.
+ *
+ * The v1 fixture above binds nothing in its AAD, so a production regression
+ * that hard-codes `format: 1` or passes an empty `versionId` to the reader's
+ * `openFrame` would still pass every v1 assertion. This fixture uses core's
+ * `chunk_v2_stream` vector (v2 frames under the file key's v2 subkey, AAD
+ * bound to the row's id, the frame's index/is_last and the version id), sealed
+ * to a request whose recorded pin is 2.
+ */
+describe('2326 P3-1: a pin-2 request row streams v2 frames and refuses a reorder/truncation', () => {
+  const vectors = loadVectors()
+  const v2 = vectors.chunk_v2_stream as unknown as {
+    file_key_hex: string
+    file_id: string
+    version_id_hex: string
+    chunk_count: number
+    chunk_size: number
+    plaintext_hex: string
+    frames: Array<{ frame_hex: string; index: number | string; is_last: boolean | string }>
+  }
+  const V2_CONTENT = hexToBytes(v2.file_key_hex)
+  const V2_FILE_ID = v2.file_id
+  const V2_FRAMES = v2.frames.map((f) => hexToBytes(f.frame_hex))
+  const V2_PLAIN = hexToBytes(v2.plaintext_hex)
+
+  function v2Row() {
+    const sealedV2 = wasm.seal_to_request(rPub, EMPTY, V2_CONTENT) as {
+      e_pub: Uint8Array
+      wrapped_key: Uint8Array
+    }
+    const nameEncrypted = wasm.encrypt_name_for(
+      V2_CONTENT,
+      'vector-v2.pdf',
+      'application/pdf',
+      2,
+    ) as string
+    return {
+      id: V2_FILE_ID,
+      name_encrypted: nameEncrypted,
+      file_request_id: REQUEST_ID,
+      sender_ephemeral_pubkey: toBase64(sealedV2.e_pub),
+      wrapped_content_key: toBase64(sealedV2.wrapped_key),
+    }
+  }
+
+  test('the round-trip opens every v2 frame at its own index, format 2', async () => {
+    const resolver = createRequestRowResolver()
+    const resolved = await resolver.resolveRow(v2Row(), MASTER)
+    // Core reports the row's recorded pin from the sealed name.
+    expect(resolved.chunkFormat).toBe(2)
+
+    const meta = await openFileMetadata(V2_FILE_ID, resolved.content, 'vector-v2.pdf')
+    expect(meta.content).toEqual({ fileId: V2_FILE_ID, pin: 2 })
+
+    // The reader is built from chunk 0 (whose authenticated version id and
+    // format it remembers) — exactly the production path.
+    const stream = await resolved.content.startStream()
+    const head = await stream.pushFrame(V2_FRAMES[0].slice())
+    expect(Array.from(head)).toEqual(Array.from(V2_PLAIN.slice(0, v2.chunk_size)))
+
+    const reader = ops.createChunkReader(stream.handle)
+    const out = new Uint8Array(V2_PLAIN.length)
+    out.set(head, 0)
+    for (let index = 1; index < V2_FRAMES.length; index++) {
+      const plain = ops.openChunkAt(
+        reader,
+        index,
+        index === V2_FRAMES.length - 1,
+        V2_FRAMES[index].slice(),
+      )
+      out.set(plain, index * v2.chunk_size)
+    }
+    expect(Buffer.from(out).toString('hex')).toBe(Buffer.from(V2_PLAIN).toString('hex'))
+    ops.closeChunkReader(reader)
+    await resolved.content.close()
+    resolver.clear()
+  })
+
+  test('a reordered frame is an auth error, not plaintext from the wrong index', async () => {
+    const resolver = createRequestRowResolver()
+    const resolved = await resolver.resolveRow(v2Row(), MASTER)
+    const stream = await resolved.content.startStream()
+    await stream.pushFrame(V2_FRAMES[0].slice())
+    const reader = ops.createChunkReader(stream.handle)
+    let err: unknown = null
+    try {
+      // Frame 1 (index 1, not last) served at index 0.
+      ops.openChunkAt(reader, 0, false, V2_FRAMES[1].slice())
+    } catch (e) {
+      err = e
+    }
+    expect(isChunkAuthenticationError(err)).toBe(true)
+    ops.closeChunkReader(reader)
+    await resolved.content.close()
+    resolver.clear()
+  })
+
+  test('a truncated tail is an auth error, never short plaintext', async () => {
+    const resolver = createRequestRowResolver()
+    const resolved = await resolver.resolveRow(v2Row(), MASTER)
+    const stream = await resolved.content.startStream()
+    const head = await stream.pushFrame(V2_FRAMES[0].slice())
+    expect(head.length).toBe(v2.chunk_size)
+    const reader = ops.createChunkReader(stream.handle)
+    let err: unknown = null
+    try {
+      // The server declares two chunks, so the middle frame is opened as the
+      // LAST one: its v2 AAD says is_last=false and it must not open.
+      ops.openChunkAt(reader, 1, true, V2_FRAMES[1].slice())
+    } catch (e) {
+      err = e
+    }
+    expect(isChunkAuthenticationError(err)).toBe(true)
+    ops.closeChunkReader(reader)
+    await resolved.content.close()
+    resolver.clear()
   })
 })
