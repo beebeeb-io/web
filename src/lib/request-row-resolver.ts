@@ -94,7 +94,11 @@ const workerEngine: RequestRowEngine = {
       mimeType: resolved.mimeType,
       async startStream() {
         const handle = await requestReaderDecryptor(resolved.handle)
+        // 2326 review P2-1: the handle is what `createChunkReader` hands to
+        // the worker to become the random-access reader. Without it the
+        // player asked for `decryptor(undefined)` and showed its error card.
         return {
+          handle,
           pushFrame: (frame) => decryptorPushFrame(handle, frame),
           finish: () => decryptorFinish(handle),
           dispose: () => decryptorDispose(handle),

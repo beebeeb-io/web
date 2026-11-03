@@ -398,6 +398,20 @@ export class StreamingDecryptor {
 }
 
 /**
+ * What a stream needs from a decryptor: the worker handle that becomes the
+ * random-access reader, and the sequential calls up to that point. A request
+ * row's source returns this too — `handle` is required, never assumed (2326
+ * review P2-1: a source without one streamed nothing in production).
+ */
+export interface StreamDecryptor {
+  readonly handle: number
+  pushFrame(frame: Uint8Array): Promise<Uint8Array>
+  finish(): Promise<DecryptSummary>
+  dispose(): Promise<void>
+  release?(): void
+}
+
+/**
  * Start reading one file's content. `fileId` is the id the file was uploaded
  * under (v2 frames bind it); `pin` comes from `readFileMetadata` of that file.
  *
@@ -409,9 +423,9 @@ export async function startDecryptStream(
   fileKey: ContentKey,
   fileId: string,
   pin: ContentPin,
-): Promise<StreamingDecryptor> {
+): Promise<StreamDecryptor> {
   if (!(fileKey instanceof Uint8Array)) {
-    return (await fileKey.startStream()) as unknown as StreamingDecryptor
+    return await fileKey.startStream()
   }
   const handle = await withProxy((p) => p.createDecryptor(fileKey, fileId, pin))
   return new StreamingDecryptor(handle)

@@ -170,9 +170,15 @@ export function mintGuestItemIdWith(wasm: Pick<typeof Wasm, 'mintGuestItemId'>):
 
 /**
  * The decryptor a `RequestContentSource` hands out. Structurally the same as a
- * `StreamingDecryptor`; the worker-backed source returns the real proxy.
+ * `StreamingDecryptor`, including the worker handle: `createChunkReader` needs
+ * it to ask the worker to build the random-access reader (2326 review P2-1 —
+ * a source that omitted it streamed no frame in production). The in-process
+ * source has no worker handle and reports `-1`, which `createChunkReader`
+ * refuses.
  */
 export interface RequestDecryptor {
+  /** The crypto worker's decryptor handle (`-1` for the in-process source). */
+  handle: number
   pushFrame(frame: Uint8Array): Promise<Uint8Array>
   finish(): Promise<DecryptSummary>
   dispose(): Promise<void>
@@ -274,6 +280,9 @@ export function rawRequestContentSource(row: RequestRowResolution): RequestConte
     async startStream() {
       const d = row.content.decryptor()
       return {
+        // In process there is no worker decryptor handle. `-1` makes the
+        // random-access path refuse instead of asking a worker for it.
+        handle: -1,
         pushFrame: async (frame) => d.pushFrame(frame) as Uint8Array,
         finish: async () => d.finish() as unknown as DecryptSummary,
         dispose: async () => {

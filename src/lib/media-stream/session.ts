@@ -17,12 +17,7 @@
  * `MessagePort`, no component. Keys never leave this module or the worker.
  */
 import { isChunkAuthenticationError, type ContentPin } from '../content-crypto'
-import {
-  startDecryptStream,
-  createChunkReader,
-  type ChunkReader,
-  type StreamingDecryptor,
-} from '../crypto'
+import { startDecryptStream, createChunkReader, type ChunkReader, type StreamDecryptor } from '../crypto'
 import type { FileContentRef } from '../encrypted-download'
 import type { ContentKey } from '../request-row'
 import { ApiError } from '../api'
@@ -185,7 +180,7 @@ export interface StreamSession {
  * `createChunkReader`.
  */
 export interface WorkerReaderDeps {
-  startDecryptStream(fileKey: ContentKey, fileId: string, pin: ContentPin): Promise<StreamingDecryptor>
+  startDecryptStream(fileKey: ContentKey, fileId: string, pin: ContentPin): Promise<StreamDecryptor>
   createChunkReader(decryptor: { handle: number; release?(): void }): Promise<ChunkReader>
 }
 
@@ -209,7 +204,7 @@ export function createWorkerReaderFactory(deps: WorkerReaderDeps): StreamReaderF
       if (!repair) throw err
       const repaired = await repair(headFrame.slice())
       if (!repaired) throw err
-      let retry: StreamingDecryptor | null = null
+      let retry: StreamDecryptor | null = null
       try {
         retry = await deps.startDecryptStream(repaired, fileId, pin)
         headPlaintext = await retry.pushFrame(headFrame.slice())
