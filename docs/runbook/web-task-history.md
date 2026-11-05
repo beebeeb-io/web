@@ -311,6 +311,13 @@ The full rules live in the workspace `CLAUDE.md` → "How we work" (also summari
   (real exports spread under the overrides, restored after the file). `bun run test:order`
   (`scripts/test-order-guard.sh`, a CI step) runs the suite reversed, shuffled (`--randomize`, seed
   printed; replay with `TEST_ORDER_SEED=<n>`) and every file alone, and fails on a raw `mock.module`.
+- **One beebeeb-wasm instance per test process (LD-0079, 2026-11-05):** five src modules call
+  wasm-bindgen's `init()` at import, and `init()` checks for an instance only before its fetch, so one
+  in flight when a test's `initSync` ran landed as a second instance; a class handle made on the first
+  was freed on the second ("RuntimeError: Out of bounds memory access", 0 tests run). It hit 2326 run
+  alone on the ubuntu-26.04 runners only. `test/helpers/wasm-preload.ts` is the FIRST preload and makes
+  the instance before anything else; `test/ld-0079-one-wasm-instance.test.ts` pins that. A red
+  `test:order` run now prints its log's unhandled-error blocks and last 40 lines.
 - **Sign-up rate limit in local e2e (task 1425, 2026-09-17):** `BB_RATE_LIMIT_DISABLED=1` on the API
   process now also lifts the `SignupLimiter` (3 sign-ups/hour/IP), not just the generic per-IP/user
   middleware — several sign-up specs can run back-to-back against one dev API without hitting `429`.
