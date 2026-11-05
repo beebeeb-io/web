@@ -41,6 +41,37 @@ RED=0
 red() { echo "RED  $*"; RED=1; }
 ok() { echo "ok   $*"; }
 
+# A red run must print WHY it is red: the log is on the runner and is gone once
+# the job ends. LD-0079: an isolated run went red with "1 errors" and the grep
+# below matched nothing, because bun prints a thrown TypeError / RangeError /
+# WebAssembly.* error under its own name, not "error:". So a red run prints the
+# matching lines, then every "# Unhandled error" block bun wrote (the cause of
+# an error count), then the tail of the log; all with ANSI codes stripped.
+CAUSE_PATTERN='^\(fail\)|^error:|^[A-Za-z.]*Error:|SyntaxError|Export named|not found in'
+TAIL_LINES="${TEST_ORDER_TAIL_LINES:-40}"
+ESC="$(printf '\033')"
+
+# plain <log>: the log without ANSI escape codes or carriage returns.
+plain() { LC_ALL=C sed -e "s|${ESC}\[[0-9;?]*[ -/]*[@-~]||g" -e 's|\r$||' "$1"; }
+
+# show_cause <log> <max matching lines> <max error-block lines>
+show_cause() {
+  local log="$1" max_match="$2" max_block="$3" blocks
+  plain "$log" | command grep -aE "$CAUSE_PATTERN" | head -n "$max_match" | sed 's/^/       /'
+  # bun frames each error between tests (a throw at module load is one) as
+  # "# Unhandled error between tests", a dashed rule, the error, a dashed rule.
+  blocks="$(plain "$log" | awk '
+    /^# Unhandled error/ { inside = 1; rules = 0 }
+    inside { print; if ($0 ~ /^-+$/ && ++rules == 2) inside = 0 }
+  ')"
+  if [ -n "$blocks" ]; then
+    echo "       ── unhandled errors in $log ──"
+    printf '%s\n' "$blocks" | head -n "$max_block" | sed 's/^/       | /'
+  fi
+  echo "       ── last $TAIL_LINES lines of $log ──"
+  plain "$log" | tail -n "$TAIL_LINES" | sed 's/^/       | /'
+}
+
 # The ONLY test allowed to skip: 1581's full-precompress determinism case needs
 # `brotli`, which a minimal bun image may not ship. Declared by file + exact
 # test name, with the reason. Anything else that skips is RED.
@@ -154,7 +185,7 @@ check_run() {
   if [ "$files" != "$want_files" ] || [ "$ran_ok" != "$ran" ] || [ "$fail" != 0 ] || [ "$errs" != 0 ] \
      || { [ -n "$want_total" ] && [ "$ran" != "$want_total" ]; }; then
     red "$label: $pass pass / $fail fail / $errs errors / $skip skip, $ran tests across $files files (want ${want_total:-all} pass across $want_files files) — log $log"
-    command grep -aE '^\(fail\)|^error:|Export named|not found in' "$log" | head -15 | sed 's/^/       /'
+    show_cause "$log" 15 120
   else
     ok "$label: $pass pass / 0 fail across $files files$skip_note"
     LAST_OK=1
@@ -190,7 +221,7 @@ else
     check_skips "isolated: $f" "$xml" "$skip"
     if [ "$ran" = x ] || [ $((pass + skip)) != "$ran" ] || [ "$fail" != 0 ] || [ "$errs" != 0 ] || [ "$files" != 1 ]; then
       red "isolated: $f — $pass pass / $fail fail / $errs errors / $skip skip — log $log"
-      command grep -aE '^\(fail\)|^error:|SyntaxError|Export named|not found in' "$log" | head -5 | sed 's/^/       /'
+      show_cause "$log" 5 60
       bad=$((bad + 1))
     else
       sum=$((sum + ran))
