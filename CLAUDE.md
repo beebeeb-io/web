@@ -54,6 +54,8 @@ test/ (bun test, KAT vectors)   e2e/ (Playwright)   scripts/ (test-order-guard, 
 - **`@beebeeb/shared` is edited here** (`packages/shared/src/`), then `make sync-shared`; never edit the workspace-root or admin mirrors.
 - **Never call `mock.module` directly** (process-global, `mock.restore()` does not undo it): use `mockModuleScoped()` from
   `test/helpers/scoped-module-mock.ts`. Tests must not depend on file order; `test:order` fails on a raw `mock.module`.
+- **beebeeb-wasm in tests:** `test/helpers/wasm-preload.ts` must stay the FIRST bunfig preload; it makes the one instance per
+  process before any import-time `init()` can make a second that replaces it (LD-0079; `loadWasm()` reuses it).
 - **Local e2e sign-ups:** run the API with `BB_RATE_LIMIT_DISABLED=1` or the 3 sign-ups/hour/IP limiter blocks back-to-back specs.
 - **Provenance headers:** the shared `request()` sends `X-Beebeeb-Client: web` + version after `setClientInfo('web', __APP_VERSION__)`;
   the raw-`fetch()` chunk PUT adds them by hand via `provenanceHeaders()`. Admin does not call `setClientInfo`.

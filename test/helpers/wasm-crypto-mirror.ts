@@ -25,18 +25,15 @@ import { createContentOps, type ContentOps, type ContentPin } from '../../src/li
 import type { DecryptorPort, ResolveOwnedItemArgs, StreamingDecryptor } from '../../src/lib/crypto'
 import { decodeEnvelope, encodeEnvelope } from '../../src/lib/metadata-envelope'
 import { mockModuleScoped } from './scoped-module-mock'
+import { loadCommittedWasm } from './wasm-preload'
 
-let initialised = false
-
-/** Initialise the committed WASM build once per process and return the module. */
+/**
+ * The committed WASM build, initialised. The instance is made once per process
+ * by the test preload (`wasm-preload.ts`, LD-0079), before any module's
+ * import-time `init()`; this only makes sure of it and returns the module.
+ */
 export function loadWasm(): typeof wasm {
-  if (!initialised) {
-    const wasmPath = fileURLToPath(
-      new URL('../../packages/beebeeb-wasm/beebeeb_wasm_bg.wasm', import.meta.url),
-    )
-    wasm.initSync({ module: readFileSync(wasmPath) })
-    initialised = true
-  }
+  loadCommittedWasm()
   return wasm
 }
 
