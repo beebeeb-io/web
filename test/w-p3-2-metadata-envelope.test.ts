@@ -13,11 +13,12 @@
 //
 // Second half: the REAL `serializeEncryptedBlob`/`parseEncryptedBlob` from
 // `lib/crypto.ts`, with only `withProxy` stubbed to a worker that runs the
-// committed WASM build (the worker itself cannot load under bun test). Against
-// the old local writer this is RED (it emitted
-// `{"cipher_suite":"V1Aes256Gcm","nonce":[…],"ciphertext":[…]}`); against
-// core's writer it is GREEN. A name written by the old writer still opens:
-// only the writer changed, the reader always accepted both.
+// committed WASM build (the worker itself cannot load under bun test). The
+// reader is core's. The writer is NOT core's encoder (LD-0071): the server's
+// name validator refuses core's base64 form with a 400, so web writes
+// `{"cipher_suite":"V1Aes256Gcm","nonce":[…],"ciphertext":[…]}` again, the form
+// CLI and mobile write (LD-0072 decides the one canonical form). A name in
+// either form opens: the reader always accepted both.
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -68,7 +69,7 @@ interface DecodeCase {
 }
 
 describe('W-P3-2 metadata envelope from core', () => {
-  it('core envelope vector: every stored form decodes, the writer is canonical', async () => {
+  it('core envelope vector: every stored form decodes; web writes the server form', async () => {
     const decode: DecodeCase[] = [
       {
         id: 'envelope_canonical_present',
@@ -137,13 +138,13 @@ describe('W-P3-2 metadata envelope from core', () => {
 
     const nonce = hexToBytes(NONCE_HEX)
     const ciphertext = hexToBytes(CIPHERTEXT_HEX)
-    // Both encode cases: the writer is frozen to the canonical form whether or
-    // not the caller names a suite; it never writes `cipher_suite`.
+    // Core's encoder is frozen to its canonical form and never writes
+    // `cipher_suite`; web's writer emits the server's form instead (LD-0071).
     expect(wasm.encodeMetadataEnvelope(nonce, ciphertext)).toBe(CANONICAL)
-    expect(await serializeEncryptedBlob(nonce, ciphertext)).toBe(CANONICAL)
+    expect(await serializeEncryptedBlob(nonce, ciphertext)).toBe(OLD_WEB_FORMAT)
   })
 
-  it('a name written before the switch still opens; new names are canonical', async () => {
+  it('a name in core canonical form still opens; new names use the server form', async () => {
     const fileKey = crypto.getRandomValues(new Uint8Array(32))
     const plaintext = JSON.stringify({ name: 'Q3 report.pdf', mime_type: 'application/pdf' })
 
@@ -158,14 +159,18 @@ describe('W-P3-2 metadata envelope from core', () => {
     expect(reopened.name).toBe('Q3 report.pdf')
     expect(reopened.mime_type).toBe('application/pdf')
 
-    // A new write: web's writer emits core's canonical form, and core's reader
-    // (and web's own reader) open it to the same name.
-    const stored = await serializeEncryptedBlob(sealed.nonce, sealed.ciphertext)
-    expect(stored).toBe(JSON.stringify({
+    // A row in core's canonical form (written by web b01422e6 on routes the
+    // server does not validate) opens too.
+    const coreStored = JSON.stringify({
       ciphertext: Buffer.from(sealed.ciphertext).toString('base64'),
       nonce: Buffer.from(sealed.nonce).toString('base64'),
-    }))
-    expect(stored).not.toContain('cipher_suite')
+    })
+    expect((wasm.decrypt_name_metadata_with_key(fileKey, coreStored) as { name: string }).name).toBe('Q3 report.pdf')
+
+    // A new write: web's writer emits the server's form (LD-0071), and core's
+    // reader (and web's own reader) open it to the same name.
+    const stored = await serializeEncryptedBlob(sealed.nonce, sealed.ciphertext)
+    expect(stored).toBe(oldStored)
     const readBack = wasm.decrypt_name_metadata_with_key(fileKey, stored) as { name: string }
     expect(readBack.name).toBe('Q3 report.pdf')
     const bytes = await parseEncryptedBlob(stored)

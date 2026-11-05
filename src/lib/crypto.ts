@@ -838,18 +838,20 @@ export async function encryptFileKeyForSharing(
 
 // ─── Encrypted blob serialization ──────────────────
 //
-// The envelope grammar lives in core (`metadata_wire`, W-P3-2): the worker
-// writes core's frozen canonical form and reads every form clients have
-// stored. See `metadata-envelope.ts`; this file only hops to the worker.
+// Reads use core's tolerant decoder (`metadata_wire`, W-P3-2) in the worker,
+// which opens every form clients have stored. Writes use the form the server
+// validates (`{"cipher_suite":"V1Aes256Gcm","nonce":[…],"ciphertext":[…]}`),
+// which CLI and mobile also write; see `serializeEncryptedBlob`.
 
 /** Parse an encrypted blob JSON string into raw nonce + ciphertext bytes (core's tolerant reader). */
 export async function parseEncryptedBlob(json: string): Promise<{ nonce: Uint8Array; ciphertext: Uint8Array }> {
   return withCryptoError(() => withProxy((p) => p.decodeMetadataEnvelope(json)))
 }
 
-/** Serialize nonce + ciphertext into core's canonical encrypted blob JSON format. */
+/** Serialize nonce + ciphertext into the encrypted blob JSON format the server accepts. */
 export async function serializeEncryptedBlob(nonce: Uint8Array, ciphertext: Uint8Array): Promise<string> {
-  return withProxy((p) => p.encodeMetadataEnvelope(nonce, ciphertext))
+  // LD-0071: the server's name validator needs cipher_suite + byte arrays (core's base64 form got a 400); LD-0072 decides the canonical form.
+  return JSON.stringify({ cipher_suite: 'V1Aes256Gcm', nonce: Array.from(nonce), ciphertext: Array.from(ciphertext) })
 }
 
 // ─── Chunk planning ────────────────────────────────
