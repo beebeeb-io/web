@@ -43,8 +43,9 @@ ok() { echo "ok   $*"; }
 
 # A red run must print WHY it is red: the log is on the runner and is gone once
 # the job ends. LD-0079: an isolated run went red with "1 errors" and the grep
-# below matched nothing, because bun prints a thrown TypeError / RangeError /
-# WebAssembly.* error under its own name, not "error:". So a red run prints the
+# matched nothing, because bun prints a thrown TypeError / RangeError / wasm
+# RuntimeError under its own name, not "error:" (that one was "RuntimeError:
+# Out of bounds memory access", between tests). So a red run prints the
 # matching lines, then every "# Unhandled error" block bun wrote (the cause of
 # an error count), then the tail of the log; all with ANSI codes stripped.
 CAUSE_PATTERN='^\(fail\)|^error:|^[A-Za-z.]*Error:|SyntaxError|Export named|not found in'
