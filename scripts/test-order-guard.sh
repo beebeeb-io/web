@@ -47,30 +47,37 @@ ok() { echo "ok   $*"; }
 # RuntimeError under its own name, not "error:" (that one was "RuntimeError:
 # Out of bounds memory access", between tests). So a red run prints the
 # matching lines, then every "# Unhandled error" block bun wrote (the cause of
-# an error count), then the tail of the log; all with ANSI codes stripped.
+# an error count) when the tail would not show it, then the tail of the log;
+# all with ANSI codes stripped. Only the first CAUSE_FILES red isolated files
+# get that detail (one broken preload turns every file red); the rest keep the
+# matching lines.
 CAUSE_PATTERN='^\(fail\)|^error:|^[A-Za-z.]*Error:|SyntaxError|Export named|not found in'
 TAIL_LINES="${TEST_ORDER_TAIL_LINES:-40}"
+CAUSE_FILES="${TEST_ORDER_CAUSE_FILES:-5}"
 ESC="$(printf '\033')"
 
-# plain <log>: the log without ANSI escape codes or carriage returns.
-plain() { LC_ALL=C sed -e "s|${ESC}\[[0-9;?]*[ -/]*[@-~]||g" -e 's|\r$||' "$1"; }
+# plain <log>: the log without ANSI escape codes or carriage returns (tr, not
+# sed '\r', which BSD sed reads as a literal "r").
+plain() { LC_ALL=C sed -e "s|${ESC}\[[0-9;?]*[ -/]*[@-~]||g" "$1" | tr -d '\r'; }
 
-# show_cause <log> <max matching lines> <max error-block lines>
+# show_cause <log> <max matching lines> <max error-block lines> [matches-only]
 show_cause() {
-  local log="$1" max_match="$2" max_block="$3" blocks
-  plain "$log" | command grep -aE "$CAUSE_PATTERN" | head -n "$max_match" | sed 's/^/       /'
+  local log="$1" max_match="$2" max_block="$3" only_matches="${4:-}" text blocks
+  text="$(plain "$log")"
+  printf '%s\n' "$text" | command grep -aE "$CAUSE_PATTERN" | head -n "$max_match" | sed 's/^/       /'
+  [ -z "$only_matches" ] || return 0
   # bun frames each error between tests (a throw at module load is one) as
   # "# Unhandled error between tests", a dashed rule, the error, a dashed rule.
-  blocks="$(plain "$log" | awk '
+  blocks="$(printf '%s\n' "$text" | awk '
     /^# Unhandled error/ { inside = 1; rules = 0 }
     inside { print; if ($0 ~ /^-+$/ && ++rules == 2) inside = 0 }
   ')"
-  if [ -n "$blocks" ]; then
+  if [ -n "$blocks" ] && [ "$(printf '%s\n' "$text" | awk 'END { print NR }')" -gt "$TAIL_LINES" ]; then
     echo "       ── unhandled errors in $log ──"
     printf '%s\n' "$blocks" | head -n "$max_block" | sed 's/^/       | /'
   fi
   echo "       ── last $TAIL_LINES lines of $log ──"
-  plain "$log" | tail -n "$TAIL_LINES" | sed 's/^/       | /'
+  printf '%s\n' "$text" | tail -n "$TAIL_LINES" | sed 's/^/       | /'
 }
 
 # The ONLY test allowed to skip: 1581's full-precompress determinism case needs
@@ -222,7 +229,7 @@ else
     check_skips "isolated: $f" "$xml" "$skip"
     if [ "$ran" = x ] || [ $((pass + skip)) != "$ran" ] || [ "$fail" != 0 ] || [ "$errs" != 0 ] || [ "$files" != 1 ]; then
       red "isolated: $f — $pass pass / $fail fail / $errs errors / $skip skip — log $log"
-      show_cause "$log" 5 60
+      if [ "$bad" -lt "$CAUSE_FILES" ]; then show_cause "$log" 5 60; else show_cause "$log" 5 0 matches-only; fi
       bad=$((bad + 1))
     else
       sum=$((sum + ran))
@@ -230,6 +237,9 @@ else
       skipped=$((skipped + skip))
     fi
   done
+  if [ "$bad" -gt "$CAUSE_FILES" ]; then
+    echo "       ($bad isolated files red; the log tail is shown for the first $CAUSE_FILES — TEST_ORDER_CAUSE_FILES=<n> for more)"
+  fi
   if [ "$bad" = 0 ]; then
     if [ -n "$EXPECTED" ] && [ "$sum" != "$EXPECTED" ]; then
       red "isolated: $n files alone add up to $sum tests, the one-process run had $EXPECTED"

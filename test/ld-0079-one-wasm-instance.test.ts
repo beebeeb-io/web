@@ -9,6 +9,11 @@
  * tests). It hit test/2326-f-class-refusal.test.ts run alone on the
  * ubuntu-26.04 CI runners. The cure is test/helpers/wasm-preload.ts, the first
  * preload: the instance exists before any of those imports runs.
+ *
+ * The first test is the guard: it goes red on a bunfig without that preload or
+ * with it moved down (seen red on that mutant). The second checks what the
+ * preload buys; it cannot catch a missing preload on its own, because whether
+ * the race hits depends on timing (and this file imports the helper first).
  */
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
