@@ -12,4 +12,7 @@ root = "test"
 # Final review P3-2 (web #199): no unit test may reach a production host. The
 # preload refuses fetch to beebeeb.io / *.beebeeb.io and fails the test that
 # tried it (test/helpers/no-prod-network.ts; its own test proves it goes red).
-preload = ["./test/helpers/module-slots-preload.ts", "./test/helpers/no-prod-network.ts"]
+# LD-0079: test/helpers/wasm-preload.ts MUST stay first. It makes the one
+# beebeeb-wasm instance before any module's import-time init() can make a second
+# one that replaces it (test/ld-0079-one-wasm-instance.test.ts pins the order).
+preload = ["./test/helpers/wasm-preload.ts", "./test/helpers/module-slots-preload.ts", "./test/helpers/no-prod-network.ts"]
