@@ -43,6 +43,10 @@ const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) =>
     const out = wasm.encrypt_chunk(key, encoder.encode(filename))
     return { nonce: out.nonce as Uint8Array, ciphertext: out.ciphertext as Uint8Array }
   },
+  // The envelope writer is a worker crossing too (core's canonical
+  // cipher_suite + byte arrays); seal it here so the patch carries a string.
+  serializeEncryptedBlob: async (nonce: Uint8Array, ciphertext: Uint8Array) =>
+    wasm.encodeMetadataEnvelope(nonce, ciphertext),
 }))
 
 interface UploadCall {
@@ -232,7 +236,9 @@ describe('memberRename', () => {
     expect(patches).toHaveLength(1)
     expect(patches[0].id).toBe(FILE_ID)
     const nameEncrypted = (patches[0].body as { name_encrypted: string }).name_encrypted
-    const blob = JSON.parse(nameEncrypted) as { nonce: number[]; ciphertext: number[] }
+    // Core's canonical envelope (W-P3-2) stores base64 fields; decode it with
+    // core's reader rather than assuming the old numeric-array JSON.
+    const blob = wasm.decodeMetadataEnvelope(nameEncrypted) as { nonce: number[]; ciphertext: number[] }
     const plain = wasm.decrypt_chunk(
       fileKey,
       new Uint8Array(blob.nonce),
@@ -252,7 +258,9 @@ describe('memberRename', () => {
     patches.length = 0
     await memberRename(context('edit', { [FILE_ID]: l7 }, 'l7'), file({ name_encrypted: 'x' }), 'L7 notes.txt')
     expect(patches).toHaveLength(1)
-    const blob = JSON.parse((patches[0].body as { name_encrypted: string }).name_encrypted) as { nonce: number[]; ciphertext: number[] }
+    const blob = wasm.decodeMetadataEnvelope(
+      (patches[0].body as { name_encrypted: string }).name_encrypted,
+    ) as { nonce: number[]; ciphertext: number[] }
     expect(new TextDecoder().decode(wasm.decrypt_chunk(fileKey, new Uint8Array(blob.nonce), new Uint8Array(blob.ciphertext)))).toBe('L7 notes.txt')
 
     patches.length = 0

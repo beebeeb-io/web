@@ -105,6 +105,9 @@ export async function installWasmCryptoMirror(
         const r = w.encrypt_metadata(fileKey, filename) as { nonce: Uint8Array; ciphertext: Uint8Array }
         return { nonce: r.nonce, ciphertext: r.ciphertext }
       },
+      // The worker's envelope writer (renames hand its string to updateFile).
+      serializeEncryptedBlob: async (nonce: Uint8Array, ciphertext: Uint8Array) =>
+        w.encodeMetadataEnvelope(nonce, ciphertext),
       ownerRepairNameKey: async (masterKey: Uint8Array, fileId: string, nameEncrypted: string) =>
         w.ownerFileKeyForName(masterKey, fileId, nameEncrypted),
       ownerRepairContentKey: async (masterKey: Uint8Array, fileId: string, firstChunkFrame: Uint8Array) => {
