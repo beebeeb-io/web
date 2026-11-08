@@ -160,6 +160,12 @@ export interface TextDocument {
   versionId: string
 }
 
+export interface BinaryDocument {
+  /** The decrypted file content (Office documents, viewers). */
+  bytes: Uint8Array
+  versionId: string
+}
+
 export interface DriveSource {
   readonly kind: 'web' | 'desktop' | 'fixtures'
   readonly capabilities: DriveCapabilities
@@ -195,6 +201,8 @@ export interface DriveSource {
   open(id: ItemId): Promise<void>
   readText(id: ItemId): Promise<TextDocument>
   saveText(id: ItemId, text: string, baseVersionId: string): Promise<TextDocument>
+  readBytes(id: ItemId): Promise<BinaryDocument>
+  saveBytes(id: ItemId, bytes: Uint8Array, baseVersionId: string): Promise<BinaryDocument>
   setAvailableOffline(id: ItemId, on: boolean): Promise<void>
   revealInFileManager(id: ItemId): Promise<void>
 }

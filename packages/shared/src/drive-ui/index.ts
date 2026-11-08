@@ -3,6 +3,7 @@
 // Components arrive here batch by batch (desktop v2 BATCHES.md, batch B1); each keeps its web behaviour.
 export { DriveSourceError } from './source'
 export type {
+  BinaryDocument,
   Crumb,
   DriveCapabilities,
   DriveEvent,
