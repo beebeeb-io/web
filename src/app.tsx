@@ -149,6 +149,7 @@ import { BillingSuspendedOverlay } from './components/billing-suspended-overlay'
 import { CookieBanner } from './components/cookie-banner'
 import { DriveDataProvider, useDriveData } from './lib/drive-data-context'
 import { SearchIndexProvider } from './lib/search-index-context'
+import { WebDriveSourceProvider } from './components/web-drive-source-provider'
 
 /**
  * Task 1693 Part B renders this as the explicit, metadata-only "Vault
@@ -568,6 +569,7 @@ export function App() {
         <SyncProvider>
         <ToastProvider>
         <DriveDataProvider>
+        <WebDriveSourceProvider>
         <SearchIndexProvider>
         <DisplayProvider>
         {/* Skip link — first focusable element; visible only on keyboard focus */}
@@ -907,6 +909,7 @@ export function App() {
         </Suspense>
         </DisplayProvider>
         </SearchIndexProvider>
+        </WebDriveSourceProvider>
         </DriveDataProvider>
         </ToastProvider>
         </SyncProvider>
