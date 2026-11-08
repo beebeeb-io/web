@@ -9,7 +9,7 @@ export interface MoveModalHost {
   /** The folders directly under `parentId` (null = root), names decrypted for display. */
   listFolders(parentId: string | null): Promise<{ id: string; name: string }[]>
   /** Creates a folder; throws on refusal. */
-  createFolder(parentId: string | null, name: string): Promise<{ id: string; name: string }>
+  newFolder(parentId: string | null, name: string): Promise<{ id: string; name: string }>
   /** The host shows its own notice for a failed create. */
   onCreateFailed(err: unknown): void
 }
@@ -113,7 +113,7 @@ export function MoveModal({
     try {
       const parentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
       // The host seals the name and refuses while the vault is locked.
-      await host.createFolder(parentId ?? null, name)
+      await host.newFolder(parentId ?? null, name)
       setSearch('')
       fetchFolders(parentId)
     } catch (err) {

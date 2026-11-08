@@ -36,7 +36,7 @@ const STATIC_COPY_FILES = [
   'src/pages/billing.tsx',
   'src/pages/pricing.tsx',
   'src/pages/receive.tsx',
-  'src/components/empty-states/empty-drive.tsx',
+  'packages/shared/src/drive-ui/empty-states/empty-drive.tsx',
 ]
 
 describe('static location copy says the EU / Europe, not Falkenstein', () => {
@@ -89,6 +89,6 @@ describe('static location copy says the EU / Europe, not Falkenstein', () => {
 
   test('receive relay + empty drive', () => {
     expect(read('src/pages/receive.tsx')).toContain('Encrypted relay in the EU. File deleted after pickup.')
-    expect(read('src/components/empty-states/empty-drive.tsx')).toContain("'Europe · more locations soon'")
+    expect(read('packages/shared/src/drive-ui/empty-states/empty-drive.tsx')).toContain("'Europe · more locations soon'")
   })
 })

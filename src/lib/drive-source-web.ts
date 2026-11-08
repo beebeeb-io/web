@@ -32,15 +32,15 @@ import {
   permanentDeleteFile,
   restoreFile,
   restoreVersion,
-  updateFile,
   type DriveFile,
 } from './api'
 import { decryptFileMetadata } from './crypto'
 import { contentKeyBytes } from './request-row'
+import { moveOwnerItems } from './owner-upload-key'
 import type { useKeys } from './key-context'
 
 /** The slice of the key context the source needs; web passes `useKeys()`. */
-export type WebDriveKeys = Pick<ReturnType<typeof useKeys>, 'getFileKeyForFile' | 'isUnlocked'>
+export type WebDriveKeys = Pick<ReturnType<typeof useKeys>, 'getFileKeyForFile' | 'isUnlocked' | 'getMasterKey' | 'getResidentUserId'>
 
 export interface WebDriveSourceDeps {
   /** Always returns the CURRENT keys (a ref read), so the source keeps one identity across lock changes. */
@@ -231,7 +231,16 @@ export function createWebDriveSource(deps: WebDriveSourceDeps): DriveSource {
       }),
     move: (ids, targetId) =>
       guarded(async () => {
-        await Promise.all(ids.map((id) => updateFile(id, { parent_id: targetId })))
+        // Every move goes through moveOwnerItems: it adopts items leaving a shared root and publishes wraps.
+        const k = deps.keys()
+        const rows = await Promise.all(ids.map((id) => getFile(id)))
+        await moveOwnerItems({
+          ids,
+          destinationId: targetId,
+          rows,
+          masterKey: k.isUnlocked ? k.getMasterKey() : undefined,
+          viewerId: k.getResidentUserId(),
+        })
         emit({ kind: 'changed', folderId: targetId })
       }),
     duplicate: async () => unsupported('duplicate'),

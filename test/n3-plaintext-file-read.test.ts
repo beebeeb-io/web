@@ -97,7 +97,7 @@ describe('N3: a plaintext-named owner file', () => {
 
   test('the inline rename wires getFileKeyForFile with chunk 0', async () => {
     const list = await Bun.file(new URL('../src/components/file-list.tsx', import.meta.url)).text()
-    expect(list).toMatch(/getFileKeyForFile:\s*\(f\)\s*=>\s*getFileKeyForFile\(f,\s*\{\s*plaintextChunk:\s*true\s*\}\)/)
+    expect(list).toMatch(/getFileKeyForFile:\s*\(f\)\s*=>\s*(?:k\.)?getFileKeyForFile\(f,\s*\{\s*plaintextChunk:\s*true\s*\}\)/)
   })
 
   test('a share link for it still refuses: no chunk 0 on the share path', async () => {

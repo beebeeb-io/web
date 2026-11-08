@@ -381,7 +381,7 @@ const SRC = join(import.meta.dir, '..', 'src')
 const source = (relative: string) => readFileSync(join(SRC, relative), 'utf8')
 /** The body of `name`'s handler, from its declaration to the next blank-line-separated declaration. */
 function handlerBody(text: string, name: string): string {
-  const start = text.search(new RegExp(`(async function ${name}\\(|const ${name} = async)`))
+  const start = text.search(new RegExp(`(async function ${name}\\(|const ${name} = async|async ${name}\\()`))
   expect(start).toBeGreaterThan(-1)
   return text.slice(start, start + 2500)
 }
@@ -389,7 +389,7 @@ function handlerBody(text: string, name: string): string {
 /** The two UI sites that create a folder from a typed name, with the sealer each uses. */
 const NAMED_FOLDER_SITES = [
   { site: 'drive.tsx handleCreateFolder', file: 'pages/drive/use-drive-commands.ts', handler: 'handleCreateFolder', seal: 'encryptFileMetadata' },
-  { site: 'move-modal.tsx handleNewFolder', file: 'components/move-modal.tsx', handler: 'handleNewFolder', seal: 'encryptFilename' },
+  { site: 'move-modal.tsx handleNewFolder', file: 'components/move-modal.tsx', handler: 'newFolder', seal: 'encryptFilename' },
 ] as const
 
 describe('E6: a folder name never crosses the wire in plaintext', () => {
@@ -475,7 +475,7 @@ describe('E7: the move dialog shows a failed folder create', () => {
       const body = handlerBody(source(s.file), s.handler)
       expect(body).toContain('showToast(folderCreateFailureToast(err))')
     }
-    expect(handlerBody(source('components/move-modal.tsx'), 'handleNewFolder')).not.toContain('console.error')
+    expect(handlerBody(source('../packages/shared/src/drive-ui/move-modal.tsx'), 'handleNewFolder')).not.toContain('console.error')
   })
 })
 

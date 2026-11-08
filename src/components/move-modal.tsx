@@ -33,7 +33,7 @@ export function MoveModal(props: Omit<MoveModalProps, 'host'>) {
           }),
         )
       },
-      async createFolder(parentId, name) {
+      async newFolder(parentId, name) {
         const { keys: k } = live.current
         const created = await createNamedOwnerFolder({
           name,
