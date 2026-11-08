@@ -13,6 +13,7 @@
 // types web renders (camera RAW, HEVC, AIFF/ALAC, OGA, PPT/KEY, ZIP, XLS, TSV)
 // when consolidation replaced web's own list. Core #65 added the columns;
 // `previewableBatchFor(names, platform)` is the additive export that reads them.
+import { registerPreviewPredicate } from '@beebeeb/shared/drive-ui'
 import init, { is_previewable, previewableBatchFor } from 'beebeeb-wasm'
 
 let wasmReady = false
@@ -70,3 +71,6 @@ export function isPreviewable(mimeType: string | null | undefined, fileName?: st
   if (fileName) return isPreviewableExtensionOnWeb(fileName)
   return false
 }
+
+// The shared Drive UI asks core's predicate through this registration.
+registerPreviewPredicate(isPreviewable)
