@@ -20,6 +20,11 @@ const RENDERER_LIBS = [
   'mammoth',
   '@e965/xlsx',
   '@discourse/heic',
+  '@codemirror',
+  '@lezer',
+  '@replit/codemirror-indentation-markers',
+  '@replit/codemirror-minimap',
+  'react-dom',
 ]
 
 export function forbiddenImports(source: string, fileDir: string): string[] {
