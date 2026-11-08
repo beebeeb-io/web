@@ -1,12 +1,9 @@
 // The file version-history panel.
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BBButton } from '@beebeeb/shared'
-import { formatBytes } from '../lib/format'
-import { Icon } from '@beebeeb/shared'
 import { useToast } from './toast'
 import { useKeys } from '../lib/key-context'
-import { useFocusTrap } from '../hooks/use-focus-trap'
+import { VersionHistoryView } from '@beebeeb/shared/drive-ui'
 import { useDriveData } from '../lib/drive-data-context'
 import { decryptVersionToBlob } from '../lib/encrypted-download'
 import { UpgradeNudge } from './upgrade-nudge'
@@ -37,17 +34,6 @@ interface VersionHistoryProps {
 }
 
 
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
-}
-
 export function VersionHistory({
   open,
   onClose,
@@ -65,7 +51,6 @@ export function VersionHistory({
   const [loading, setLoading] = useState(false)
   const { showToast } = useToast()
   const { getFileKey, getMasterKey, getResidentUserId, isUnlocked } = useKeys()
-  const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
   const navigate = useNavigate()
   const { planDetails } = useDriveData()
   const planSlug = planDetails.subscription?.plan
@@ -97,15 +82,6 @@ export function VersionHistory({
       fetchVersions()
     }
   }, [open, fetchVersions])
-
-  useEffect(() => {
-    if (!open) return
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
-  }, [open, onClose])
 
   if (!open) return null
 
@@ -158,175 +134,55 @@ export function VersionHistory({
     }
   }
 
+  const items = versions.map((v) => ({
+    id: v.id,
+    versionNumber: v.version_number,
+    createdAt: v.created_at,
+    contentBytes: versionContentBytes(v),
+    canDelete: canDeleteVersion(v, currentVersion),
+  }))
+  const byId = (id: string) => versions.find((v) => v.id === id)
+  const pending = del.pendingId ? byId(del.pendingId) : undefined
+
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
-      <div className="absolute inset-0 bg-ink/20" />
-
-      <div
-        ref={focusTrapRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Version history"
-        onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-[540px] h-full bg-paper border-l border-line-2 shadow-3 overflow-hidden flex flex-col"
-      >
-        <div className="px-xl py-lg border-b border-line flex items-center gap-2.5">
-          <Icon name="clock" size={14} className="text-amber-deep" />
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-ink">Version history</div>
-            <div className="text-[11px] text-ink-3 mt-0.5 truncate">
-              {fileName} — current v{currentVersion}
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="w-7 h-7 rounded-md bg-paper-2 flex items-center justify-center text-ink-3 hover:text-ink transition-colors"
-          >
-            <Icon name="x" size={13} />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {shouldShowVersionHistoryUpsell(planSlug) && (
-            <div className="px-xl pt-md">
-              <UpgradeNudge
-                surface="version-history"
-                targetPlan="basic"
-                heading="Free keeps the current version only."
-                body="Basic keeps 30 days of version history per file."
-                onUpgrade={() => navigate('/pricing?plan=basic')}
-              />
-            </div>
-          )}
-          {loading ? (
-            <div className="px-xl py-12 text-center text-sm text-ink-3">Loading versions...</div>
-          ) : versions.length === 0 ? (
-            <div className="px-xl py-12 text-center">
-              <div className="text-sm text-ink-3">No previous versions</div>
-              <div className="text-[11px] text-ink-4 mt-1">
-                Versions are created when you re-upload a file with the same name
-              </div>
-            </div>
-          ) : (
-            <div className="py-1 relative" role="listbox" aria-label="Version history" aria-orientation="vertical">
-              <div
-                className="absolute bg-line-2"
-                style={{ left: 28, top: 14, bottom: 14, width: 1 }}
-              />
-
-              {versions.map((v, i) => {
-                const isSelected = i === selectedIdx
-                return (
-                  <div
-                    key={v.id}
-                    role="option"
-                    aria-selected={isSelected}
-                    aria-label={`Version ${v.version_number}, ${timeAgo(v.created_at)}, ${formatBytes(versionContentBytes(v))}`}
-                    className="w-full text-left relative cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-deep focus-visible:ring-inset"
-                    style={{
-                      padding: '12px 16px 12px 44px',
-                      background: isSelected ? 'var(--color-paper-2)' : 'transparent',
-                      borderLeft: isSelected
-                        ? '3px solid var(--color-amber-deep)'
-                        : '3px solid transparent',
-                    }}
-                    tabIndex={0}
-                    onClick={() => setSelectedIdx(i)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        setSelectedIdx(i)
-                      }
-                    }}
-                  >
-                    <div
-                      className="absolute rounded-full border-2"
-                      style={{
-                        left: 23,
-                        top: 16,
-                        width: 11,
-                        height: 11,
-                        background: isSelected ? 'var(--color-amber)' : 'var(--color-paper)',
-                        borderColor: isSelected ? 'var(--color-amber-deep)' : 'var(--color-line-2)',
-                      }}
-                    />
-
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-[12px] font-semibold text-ink">
-                        v{v.version_number}
-                      </span>
-                      <span className="text-[11px] text-ink-3">{timeAgo(v.created_at)}</span>
-                      <span className="text-[11px] font-mono text-ink-4">{formatBytes(versionContentBytes(v))}</span>
-                    </div>
-
-                    <div className="text-[11px] text-ink-4 mt-0.5 font-mono">
-                      {new Date(v.created_at).toLocaleString()}
-                    </div>
-
-                    {isSelected && (
-                      <div className="flex gap-1.5 mt-2">
-                        <BBButton
-                          size="sm"
-                          variant="ghost"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleDownload(v)
-                          }}
-                        >
-                          Download
-                        </BBButton>
-                        <BBButton
-                          size="sm"
-                          variant="amber"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleRestore(v)
-                          }}
-                        >
-                          Restore
-                        </BBButton>
-                        {canDeleteVersion(v, currentVersion) && del.pendingId !== v.id && (
-                          <BBButton
-                            size="sm"
-                            variant="danger"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              del.request(v.id)
-                            }}
-                          >
-                            Delete
-                          </BBButton>
-                        )}
-                      </div>
-                    )}
-
-                    {isSelected && canDeleteVersion(v, currentVersion) && del.pendingId === v.id && (
-                      <VersionDeleteConfirm
-                        copy={versionDeleteCopy({
-                          versionNumber: v.version_number,
-                          contentBytes: versionContentBytes(v),
-                          countsTowardQuota,
-                        })}
-                        busy={del.busy}
-                        onConfirm={() => void del.confirm(v)}
-                        onCancel={del.cancel}
-                      />
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="px-xl py-sm border-t border-line bg-paper-2">
-          <div className="flex items-center gap-1.5 text-[11px] text-ink-3">
-            <Icon name="lock" size={10} className="text-amber" />
-            Encrypted — versions stored with your file key
-          </div>
-        </div>
-      </div>
-    </div>
+    <VersionHistoryView
+      open={open}
+      onClose={onClose}
+      fileName={fileName}
+      currentVersion={currentVersion}
+      versions={items}
+      loading={loading}
+      selectedIdx={selectedIdx}
+      onSelect={setSelectedIdx}
+      upsell={
+        shouldShowVersionHistoryUpsell(planSlug) ? (
+          <UpgradeNudge
+            surface="version-history"
+            targetPlan="basic"
+            heading="Free keeps the current version only."
+            body="Basic keeps 30 days of version history per file."
+            onUpgrade={() => navigate('/pricing?plan=basic')}
+          />
+        ) : undefined
+      }
+      onDownload={(id) => { const v = byId(id); if (v) void handleDownload(v) }}
+      onRestore={(id) => { const v = byId(id); if (v) void handleRestore(v) }}
+      pendingDeleteId={del.pendingId}
+      onRequestDelete={del.request}
+      deleteConfirm={
+        pending ? (
+          <VersionDeleteConfirm
+            copy={versionDeleteCopy({
+              versionNumber: pending.version_number,
+              contentBytes: versionContentBytes(pending),
+              countsTowardQuota,
+            })}
+            busy={del.busy}
+            onConfirm={() => void del.confirm(pending)}
+            onCancel={del.cancel}
+          />
+        ) : undefined
+      }
+    />
   )
 }
