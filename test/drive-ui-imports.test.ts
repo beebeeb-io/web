@@ -5,14 +5,30 @@ import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
+
 const ROOT = join(import.meta.dir, '../packages/shared/src/drive-ui')
+
+/** Viewer libraries the preview renderers load (lazily where heavy). Desktop installs the same packages. */
+const RENDERER_LIBS = [
+  '@tanstack/react-virtual',
+  'react-markdown',
+  'dompurify',
+  'shiki',
+  '@shikijs/langs',
+  '@shikijs/themes',
+  '@shikijs/types',
+  'mammoth',
+  '@e965/xlsx',
+  '@discourse/heic',
+]
 
 export function forbiddenImports(source: string, fileDir: string): string[] {
   const bad: string[] = []
-  const re = /(?:import|export)\s+(?:type\s+)?(?:[^'"]*?\sfrom\s+)?['"]([^'"]+)['"]/g
+  const re = /(?:import|export)\s*(?:type\s+)?(?:[^'"]*?\sfrom\s+)?['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)/g
   for (const m of source.matchAll(re)) {
-    const spec = m[1]
-    if (spec === 'react' || spec === 'react/jsx-runtime' || spec === '@tanstack/react-virtual') continue
+    const spec = (m[1] ?? m[2]).replace(/\?url$/, '')
+    if (spec === 'react' || spec === 'react/jsx-runtime') continue
+    if (RENDERER_LIBS.some((l) => spec === l || spec.startsWith(`${l}/`))) continue
     if (spec.startsWith('./')) continue
     if (spec.startsWith('../')) {
       const resolved = join(fileDir, spec)
@@ -37,7 +53,7 @@ function walk(dir: string): string[] {
 describe('drive-ui imports', () => {
   test('every drive-ui file imports only what the rule allows', () => {
     const files = walk(ROOT)
-    expect(files.length).toBeGreaterThan(20)
+    expect(files.length).toBeGreaterThan(60)
     const bad = files.flatMap((f) => forbiddenImports(readFileSync(f, 'utf8'), join(f, '..')).map((s) => `${relative(ROOT, f)}: ${s}`))
     expect(bad).toEqual([])
   })

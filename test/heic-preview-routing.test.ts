@@ -6,7 +6,7 @@ const root = join(import.meta.dir, '..')
 
 describe('HEIC preview routing', () => {
   test('routes HEIC/HEIF files through the dedicated client-side converter', () => {
-    const source = readFileSync(join(root, 'src/components/preview/pick-renderer.tsx'), 'utf8')
+    const source = readFileSync(join(root, 'packages/shared/src/drive-ui/preview/pick-renderer.tsx'), 'utf8')
 
     expect(source).toContain("import { HeicPreview } from './heic-preview'")
     expect(source).toContain('<HeicPreview')
@@ -22,7 +22,7 @@ describe('HEIC preview routing', () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
       dependencies?: Record<string, string>
     }
-    const source = readFileSync(join(root, 'src/components/preview/heic-preview.tsx'), 'utf8')
+    const source = readFileSync(join(root, 'packages/shared/src/drive-ui/preview/heic-preview.tsx'), 'utf8')
 
     expect(pkg.dependencies).toHaveProperty('@discourse/heic')
     expect(source).toContain("import('@discourse/heic/decode')")

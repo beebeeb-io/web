@@ -7,6 +7,8 @@ export interface SizeFormatter {
   si(bytes: number): string
   /** Decimal, at most one decimal, whole numbers bare ("2 GB"). */
   compact(bytes: number): string
+  /** Binary/IEC ladder (1 KiB = 1,024 B), for preview surfaces. */
+  binary?(bytes: number): string
 }
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
@@ -42,6 +44,20 @@ export function formatStorageSI(bytes: number): string {
 
 export function formatBytes(bytes: number): string {
   return formatStorageSI(bytes)
+}
+
+/** Binary/IEC form (1 KiB = 1,024 B). */
+export function formatBinarySize(bytes: number): string {
+  if (bytes == null || !Number.isFinite(bytes)) return '—'
+  if (active.binary) return active.binary(Math.round(bytes))
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  let v = bytes
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`
 }
 
 /** One decimal at most, a whole number shown bare ("2 GB", "6.3 GB"). */

@@ -230,13 +230,8 @@ export async function decryptEncryptedBytes(
  * plaintext parts opened so far. The rule (§7): never report `decrypting`
  * while `receivedBytes < totalBytes`.
  */
-export interface TransferProgress {
-  phase: 'downloading' | 'decrypting' | 'done'
-  receivedBytes: number
-  totalBytes: number | null
-  decryptedChunks: number
-  totalChunks: number
-}
+export type { TransferProgress } from '@beebeeb/shared/drive-ui'
+import type { TransferProgress } from '@beebeeb/shared/drive-ui'
 
 export interface WholeFileOptions {
   onProgress?: (p: TransferProgress) => void

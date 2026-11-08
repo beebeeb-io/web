@@ -69,4 +69,4 @@ export function formatCompactBytes(bytes: number, decimals: 0 | 1 | 2): string {
 export { formatDocumentDate, timeAgo } from '@beebeeb/shared/drive-ui'
 
 // The shared Drive UI formats sizes through whatever the host registers: web hands it core's WASM ladder.
-registerSizeFormatter({ si: formatStorageSI, compact: formatSize })
+registerSizeFormatter({ si: formatStorageSI, compact: formatSize, binary: formatBinarySize })
