@@ -16,4 +16,6 @@ export {
   type CrumbItem,
   type DisplayCrumb,
 } from '@beebeeb/shared/drive-ui'
-registerDisplayProofs({ sharedRoot: hasSeenCustody, foreign: isForeignItemById })
+// Arrow wrappers, not the functions themselves: each call reads the module's current binding, as the
+// inline calls did before the move (a test or a hot reload that swaps the module is still seen).
+registerDisplayProofs({ sharedRoot: (id) => hasSeenCustody(id), foreign: (id) => isForeignItemById(id) })
