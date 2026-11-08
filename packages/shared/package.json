@@ -13,6 +13,7 @@
     "./api": "./src/api/index.ts",
     "./types": "./src/types/index.ts",
     "./tokens": "./src/tokens/index.ts",
+    "./drive-ui": "./src/drive-ui/index.ts",
     "./tokens.css": "./src/tokens.css"
   },
   "scripts": {
