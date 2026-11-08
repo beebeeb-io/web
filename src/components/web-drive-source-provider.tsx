@@ -1,5 +1,9 @@
 // Mounts web's DriveSource above every Drive page (desktop v2 B01). One source for the session; it reads
 // the current keys through a ref, so a lock or unlock does not replace it.
+// Side-effect imports: web registers its size formatter, preview predicate and custody proofs with the shared UI.
+import '../lib/format'
+import '../lib/preview'
+import '../lib/display-markers'
 import { useMemo, useRef, type ReactNode } from 'react'
 import { DriveSourceProvider } from '@beebeeb/shared/drive-ui'
 import { createWebDriveSource } from '../lib/drive-source-web'

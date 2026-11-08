@@ -1,5 +1,6 @@
 // Web wrapper for the shared move dialog (moved to @beebeeb/shared/drive-ui, desktop v2 B01):
 // supplies the folder listing, name decryption and folder creation from the browser's keys and API.
+import '../lib/display-markers'
 import { useMemo, useRef } from 'react'
 import { MoveModal as SharedMoveModal, type MoveModalHost, type MoveModalProps } from '@beebeeb/shared/drive-ui'
 import { listFiles } from '../lib/api'
