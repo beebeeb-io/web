@@ -52,6 +52,29 @@ function emailBlocks(log: string): string[] {
 }
 
 /**
+ * Whether a console-mode block was sent to `email`. Server task 1901 logs the recipient masked as
+ * `<8 hex>~<domain>` (an HMAC of the address under a per-process random key), so a spec cannot
+ * recompute it: the block matches on the domain, and callers take the most recent match. Two
+ * signups to the same domain at the same moment cannot be told apart this way; the harness runs
+ * one worker by default. A server from before task 1901 logged the full address, matched exactly.
+ */
+export function blockIsTo(block: string, email: string): boolean {
+  const addr = email.trim().toLowerCase()
+  if (block.includes(`To: ${addr}\n`) || block.includes(`To: ${email}\n`)) return true
+  const domain = addr.slice(addr.lastIndexOf('@') + 1)
+  if (!domain || !addr.includes('@')) return false
+  const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`^To: [0-9a-f]{8}~${escaped}$`, 'm').test(block)
+}
+
+/**
+ * The signup code in a verification block. Current server wording: "Enter the code below to verify
+ * your Beebeeb account:" with the code on its own line; older servers: "Enter this code to verify
+ * your Beebeeb account: <code>".
+ */
+const SIGNUP_CODE_RE = /Enter (?:this code|the code below) to verify your Beebeeb account:\s*(\d{8})/
+
+/**
  * The 8-digit code from the MOST RECENT `VerificationEmail` sent to `email`
  * (task 1525's `/signup/email-start` new-account branch,
  * `email_templates.rs::VerificationEmail::text()` — "Enter this code to
@@ -72,8 +95,8 @@ export function extractSignupCode(log: string, email: string): string | null {
   const blocks = emailBlocks(log)
   for (let i = blocks.length - 1; i >= 0; i--) {
     const block = blocks[i]
-    if (!block.includes(`To: ${email}\n`)) continue
-    const m = block.match(/Enter this code to verify your Beebeeb account: (\d{8})/)
+    if (!blockIsTo(block, email)) continue
+    const m = block.match(SIGNUP_CODE_RE)
     if (m) return m[1]
   }
   return null
@@ -88,8 +111,8 @@ export function extractAllSignupCodes(log: string, email: string): string[] {
   const blocks = emailBlocks(log)
   const codes: string[] = []
   for (const block of blocks) {
-    if (!block.includes(`To: ${email}\n`)) continue
-    const m = block.match(/Enter this code to verify your Beebeeb account: (\d{8})/)
+    if (!blockIsTo(block, email)) continue
+    const m = block.match(SIGNUP_CODE_RE)
     if (m && !codes.includes(m[1])) codes.push(m[1])
   }
   return codes
@@ -129,10 +152,11 @@ export function extractSignupExistsEmail(log: string, email: string): SignupExis
   const blocks = emailBlocks(log)
   for (let i = blocks.length - 1; i >= 0; i--) {
     const block = blocks[i]
-    if (!block.includes(`To: ${email}\n`)) continue
+    if (!blockIsTo(block, email)) continue
     if (!block.includes('You already have an account')) continue
     const subjectMatch = block.match(/^Subject: (.+)$/m)
-    const urlMatch = block.match(/forgotten it: (\S+)/)
+    // Current wording: the sign-in button renders as "Sign in: <url>"; older: "forgotten it: <url>".
+    const urlMatch = block.match(/^Sign in: (\S+)$/m) ?? block.match(/forgotten it: (\S+)/)
     return {
       subject: subjectMatch ? subjectMatch[1].trim() : '',
       signinUrl: urlMatch ? urlMatch[1] : null,

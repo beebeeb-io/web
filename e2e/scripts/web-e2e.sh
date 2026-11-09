@@ -50,6 +50,9 @@ E2E_STORAGE_ENV=(BLOB_STORE=local "BLOB_STORE_PATH=$BLOB_DIR")
 LOG_DIR="${E2E_LOG_DIR:-/tmp}"
 API_LOG="$LOG_DIR/bb-web-e2e-api-$API_PORT.log"
 VITE_LOG="$LOG_DIR/bb-web-e2e-vite-$VITE_PORT.log"
+# The signup mail-sink helper (e2e/helpers/mail-sink.ts) reads the API log; it defaults to the old
+# fixed /tmp/bb-web-e2e-api.log, so hand it this run's path.
+export BB_E2E_API_LOG="$API_LOG"
 WORKERS="${E2E_WORKERS:-1}"
 REPEAT="${E2E_REPEAT:-1}"
 # Task 1525: the signup email-code step's mail-sink helper
