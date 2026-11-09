@@ -101,7 +101,17 @@ export function applyOpToTree(
       if (id) tree.delete(id)
       return 'applied'
     }
-    case 'share_create':
+    case 'folder_system_role': {
+      // LD-0113: the server set or cleared a folder's system role (the Backups
+      // root). `system_role: null` clears it.
+      const id = payload.id as string | undefined
+      if (!id) return 'applied'
+      const existing = tree.get(id)
+      if (!existing) return 'missing-node'
+      tree.set(id, { ...existing, system_role: (payload.system_role as string | null | undefined) ?? null })
+      return 'applied'
+    }
+        case 'share_create':
     case 'share_revoke':
       // Notification-only — UI listens for these to refresh share state.
       return 'applied'

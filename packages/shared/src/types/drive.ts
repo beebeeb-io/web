@@ -91,6 +91,9 @@ export interface SyncNode {
   is_trashed: boolean
   is_starred: boolean
   chunk_count?: number
+  /** LD-0113: `"backups_root"` on the account's Backups root only; `/sync/snapshot`
+   *  sends it and the `folder_system_role` op changes it. */
+  system_role?: string | null
   created_at: string
   updated_at: string
 }

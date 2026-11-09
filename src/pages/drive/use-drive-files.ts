@@ -125,6 +125,9 @@ const syncNodeToDriveFile = useCallback((n: SyncNode): DriveFile => {
     is_folder: n.is_folder,
     is_trashed: n.is_trashed,
     parent_id: n.parent_id,
+    // LD-0113: the Backups root flag must survive every sync-derived refresh, or
+    // the root drops out of its pinned place and loses its Read-only chip.
+    system_role: n.system_role ?? null,
     chunk_count: n.chunk_count ?? 1,
     is_starred: n.is_starred,
     has_thumbnail: n.has_thumbnail,
