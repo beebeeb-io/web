@@ -149,13 +149,15 @@ export async function resetPassword(
 export async function deleteAccountPermanently(
   confirmation: string,
   confirmToken?: string,
+  code?: string,
 ): Promise<{ message: string; shred_after: string }> {
+  const trimmed = code?.trim()
   const data = await request<{ message: string; shred_after: string }>(
     '/api/v1/auth/account',
     {
       method: 'DELETE',
       headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
-      body: JSON.stringify({ confirmation }),
+      body: JSON.stringify(trimmed ? { confirmation, code: trimmed } : { confirmation }),
     },
   )
   clearToken()

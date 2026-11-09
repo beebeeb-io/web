@@ -6,6 +6,8 @@ import { BBButton } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { BBCheckbox } from '@beebeeb/shared'
 import { StepUpAuth } from '../components/step-up-auth'
+import { DeleteCodePrompt } from '../components/delete-code-prompt'
+import { classifyDeleteError } from '../lib/delete-second-factor'
 import { deleteAccountPermanently, ApiError } from '../lib/api'
 import { useAuth } from '../lib/auth-context'
 
@@ -18,12 +20,14 @@ const deletionItems: [string, string][] = [
 
 export function DeleteAccount() {
   const navigate = useNavigate()
-  const { logout } = useAuth()
+  const { logout, user } = useAuth()
   const [confirmation, setConfirmation] = useState('')
   const [understood, setUnderstood] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pwPromptOpen, setPwPromptOpen] = useState(false)
+  const [pendingToken, setPendingToken] = useState<string | null>(null)
+  const [codeError, setCodeError] = useState<string | null>(null)
 
   const canDelete = confirmation === 'DELETE' && understood && !loading
 
@@ -33,13 +37,14 @@ export function DeleteAccount() {
     setPwPromptOpen(true)
   }, [canDelete])
 
-  const performDelete = useCallback(
-    async (token: string) => {
+  const runDelete = useCallback(
+    async (token: string, code?: string) => {
       setPwPromptOpen(false)
       setLoading(true)
       setError(null)
+      setCodeError(null)
       try {
-        await deleteAccountPermanently(confirmation, token)
+        await deleteAccountPermanently(confirmation, token, code)
         // Clear AuthContext's `user`, KeyContext's `isUnlocked`, and the
         // vault/session storage via the same sign-out routine every other
         // logout path uses (task 1407) — the account is already gone
@@ -50,15 +55,38 @@ export function DeleteAccount() {
         await logout()
         navigate('/login', { replace: true })
       } catch (e) {
-        if (e instanceof ApiError && e.status === 403) {
-          setError('Re-authentication expired. Try again.')
+        const raw = e instanceof Error ? e.message : 'Failed to delete account'
+        const verdict = classifyDeleteError(
+          e instanceof ApiError ? e.status : undefined,
+          e instanceof ApiError ? e.code : undefined,
+          raw,
+        )
+        if (verdict.restartStepUp) {
+          setPendingToken(null)
+          setError(verdict.message)
+        } else if (code !== undefined) {
+          // A wrong code is the person's to retype: the password step-up stays on the page.
+          setCodeError(verdict.message)
         } else {
-          setError(e instanceof Error ? e.message : 'Failed to delete account')
+          setError(verdict.message)
         }
         setLoading(false)
       }
     },
     [confirmation, navigate, logout],
+  )
+
+  const performDelete = useCallback(
+    async (token: string) => {
+      setPwPromptOpen(false)
+      if (user?.totp_enabled) {
+        setPendingToken(token)
+        setCodeError(null)
+        return
+      }
+      await runDelete(token)
+    },
+    [runDelete, user?.totp_enabled],
   )
 
   return (
@@ -69,6 +97,13 @@ export function DeleteAccount() {
         submitLabel="Delete account"
         onConfirmed={performDelete}
         onClose={() => setPwPromptOpen(false)}
+      />
+      <DeleteCodePrompt
+        open={pendingToken !== null}
+        busy={loading}
+        error={codeError}
+        onSubmit={(code) => pendingToken && void runDelete(pendingToken, code)}
+        onClose={() => setPendingToken(null)}
       />
       <div className="w-full max-w-[480px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
         {/* Header */}
