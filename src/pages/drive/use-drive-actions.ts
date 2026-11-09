@@ -11,7 +11,7 @@ import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../../lib/bulk-download'
 import { userFriendlyError } from '../../lib/user-friendly-error'
 import { isRequestUpload } from '../../lib/request-row'
 import { cannotShareReason } from '../../lib/share-missing-items'
-import { BACKUPS_NO_FOLDER_SHARE, BACKUPS_ROOT_REFUSAL, backupsRootRefusal, isProtectedBackupsRoot } from '../../lib/backups-root'
+import { BACKUPS_NO_FOLDER_SHARE, BACKUPS_READ_ONLY, BACKUPS_ROOT_REFUSAL, backupsDepth, backupsRootRefusal, isProtectedBackupsRoot, isStepUpRequired } from '../../lib/backups-root'
 
 import type { useSync } from '../../lib/sync-context'
 import type { useAuth } from '../../lib/auth-context'
@@ -25,6 +25,8 @@ export interface DriveActionsParams {
   search: ReturnType<typeof useSearchIndex>
   driveData: ReturnType<typeof useDriveData>
   sync: ReturnType<typeof useSync>
+  /** LD-0113: ask for the password, then run `retry` with the confirmation token. */
+  requestStepUp: (retry: (token: string) => void) => void
   user: ReturnType<typeof useAuth>['user']
   showToast: ReturnType<typeof useToast>['showToast']
   files: DriveFile[]
@@ -59,6 +61,7 @@ export function useDriveActions(params: DriveActionsParams) {
     search,
     driveData,
     sync,
+    requestStepUp,
     user,
     showToast,
     files,
@@ -124,6 +127,7 @@ export function useDriveActions(params: DriveActionsParams) {
 
   async function handleMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy', pickerRootId: string | null) {
     if (!moveFileId) return
+    if (intoBackups(destinationId)) { refuseReadOnly(); setMoveFileId(null); return }
     try {
       // rv-web198c P2-5: a move into a shared folder publishes its wraps.
       await moveOwnerItems({ ids: [moveFileId], destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null, pickerRootId })
@@ -191,7 +195,19 @@ export function useDriveActions(params: DriveActionsParams) {
 
   // LD-0113: the server refuses these on its flagged Backups root; say so here
   // with core's words instead of letting the request fail.
+  // Core's app rule (backup::protect::check_app_mutation): under the Backups root, trash and
+  // delete are allowed (the server asks for the password on a device or category folder);
+  // rename, move, create and new shares are read-only. Unknown depth: the server decides.
+  const depthOf = (id: string | null | undefined) => backupsDepth(id, sync.getNode)
+  const underBackups = (id: string) => (depthOf(id) ?? 0) >= 1
+  const intoBackups = (folderId: string | null | undefined) => folderId != null && (depthOf(folderId) ?? -1) >= 0
+  function refuseReadOnly(): true {
+    showToast({ icon: 'lock', title: 'Backups are read-only', description: BACKUPS_READ_ONLY, danger: true })
+    return true
+  }
+
   function refuseProtected(ids: string[], action: 'trash' | 'move'): boolean {
+    if (action === 'move' && ids.some(underBackups)) return refuseReadOnly()
     if (!files.some((f) => ids.includes(f.id) && isProtectedBackupsRoot(f))) return false
     showToast({ icon: 'lock', title: 'Not allowed', description: BACKUPS_ROOT_REFUSAL[action], danger: true })
     return true
@@ -202,6 +218,13 @@ export function useDriveActions(params: DriveActionsParams) {
     if (refusal) {
       showToast({ icon: 'lock', title: 'Not allowed', description: refusal, danger: true })
       return
+    }
+    if (underBackups(file.id)) {
+      if (action === 'move' || action === 'rename') { refuseReadOnly(); return }
+      if (file.is_folder && (action === 'share' || action === 'manage-shares' || action === 'copy-link')) {
+        showToast({ icon: 'lock', title: 'Not allowed', description: BACKUPS_NO_FOLDER_SHARE, danger: true })
+        return
+      }
     }
     switch (action) {
       case 'open':
@@ -263,6 +286,7 @@ export function useDriveActions(params: DriveActionsParams) {
 
   async function handleDropToFolder(ids: string[], targetFolder: DriveFile, knownFolderName?: string) {
     if (refuseProtected(ids, 'move')) return
+    if (intoBackups(targetFolder.id)) { refuseReadOnly(); return }
     // L15 (b)3: while a navigation is in flight the drop site is not settled,
     // so nothing may be anchored from it — the move still happens, owner-only,
     // and the toast below says so. Anchoring never gates the user's write.
@@ -337,13 +361,13 @@ export function useDriveActions(params: DriveActionsParams) {
     return performBulkTrash(ids)
   }
 
-  async function performBulkTrash(ids: string[]) {
+  async function performBulkTrash(ids: string[], confirmToken?: string) {
     const count = ids.length
     setTrashingIds(new Set(ids))
     return new Promise<void>((resolve) => {
       setTimeout(async () => {
         try {
-          await bulkTrashFiles(ids)
+          await bulkTrashFiles(ids, confirmToken)
           // L15: trashed items lose their deferred publish on this client.
           const queue = localStorageQueue()
           if (queue) dropDeferredForItems(queue, ids)
@@ -353,7 +377,9 @@ export function useDriveActions(params: DriveActionsParams) {
           showToast({ icon: 'trash', title: 'Moved to trash', description: `${count} file${count !== 1 ? 's' : ''} moved to trash` })
           fetchFiles()
         } catch (err) {
-          showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
+          // A backup device or category folder in the batch: confirm the password, then once more.
+          if (isStepUpRequired(err) && !confirmToken) requestStepUp((token) => { void performBulkTrash(ids, token) })
+          else showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
         } finally {
           setTrashingIds(new Set())
           resolve()
@@ -364,6 +390,7 @@ export function useDriveActions(params: DriveActionsParams) {
 
   async function handleBulkMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy', pickerRootId: string | null) {
     const ids = bulkMoveIds
+    if (intoBackups(destinationId)) { refuseReadOnly(); setBulkMoveOpen(false); setBulkMoveIds([]); return }
     const count = ids.length
     try {
       await moveOwnerItems({ ids, destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null, pickerRootId })
@@ -379,7 +406,7 @@ export function useDriveActions(params: DriveActionsParams) {
   }
 
   function handleBulkShare(ids: string[]) {
-    if (files.some((f) => ids.includes(f.id) && isProtectedBackupsRoot(f))) {
+    if (files.some((f) => ids.includes(f.id) && (isProtectedBackupsRoot(f) || (f.is_folder && underBackups(f.id))))) {
       showToast({ icon: 'lock', title: 'Not allowed', description: BACKUPS_NO_FOLDER_SHARE, danger: true })
       return
     }

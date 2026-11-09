@@ -44,6 +44,8 @@ interface ContextMenuProps {
   hasVersions?: boolean
   /** LD-0113: the server-flagged Backups root — no Move, Rename, Move to trash or sharing. */
   isProtected?: boolean
+  /** LD-0113: an item under the Backups root — read-only: no Move or Rename, and a folder can't be shared. */
+  inBackups?: boolean
   onClose: () => void
   onAction: (action: string, fileId: string) => void
   /** Called when a color label is selected for a folder so parent can re-render the dot */
@@ -62,6 +64,7 @@ export function ContextMenu({
   isPinned,
   hasVersions,
   isProtected,
+  inBackups,
   onClose,
   onAction,
   onColorChange,
@@ -170,6 +173,7 @@ export function ContextMenu({
     .filter((item) => item.id !== 'preview' || !isFolder)
     // The server refuses these on its Backups root (LD-0113), so never offer them.
     .filter((item) => !isProtected || !BACKUPS_ROOT_HIDDEN_ACTIONS.includes(item.id))
+    .filter((item) => !inBackups || !(['move', 'rename'].includes(item.id) || (isFolder && ['share', 'manage-shares'].includes(item.id))))
     .map((item) => {
       // Dynamic star/unstar label based on current starred state
       if (item.id === 'star') {

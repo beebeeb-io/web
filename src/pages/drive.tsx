@@ -26,7 +26,8 @@ import {useDriveCommands} from './drive/use-drive-commands'
 import {useDriveActions} from './drive/use-drive-actions'
 import {useDriveFiles} from './drive/use-drive-files'
 
-import { BACKUPS_ROOT_REFUSAL, isProtectedBackupsRoot } from '../lib/backups-root'
+import { BACKUPS_READ_ONLY, BACKUPS_ROOT_REFUSAL, BACKUPS_STEP_UP, backupsDepth, isProtectedBackupsRoot } from '../lib/backups-root'
+import { ConfirmPasswordModal } from '../components/confirm-password-modal'
 import {getNewDocumentType, type NewDocumentType} from '../lib/new-document'
 
 import {FEATURE_OFFICE_EDITOR} from '../lib/flags'
@@ -723,10 +724,32 @@ export function Drive() {
   })
 
 
+  // LD-0113: nothing new is created under the Backups root (core's app rule: read-only).
+  const refuseCreateInBackups = useCallback((): boolean => {
+    if ((backupsDepth(currentParentId ?? null, sync.getNode) ?? -1) < 0) return false
+    showToast({ icon: 'lock', title: 'Backups are read-only', description: BACKUPS_READ_ONLY, danger: true })
+    return true
+  }, [currentParentId, sync, showToast])
+  const guardedFilesSelected = useCallback((list: File[]) => {
+    if (refuseCreateInBackups()) return
+    return handleFilesSelected(list)
+  }, [refuseCreateInBackups, handleFilesSelected])
+  const guardedFolderFilesSelected: typeof handleFolderFilesSelected = useCallback((...args: Parameters<typeof handleFolderFilesSelected>) => {
+    if (refuseCreateInBackups()) return undefined as unknown as ReturnType<typeof handleFolderFilesSelected>
+    return handleFolderFilesSelected(...args)
+  }, [refuseCreateInBackups, handleFolderFilesSelected])
+
   // Browse files hook
-  const { browse, HiddenInput } = useBrowseFiles(handleFilesSelected)
-  const { browseFolder, HiddenFolderInput } = useBrowseFolders(handleFolderFilesSelected)
-  const openNewFolderDialog = useCallback(() => setFolderDialogOpen(true), [])
+  const { browse, HiddenInput } = useBrowseFiles(guardedFilesSelected)
+  const { browseFolder, HiddenFolderInput } = useBrowseFolders(guardedFolderFilesSelected)
+  const openNewFolderDialog = useCallback(() => {
+    if (refuseCreateInBackups()) return
+    setFolderDialogOpen(true)
+  }, [refuseCreateInBackups])
+
+  // LD-0113: a backup delete the server holds for a fresh password.
+  const [stepUpRetry, setStepUpRetry] = useState<((token: string) => void) | null>(null)
+  const requestStepUp = useCallback((retry: (token: string) => void) => setStepUpRetry(() => retry), [])
 
   useEffect(() => {
     const handleUploadTrigger = () => browse()
@@ -744,6 +767,7 @@ export function Drive() {
       }
       if (t.editor === 'office' && !FEATURE_OFFICE_EDITOR) return
       e.preventDefault() // tells the palette Drive handled it
+      if (refuseCreateInBackups()) return
       setNewDocType(t)
     }
     window.addEventListener('beebeeb:upload-trigger', handleUploadTrigger)
@@ -776,6 +800,7 @@ export function Drive() {
     search,
     driveData,
     sync,
+    requestStepUp,
     user,
     showToast,
     navigate,
@@ -818,6 +843,7 @@ export function Drive() {
     search,
     driveData,
     sync,
+    requestStepUp,
     user,
     showToast,
     files,
@@ -952,14 +978,14 @@ export function Drive() {
             // Queue this file directly (skip dedup for it — already confirmed)
             queueResolvedUploads([{ file }])
             // Check remaining files through the normal pipeline
-            if (otherFiles.length > 0) void handleFilesSelected(otherFiles)
+            if (otherFiles.length > 0) void guardedFilesSelected(otherFiles)
           }}
           onDedupSkip={() => {
             if (!dedupWarning) return
             const { otherFiles } = dedupWarning
             setDedupWarning(null)
             // Skip this file and continue with remaining
-            if (otherFiles.length > 0) void handleFilesSelected(otherFiles)
+            if (otherFiles.length > 0) void guardedFilesSelected(otherFiles)
           }}
           storageUsage={storageUsage}
           accountState={driveAccountDocument?.account?.state}
@@ -985,8 +1011,8 @@ export function Drive() {
           officeAvailable={officeAvailable}
           isFrozen={isFrozen}
           onUpload={browse}
-          onFiles={handleFilesSelected}
-          onFolderFiles={handleFolderFilesSelected}
+          onFiles={guardedFilesSelected}
+          onFolderFiles={guardedFolderFilesSelected}
           onNewFolder={openNewFolderDialog}
           onNewDocument={setNewDocType}
           onNavigateFolder={handleFolderOpen}
@@ -1002,6 +1028,10 @@ export function Drive() {
             // LD-0113: the server refuses to move its flagged Backups root.
             if (files.some((f) => ids.includes(f.id) && isProtectedBackupsRoot(f))) {
               showToast({ icon: 'lock', title: 'Not allowed', description: BACKUPS_ROOT_REFUSAL.move, danger: true })
+              return
+            }
+            if (ids.some((id) => (backupsDepth(id, sync.getNode) ?? 0) >= 1)) {
+              showToast({ icon: 'lock', title: 'Backups are read-only', description: BACKUPS_READ_ONLY, danger: true })
               return
             }
             setBulkMoveIds(ids)
@@ -1025,6 +1055,19 @@ export function Drive() {
         />
 
       {/* ─── Overlays ────────────────────────── */}
+      {/* LD-0113: deleting a backup device or category folder needs a fresh password */}
+      <ConfirmPasswordModal
+        open={stepUpRetry !== null}
+        title="Delete this backup?"
+        description={BACKUPS_STEP_UP}
+        confirmLabel="Delete"
+        onConfirmed={(token) => {
+          const retry = stepUpRetry
+          setStepUpRetry(null)
+          retry?.(token)
+        }}
+        onCancel={() => setStepUpRetry(null)}
+      />
       <DriveCreationOverlays
         folderDialogOpen={folderDialogOpen}
         onCloseFolderDialog={() => setFolderDialogOpen(false)}

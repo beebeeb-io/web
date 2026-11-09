@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from 'bun:test'
 
-import { backupsRootFirst, backupsRootRefusal, isBackupsRoot, isProtectedBackupsRoot } from '../src/lib/backups-root'
+import { backupsDepth, backupsRootFirst, backupsRootRefusal, isBackupsRoot, isProtectedBackupsRoot, isStepUpRequired } from '../src/lib/backups-root'
 
 // Minimal file shapes used across tests — only the fields the function inspects.
 const rootFolder = { is_folder: true, parent_id: null }
@@ -111,5 +111,28 @@ describe('backupsRootFirst', () => {
   it('refuses sharing the root with the server words', () => {
     expect(backupsRootRefusal('share')).toBe("Folders in Backups can't be shared. You can share a single file.")
     expect(backupsRootRefusal('manage-shares')).toBe("Folders in Backups can't be shared. You can share a single file.")
+  })
+})
+
+describe('backupsDepth (LD-0113: where an item sits under the Backups root)', () => {
+  const nodes: Record<string, { parent_id: string | null; system_role?: string | null }> = {
+    root: { parent_id: null, system_role: 'backups_root' },
+    laptop: { parent_id: 'root' },
+    ssh: { parent_id: 'laptop' },
+    key: { parent_id: 'ssh' },
+    photos: { parent_id: null },
+    lonely: { parent_id: 'gone' },
+  }
+  const get = (id: string) => nodes[id]
+  it('counts from the root: root 0, device 1, category 2, deeper 3', () => {
+    expect([backupsDepth('root', get), backupsDepth('laptop', get), backupsDepth('ssh', get), backupsDepth('key', get)]).toEqual([0, 1, 2, 3])
+  })
+  it('is null outside Backups, for the vault root, and when an ancestor is not known', () => {
+    expect([backupsDepth('photos', get), backupsDepth(null, get), backupsDepth('lonely', get)]).toEqual([null, null, null])
+  })
+  it('recognises the server refusal that asks for the password', () => {
+    expect(isStepUpRequired({ status: 403, code: 'step_up_required' })).toBe(true)
+    expect(isStepUpRequired({ status: 403, code: 'forbidden' })).toBe(false)
+    expect(isStepUpRequired(new Error('x'))).toBe(false)
   })
 })

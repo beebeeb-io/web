@@ -333,8 +333,12 @@ export async function updateFile(
   })
 }
 
-export async function deleteFile(id: string): Promise<void> {
-  await request<void>(`/api/v1/files/${id}`, { method: 'DELETE' })
+export async function deleteFile(id: string, confirmToken?: string): Promise<void> {
+  await request<void>(`/api/v1/files/${id}`, {
+    method: 'DELETE',
+    // LD-0113: a backup device or category folder needs a fresh password step-up.
+    headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
+  })
 }
 
 /**
@@ -345,10 +349,11 @@ export async function deleteFile(id: string): Promise<void> {
  */
 export async function bulkTrashFiles(
   ids: string[],
+  confirmToken?: string,
 ): Promise<{ trashed: string[]; already_trashed: string[]; missing: string[] }> {
   return request<{ trashed: string[]; already_trashed: string[]; missing: string[] }>(
     '/api/v1/files/trash',
-    { method: 'POST', body: JSON.stringify({ ids }) },
+    { method: 'POST', body: JSON.stringify({ ids }), headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined },
   )
 }
 

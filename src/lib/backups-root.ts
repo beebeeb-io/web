@@ -77,3 +77,30 @@ export function backupsRootRefusal(action: string): string | null {
   if (action === 'rename') return BACKUPS_ROOT_REFUSAL.rename
   return null
 }
+
+/** The server's words when a backup folder's delete needs a fresh password (LD-0113 Amendment 11). */
+export const BACKUPS_STEP_UP = "Confirm it's you to delete this backup."
+
+/**
+ * How deep `id` sits under the server-flagged Backups root: 0 = the root, 1 = a device folder,
+ * 2 = a category folder, and so on. null = not in Backups, or not known yet (a missing node):
+ * the caller then lets the server decide. Walks parent ids in the sync tree.
+ */
+export function backupsDepth(
+  id: string | null | undefined,
+  getNode: (id: string) => { parent_id: string | null; system_role?: string | null } | undefined,
+): number | null {
+  let cur = id ?? null
+  for (let d = 0; cur && d < 64; d++) {
+    const n = getNode(cur)
+    if (!n) return null
+    if (n.system_role === 'backups_root') return d
+    cur = n.parent_id
+  }
+  return null
+}
+
+/** True when the server refused a backup delete until the password is confirmed. */
+export function isStepUpRequired(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'step_up_required'
+}

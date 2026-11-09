@@ -22,7 +22,7 @@ import { foldName, NewDocumentNameClashError } from '../../lib/new-document'
 import { blankDocumentBytes } from '../../lib/office/blank-documents'
 import { FEATURE_OFFICE_EDITOR } from '../../lib/flags'
 import { userFriendlyError } from '../../lib/user-friendly-error'
-import { isBackupsRoot as isBackupsRootPure, isProtectedBackupsRoot } from '../../lib/backups-root'
+import { isBackupsRoot as isBackupsRootPure, isProtectedBackupsRoot, isStepUpRequired } from '../../lib/backups-root'
 import { decryptFileMetadata, encryptFileMetadata, serializeEncryptedBlob } from '../../lib/crypto'
 import { encryptedUpload } from '../../lib/encrypted-upload'
 import { deleteFile, getSharesForFile, listAllFiles, listVersions, toggleStar } from '../../lib/api'
@@ -34,6 +34,8 @@ export interface DriveCommandsParams {
   search: ReturnType<typeof useSearchIndex>
   driveData: ReturnType<typeof useDriveData>
   sync: ReturnType<typeof useSync>
+  /** LD-0113: ask for the password, then run `retry` with the confirmation token. */
+  requestStepUp: (retry: (token: string) => void) => void
   user: ReturnType<typeof useAuth>['user']
   showToast: ReturnType<typeof useToast>['showToast']
   navigate: NavigateFunction
@@ -68,6 +70,7 @@ export function useDriveCommands(params: DriveCommandsParams) {
     search,
     driveData,
     sync,
+    requestStepUp,
     user,
     showToast,
     navigate,
@@ -351,12 +354,12 @@ export function useDriveCommands(params: DriveCommandsParams) {
     return { deviceCount, itemCount }
   }
 
-  function performSingleTrash(file: DriveFile) {
+  function performSingleTrash(file: DriveFile, confirmToken?: string) {
     const trashName = displayName(file)
     setTrashingIds((prev) => new Set(prev).add(file.id))
     setTimeout(async () => {
       try {
-        await deleteFile(file.id)
+        await deleteFile(file.id, confirmToken)
         // L15: a trashed item loses its deferred publish on this client.
         const queue = localStorageQueue()
         if (queue) dropDeferredForItems(queue, [file.id])
@@ -366,7 +369,9 @@ export function useDriveCommands(params: DriveCommandsParams) {
         if (file.is_folder) unpinFolders([file.id])
         fetchFiles()
       } catch (err) {
-        showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
+        // A backup device or category folder: confirm the password, then try once more.
+        if (isStepUpRequired(err) && !confirmToken) requestStepUp((token) => performSingleTrash(file, token))
+        else showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
       } finally {
         setTrashingIds((prev) => { const next = new Set(prev); next.delete(file.id); return next })
       }
