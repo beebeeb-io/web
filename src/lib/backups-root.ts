@@ -51,8 +51,27 @@ export const BACKUPS_ROOT_REFUSAL = {
   rename: "Backups is a system folder and can't be renamed.",
 } as const
 
+/** Core's words for the whole Backups tree (beebeeb-core `MSG_READ_ONLY`). */
+export const BACKUPS_READ_ONLY =
+  "Backups are read-only: each device writes its own. Change the file on that device, or save a copy outside Backups."
+
+/** The server's words for a folder share or link in the tree (LD-0113 Amendment 10). */
+export const BACKUPS_NO_FOLDER_SHARE = "Folders in Backups can't be shared. You can share a single file."
+
+/** Context-menu actions never offered on the protected root. */
+export const BACKUPS_ROOT_HIDDEN_ACTIONS: readonly string[] = ['move', 'rename', 'trash', 'share', 'manage-shares']
+
+/** Sort comparator prefix: the protected root before everything else, in every sort. 0 when neither or both are. */
+export function backupsRootFirst(a: { system_role?: string | null }, b: { system_role?: string | null }): number {
+  const pa = isProtectedBackupsRoot(a)
+  const pb = isProtectedBackupsRoot(b)
+  if (pa === pb) return 0
+  return pa ? -1 : 1
+}
+
 /** The refusal for `action` on a protected root, or null when it is allowed. */
 export function backupsRootRefusal(action: string): string | null {
+  if (action === 'share' || action === 'manage-shares' || action === 'copy-link') return BACKUPS_NO_FOLDER_SHARE
   if (action === 'trash' || action === 'delete') return BACKUPS_ROOT_REFUSAL.trash
   if (action === 'move') return BACKUPS_ROOT_REFUSAL.move
   if (action === 'rename') return BACKUPS_ROOT_REFUSAL.rename

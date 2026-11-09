@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
+import { BACKUPS_ROOT_HIDDEN_ACTIONS } from '../lib/backups-root'
 import { FOLDER_COLORS, getFolderColor, setFolderColor } from '../lib/folder-colors'
 import { isPreviewable } from '../lib/preview'
 
@@ -41,7 +42,7 @@ interface ContextMenuProps {
   isPinned?: boolean
   /** Show "Version history" — only true for non-folder files with version_number > 1 */
   hasVersions?: boolean
-  /** LD-0113: the server-flagged Backups root — no Move, Rename or Move to trash. */
+  /** LD-0113: the server-flagged Backups root — no Move, Rename, Move to trash or sharing. */
   isProtected?: boolean
   onClose: () => void
   onAction: (action: string, fileId: string) => void
@@ -168,7 +169,7 @@ export function ContextMenu({
     // Hide preview from folders — Preview is file-only
     .filter((item) => item.id !== 'preview' || !isFolder)
     // The server refuses these on its Backups root (LD-0113), so never offer them.
-    .filter((item) => !isProtected || !['move', 'rename', 'trash'].includes(item.id))
+    .filter((item) => !isProtected || !BACKUPS_ROOT_HIDDEN_ACTIONS.includes(item.id))
     .map((item) => {
       // Dynamic star/unstar label based on current starred state
       if (item.id === 'star') {

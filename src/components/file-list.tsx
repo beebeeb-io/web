@@ -7,7 +7,7 @@ import { FileRow, type FileRowProps } from './file-list/file-row'
 import { FileListHeader } from './file-list/file-list-header'
 import { displayNameFrom, useDecryptedNames } from './file-list/use-decrypted-names'
 import { useFileThumbnails } from './file-list/use-file-thumbnails'
-import { isProtectedBackupsRoot } from '../lib/backups-root'
+import { backupsRootFirst, isProtectedBackupsRoot } from '../lib/backups-root'
 import { needsOwnership, classifyItemIds, isForeignItemById } from '../lib/owner-adoption'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
@@ -495,6 +495,9 @@ export function FileList({
   const sortedFiles = useMemo(() => {
     if (!sortable) return files
     return [...files].sort((a, b) => {
+      // LD-0113: the Backups root stays on top in every sort.
+      const backupsFirst = backupsRootFirst(a, b)
+      if (backupsFirst !== 0) return backupsFirst
       // starred-first: starred items come before non-starred across the board
       if (sortKey === 'starred-first') {
         const starA = a.is_starred ? 0 : 1

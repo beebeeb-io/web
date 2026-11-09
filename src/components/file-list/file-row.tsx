@@ -10,6 +10,7 @@ import { FileBrowserRow } from '../file-browser-row'
 import { FolderViewerBadge } from '../presence-avatars'
 import { formatBytes, timeAgo } from '../../lib/format'
 import { fileStorageCountry } from '../../lib/storage-regions'
+import { BACKUPS_READ_ONLY, isProtectedBackupsRoot } from '../../lib/backups-root'
 import type { DriveFile } from '../../lib/api'
 
 /**
@@ -266,6 +267,13 @@ export function FileRow({
           >
             <Icon name="star" size={11} />
           </button>
+
+          {/* LD-0113: the server-flagged Backups root is read-only for people */}
+          {isProtectedBackupsRoot(file) && (
+            <span title={BACKUPS_READ_ONLY} aria-label={BACKUPS_READ_ONLY} className="inline-flex">
+              <BBChip variant="default" className="py-0 text-[9.5px]">Read-only</BBChip>
+            </span>
+          )}
 
           {/* Pin badge — shown when folder is pinned to Quick access */}
           {flags.isPinned && (
