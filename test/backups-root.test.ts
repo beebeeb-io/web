@@ -1,6 +1,6 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, it, test } from 'bun:test'
 
-import { isBackupsRoot } from '../src/lib/backups-root'
+import { backupsRootRefusal, isBackupsRoot, isProtectedBackupsRoot } from '../src/lib/backups-root'
 
 // Minimal file shapes used across tests — only the fields the function inspects.
 const rootFolder = { is_folder: true, parent_id: null }
@@ -76,5 +76,26 @@ describe('isBackupsRoot (task 0848)', () => {
     expect(isBackupsRoot(fileNoParent, 'Backups')).toBe(true)
     expect(isBackupsRoot(fileNoParent, undefined)).toBe(true)
     expect(isBackupsRoot(fileNoParent, 'Projects')).toBe(false)
+  })
+})
+
+describe('isProtectedBackupsRoot (LD-0113: the server flag, never the name)', () => {
+  it('is true only for system_role "backups_root"', () => {
+    expect(isProtectedBackupsRoot({ system_role: 'backups_root' })).toBe(true)
+    expect(isProtectedBackupsRoot({ system_role: null })).toBe(false)
+    expect(isProtectedBackupsRoot({})).toBe(false)
+    expect(isProtectedBackupsRoot({ system_role: 'Backups' })).toBe(false)
+  })
+})
+
+describe('backupsRootRefusal', () => {
+  it("gives core's words for trash, delete, move and rename, and null otherwise", () => {
+    expect(backupsRootRefusal('trash')).toBe("Backups is a system folder and can't be deleted.")
+    expect(backupsRootRefusal('delete')).toBe("Backups is a system folder and can't be deleted.")
+    expect(backupsRootRefusal('move')).toBe("Backups is a system folder and can't be moved.")
+    expect(backupsRootRefusal('rename')).toBe("Backups is a system folder and can't be renamed.")
+    expect(backupsRootRefusal('open')).toBeNull()
+    expect(backupsRootRefusal('download')).toBeNull()
+    expect(backupsRootRefusal('share')).toBeNull()
   })
 })

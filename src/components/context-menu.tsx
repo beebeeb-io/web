@@ -41,6 +41,8 @@ interface ContextMenuProps {
   isPinned?: boolean
   /** Show "Version history" — only true for non-folder files with version_number > 1 */
   hasVersions?: boolean
+  /** LD-0113: the server-flagged Backups root — no Move, Rename or Move to trash. */
+  isProtected?: boolean
   onClose: () => void
   onAction: (action: string, fileId: string) => void
   /** Called when a color label is selected for a folder so parent can re-render the dot */
@@ -58,6 +60,7 @@ export function ContextMenu({
   isStarred,
   isPinned,
   hasVersions,
+  isProtected,
   onClose,
   onAction,
   onColorChange,
@@ -164,6 +167,8 @@ export function ContextMenu({
     .filter((item) => item.id !== 'versions' || hasVersions)
     // Hide preview from folders — Preview is file-only
     .filter((item) => item.id !== 'preview' || !isFolder)
+    // The server refuses these on its Backups root (LD-0113), so never offer them.
+    .filter((item) => !isProtected || !['move', 'rename', 'trash'].includes(item.id))
     .map((item) => {
       // Dynamic star/unstar label based on current starred state
       if (item.id === 'star') {

@@ -13,6 +13,9 @@ export interface DriveFile {
   /** True when the file has been moved to trash. Returned by list_files. */
   is_trashed: boolean
   parent_id: string | null
+  /** LD-0113: `"backups_root"` on the account's Backups root only (the server's
+   *  flag; a folder NAME never is one). Absent on older responses. */
+  system_role?: string | null
   chunk_count: number
   /** The pinned object version (LD-0001). Absent on older responses. */
   download_version?: DownloadVersion | null

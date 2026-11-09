@@ -26,6 +26,7 @@ import {useDriveCommands} from './drive/use-drive-commands'
 import {useDriveActions} from './drive/use-drive-actions'
 import {useDriveFiles} from './drive/use-drive-files'
 
+import { BACKUPS_ROOT_REFUSAL, isProtectedBackupsRoot } from '../lib/backups-root'
 import {getNewDocumentType, type NewDocumentType} from '../lib/new-document'
 
 import {FEATURE_OFFICE_EDITOR} from '../lib/flags'
@@ -997,7 +998,15 @@ export function Drive() {
           onToggleStar={handleToggleStar}
           onDropToFolder={handleDropToFolder}
           onBulkTrash={handleBulkTrash}
-          onBulkMove={(ids) => { setBulkMoveIds(ids); setBulkMoveOpen(true) }}
+          onBulkMove={(ids) => {
+            // LD-0113: the server refuses to move its flagged Backups root.
+            if (files.some((f) => ids.includes(f.id) && isProtectedBackupsRoot(f))) {
+              showToast({ icon: 'lock', title: 'Not allowed', description: BACKUPS_ROOT_REFUSAL.move, danger: true })
+              return
+            }
+            setBulkMoveIds(ids)
+            setBulkMoveOpen(true)
+          }}
           onBulkShare={handleBulkShare}
           onBulkDownload={handleBulkDownload}
           bulkZipProgress={bulkZipProgress}

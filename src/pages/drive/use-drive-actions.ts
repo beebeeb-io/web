@@ -11,6 +11,7 @@ import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../../lib/bulk-download'
 import { userFriendlyError } from '../../lib/user-friendly-error'
 import { isRequestUpload } from '../../lib/request-row'
 import { cannotShareReason } from '../../lib/share-missing-items'
+import { BACKUPS_ROOT_REFUSAL, backupsRootRefusal, isProtectedBackupsRoot } from '../../lib/backups-root'
 
 import type { useSync } from '../../lib/sync-context'
 import type { useAuth } from '../../lib/auth-context'
@@ -188,7 +189,20 @@ export function useDriveActions(params: DriveActionsParams) {
 
   // ─── File action handler (from FileList context menu + double-click) ──
 
+  // LD-0113: the server refuses these on its flagged Backups root; say so here
+  // with core's words instead of letting the request fail.
+  function refuseProtected(ids: string[], action: 'trash' | 'move'): boolean {
+    if (!files.some((f) => ids.includes(f.id) && isProtectedBackupsRoot(f))) return false
+    showToast({ icon: 'lock', title: 'Not allowed', description: BACKUPS_ROOT_REFUSAL[action], danger: true })
+    return true
+  }
+
   async function handleFileAction(action: string, file: DriveFile) {
+    const refusal = isProtectedBackupsRoot(file) ? backupsRootRefusal(action) : null
+    if (refusal) {
+      showToast({ icon: 'lock', title: 'Not allowed', description: refusal, danger: true })
+      return
+    }
     switch (action) {
       case 'open':
         if (file.is_folder) handleFolderOpen(file)
@@ -248,6 +262,7 @@ export function useDriveActions(params: DriveActionsParams) {
   // ─── Drop to folder handler ────────────────────────
 
   async function handleDropToFolder(ids: string[], targetFolder: DriveFile, knownFolderName?: string) {
+    if (refuseProtected(ids, 'move')) return
     // L15 (b)3: while a navigation is in flight the drop site is not settled,
     // so nothing may be anchored from it — the move still happens, owner-only,
     // and the toast below says so. Anchoring never gates the user's write.
@@ -311,6 +326,7 @@ export function useDriveActions(params: DriveActionsParams) {
   // ─── Bulk action handlers ────────────────────────────
 
   async function handleBulkTrash(ids: string[]) {
+    if (refuseProtected(ids, 'trash')) return
     // If the selection includes the Backups root, gate the whole batch behind
     // the warning (task 0838). Resolve immediately — the dialog drives the rest.
     const backupsRoot = files.find((f) => ids.includes(f.id) && isBackupsRoot(f))
