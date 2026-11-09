@@ -11,7 +11,7 @@ import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../../lib/bulk-download'
 import { userFriendlyError } from '../../lib/user-friendly-error'
 import { isRequestUpload } from '../../lib/request-row'
 import { cannotShareReason } from '../../lib/share-missing-items'
-import { BACKUPS_ROOT_REFUSAL, backupsRootRefusal, isProtectedBackupsRoot } from '../../lib/backups-root'
+import { BACKUPS_NO_FOLDER_SHARE, BACKUPS_ROOT_REFUSAL, backupsRootRefusal, isProtectedBackupsRoot } from '../../lib/backups-root'
 
 import type { useSync } from '../../lib/sync-context'
 import type { useAuth } from '../../lib/auth-context'
@@ -379,6 +379,10 @@ export function useDriveActions(params: DriveActionsParams) {
   }
 
   function handleBulkShare(ids: string[]) {
+    if (files.some((f) => ids.includes(f.id) && isProtectedBackupsRoot(f))) {
+      showToast({ icon: 'lock', title: 'Not allowed', description: BACKUPS_NO_FOLDER_SHARE, danger: true })
+      return
+    }
     if (ids.length === 1) {
       setShareFileId(ids[0])
       return

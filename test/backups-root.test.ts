@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from 'bun:test'
 
-import { backupsRootRefusal, isBackupsRoot, isProtectedBackupsRoot } from '../src/lib/backups-root'
+import { backupsRootFirst, backupsRootRefusal, isBackupsRoot, isProtectedBackupsRoot } from '../src/lib/backups-root'
 
 // Minimal file shapes used across tests — only the fields the function inspects.
 const rootFolder = { is_folder: true, parent_id: null }
@@ -96,6 +96,20 @@ describe('backupsRootRefusal', () => {
     expect(backupsRootRefusal('rename')).toBe("Backups is a system folder and can't be renamed.")
     expect(backupsRootRefusal('open')).toBeNull()
     expect(backupsRootRefusal('download')).toBeNull()
-    expect(backupsRootRefusal('share')).toBeNull()
+  })
+})
+
+describe('backupsRootFirst', () => {
+  const root = { system_role: 'backups_root' }
+  const plain = { system_role: null }
+  it('puts the protected root first and leaves other pairs to the sort', () => {
+    expect(backupsRootFirst(root, plain)).toBe(-1)
+    expect(backupsRootFirst(plain, root)).toBe(1)
+    expect(backupsRootFirst(plain, {})).toBe(0)
+    expect([plain, {}, root].sort(backupsRootFirst)[0]).toBe(root)
+  })
+  it('refuses sharing the root with the server words', () => {
+    expect(backupsRootRefusal('share')).toBe("Folders in Backups can't be shared. You can share a single file.")
+    expect(backupsRootRefusal('manage-shares')).toBe("Folders in Backups can't be shared. You can share a single file.")
   })
 })
