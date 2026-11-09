@@ -22,7 +22,7 @@ import { foldName, NewDocumentNameClashError } from '../../lib/new-document'
 import { blankDocumentBytes } from '../../lib/office/blank-documents'
 import { FEATURE_OFFICE_EDITOR } from '../../lib/flags'
 import { userFriendlyError } from '../../lib/user-friendly-error'
-import { isBackupsRoot as isBackupsRootPure } from '../../lib/backups-root'
+import { isBackupsRoot as isBackupsRootPure, isProtectedBackupsRoot } from '../../lib/backups-root'
 import { decryptFileMetadata, encryptFileMetadata, serializeEncryptedBlob } from '../../lib/crypto'
 import { encryptedUpload } from '../../lib/encrypted-upload'
 import { deleteFile, getSharesForFile, listAllFiles, listVersions, toggleStar } from '../../lib/api'
@@ -324,6 +324,10 @@ export function useDriveCommands(params: DriveCommandsParams) {
     // (name still pending), even though the Record type says string|null.
     // Cast to include undefined so the pure function's type accepts it.
     const name = externalDecryptedNames[file.id] as string | null | undefined
+    // LD-0113: once the listing carries the server's flagged root, a folder's
+    // NAME no longer makes it the Backups root (a user's own "Backups" is just
+    // a folder; the flagged one never reaches this warning, it is refused).
+    if (files.some(isProtectedBackupsRoot)) return false
     return isBackupsRootPure(file, name)
   }
 

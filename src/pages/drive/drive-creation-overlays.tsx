@@ -62,6 +62,8 @@ export function DriveCreationOverlays({
         open={folderDialogOpen}
         onClose={onCloseFolderDialog}
         onCreate={onCreateFolder}
+        existingNames={existingDocNames}
+        namesReady={namesReady}
       />
       <NewDocumentDialog
         type={newDocType}
