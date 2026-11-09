@@ -50,6 +50,9 @@ E2E_STORAGE_ENV=(BLOB_STORE=local "BLOB_STORE_PATH=$BLOB_DIR")
 LOG_DIR="${E2E_LOG_DIR:-/tmp}"
 API_LOG="$LOG_DIR/bb-web-e2e-api-$API_PORT.log"
 VITE_LOG="$LOG_DIR/bb-web-e2e-vite-$VITE_PORT.log"
+# The signup mail-sink helper (e2e/helpers/mail-sink.ts) reads the API log; it defaults to the old
+# fixed /tmp/bb-web-e2e-api.log, so hand it this run's path.
+export BB_E2E_API_LOG="$API_LOG"
 WORKERS="${E2E_WORKERS:-1}"
 REPEAT="${E2E_REPEAT:-1}"
 # Task 1525: the signup email-code step's mail-sink helper
@@ -365,7 +368,6 @@ SQL
   local _cwd="$PWD"; cd "$BLOB_DIR" || return 3
   DATABASE_URL="$DATABASE_URL" BB_PORT="$API_PORT" \
     CORS_ORIGINS="http://localhost:$VITE_PORT" \
-    "${E2E_STORAGE_ENV[@]}" \
     AUDIT_SIGNING_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
     SHARE_WRAPPING_KEY=0000000000000000000000000000000000000000000000000000000000000002 \
     OPAQUE_SERVER_SETUP="$OPAQUE_SETUP" \
@@ -377,7 +379,7 @@ SQL
     BB_REQUIRE_PILOT_KEY="$BB_REQUIRE_PILOT_KEY" \
     BB_PILOT_SIGNUP_KEY="$BB_PILOT_SIGNUP_KEY" \
     BB_REQUIRE_PLAN_AT_SIGNUP="$BB_REQUIRE_PLAN_AT_SIGNUP" \
-    setsid env "${EMAIL_SAFETY_ENV[@]}" "${MOLLIE_FWD_ENV[@]}" "$API_BIN" >"$API_LOG" 2>&1 &
+    setsid env "${E2E_STORAGE_ENV[@]}" "${EMAIL_SAFETY_ENV[@]}" "${MOLLIE_FWD_ENV[@]}" "$API_BIN" >"$API_LOG" 2>&1 &
   API_PID=$!
   cd "$_cwd" || return 3
   # -m10 (not -m3): the FIRST auto-login also creates the dev user (Argon2id

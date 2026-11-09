@@ -7,6 +7,8 @@ import { EraseRequestCard } from './erase-request-card'
 import { RestoreFromErase } from './restore-from-erase'
 import { sharedEraseStatus } from '../lib/erase-status-store'
 import { StepUpAuth } from './step-up-auth'
+import { DeleteCodePrompt } from './delete-code-prompt'
+import { classifyDeleteError } from '../lib/delete-second-factor'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { DeviceProvision } from './device-provision'
@@ -370,22 +372,30 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     )
     : null
 
-  const runAccountDeletion = useCallback(async (token: string) => {
+  const [pendingDeleteToken, setPendingDeleteToken] = useState<string | null>(null)
+  const [deleteCodeError, setDeleteCodeError] = useState<string | null>(null)
+
+  const runAccountDeletion = useCallback(async (token: string, code?: string) => {
     setAccountState('working')
     setAccountError('')
+    setDeleteCodeError(null)
     try {
-      await deleteAccountPermanently('DELETE', token)
+      await deleteAccountPermanently('DELETE', token, code)
       // Same sign-out routine as the settings delete-account page: the
       // account is gone server-side; clear the client session/key state and
       // leave. Ends logged-out, exactly as the ruling requires.
       await logout()
       navigate('/login', { replace: true })
     } catch (e) {
-      if (e instanceof ApiError && e.status === 403) {
-        setAccountError('Re-authentication expired. Try again.')
-      } else {
-        setAccountError(e instanceof Error ? e.message : 'Deleting the account failed. Try again.')
-      }
+      const verdict = classifyDeleteError(
+        e instanceof ApiError ? e.status : undefined,
+        e instanceof ApiError ? e.code : undefined,
+        e instanceof Error ? e.message : 'Deleting the account failed. Try again.',
+        code !== undefined,
+      )
+      if (verdict.restartStepUp) setPendingDeleteToken(null)
+      if (!verdict.restartStepUp && code !== undefined) setDeleteCodeError(verdict.message)
+      else setAccountError(verdict.message)
       setAccountState('error')
     }
   }, [logout, navigate])
@@ -394,8 +404,15 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     const kind = stepUpKind
     setStepUpKind(null)
     if (kind === 'erase') void runEraseRequest(token)
-    if (kind === 'account') void runAccountDeletion(token)
-  }, [stepUpKind, runEraseRequest, runAccountDeletion])
+    if (kind === 'account') {
+      if (user?.totp_enabled) {
+        setDeleteCodeError(null)
+        setPendingDeleteToken(token)
+      } else {
+        void runAccountDeletion(token)
+      }
+    }
+  }, [stepUpKind, runEraseRequest, runAccountDeletion, user?.totp_enabled])
 
   const handleStepUpClosed = useCallback(() => {
     setStepUpKind(null)
@@ -591,6 +608,14 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
           {accountState === 'error' && <p className="text-[12px] text-red mt-2">{accountError}</p>}
         </div>
       </div>
+
+      <DeleteCodePrompt
+        open={pendingDeleteToken !== null}
+        busy={accountState === 'working'}
+        error={deleteCodeError}
+        onSubmit={(code) => pendingDeleteToken && void runAccountDeletion(pendingDeleteToken, code)}
+        onClose={() => setPendingDeleteToken(null)}
+      />
 
       <StepUpAuth
         open={stepUpKind !== null}
