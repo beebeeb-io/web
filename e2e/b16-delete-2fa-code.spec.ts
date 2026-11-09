@@ -121,7 +121,7 @@ test('2FA account: the delete asks for the code, sends it as `code`, and a wrong
   expect(refusal.status()).toBe(400)
   expect(deletes.length).toBe(1)
   expect(deletes[0]).toEqual({ confirmation: 'DELETE', code: wrong })
-  await expect(dialog.getByText("That code didn't match. Check your authenticator app and try again.")).toHaveCount(1)
+  await expect(page.getByText("That code didn't match. Check your authenticator app and try again.")).toHaveCount(1)
   await expect(page).toHaveURL(/\/settings\/delete-account/)
   await page.screenshot({ path: shotPath('02-2fa-wrong-code-error.png') })
 
