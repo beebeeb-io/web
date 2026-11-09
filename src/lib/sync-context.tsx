@@ -178,6 +178,11 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>
 }
 
+/** The sync context, or null outside a SyncProvider (components shared by pages with and without one). */
+export function useOptionalSync(): SyncContextValue | null {
+  return useContext(SyncContext)
+}
+
 export function useSync(): SyncContextValue {
   const ctx = useContext(SyncContext)
   if (!ctx) {

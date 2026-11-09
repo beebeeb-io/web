@@ -7,7 +7,8 @@ import { FileRow, type FileRowProps } from './file-list/file-row'
 import { FileListHeader } from './file-list/file-list-header'
 import { displayNameFrom, useDecryptedNames } from './file-list/use-decrypted-names'
 import { useFileThumbnails } from './file-list/use-file-thumbnails'
-import { backupsRootFirst, isProtectedBackupsRoot } from '../lib/backups-root'
+import { backupsDepth, backupsRootFirst, isProtectedBackupsRoot } from '../lib/backups-root'
+import { useOptionalSync } from '../lib/sync-context'
 import { needsOwnership, classifyItemIds, isForeignItemById } from '../lib/owner-adoption'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
@@ -392,6 +393,7 @@ export function FileList({
   }
 
   // ─── Context menu ──────────────────────────────────
+  const syncCtx = useOptionalSync()
   const [ctxMenu, setCtxMenu] = useState<{
     open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean; versionNumber: number; isStarred: boolean; mimeType: string | null
   }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false, versionNumber: 1, isStarred: false, mimeType: null })
@@ -1117,6 +1119,7 @@ export function FileList({
         isPinned={pinnedFolderIds.has(ctxMenu.fileId)}
         hasVersions={!ctxMenu.isFolder}
         isProtected={files.some((f) => f.id === ctxMenu.fileId && isProtectedBackupsRoot(f))}
+        inBackups={!!syncCtx && ctxMenu.open && (backupsDepth(ctxMenu.fileId, syncCtx.getNode) ?? 0) >= 1}
         onClose={() => setCtxMenu((prev) => ({ ...prev, open: false }))}
         onAction={(action, fileId) => {
           if (action === 'pin' || action === 'unpin') {
