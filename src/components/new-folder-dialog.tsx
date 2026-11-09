@@ -2,14 +2,19 @@
 import { useState, useRef, useEffect } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'
+import { checkNewFolderName } from '../lib/new-document'
 
 interface NewFolderDialogProps {
   open: boolean
   onClose: () => void
   onCreate: (name: string) => void
+  /** Every decrypted name in the target folder (files and folders). */
+  existingNames?: string[]
+  /** False while a sibling name is still decrypting: a clash can't be ruled out yet. */
+  namesReady?: boolean
 }
 
-export function NewFolderDialog({ open, onClose, onCreate }: NewFolderDialogProps) {
+export function NewFolderDialog({ open, onClose, onCreate, existingNames = [], namesReady = true }: NewFolderDialogProps) {
   const [name, setName] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const focusTrapRef = useFocusTrap<HTMLFormElement>(open)
@@ -25,11 +30,15 @@ export function NewFolderDialog({ open, onClose, onCreate }: NewFolderDialogProp
 
   if (!open) return null
 
+  const check = checkNewFolderName(name, existingNames)
+  // Only say why once something is typed; an empty field just disables Create.
+  const reason = name.trim() && !check.ok ? check.reason : null
+  const canCreate = check.ok && namesReady
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const trimmed = name.trim()
-    if (!trimmed) return
-    onCreate(trimmed)
+    if (!check.ok || !namesReady) return
+    onCreate(check.name)
     onClose()
   }
 
@@ -68,13 +77,19 @@ export function NewFolderDialog({ open, onClose, onCreate }: NewFolderDialogProp
               className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
             />
           </div>
+          {reason && (
+            <p role="alert" className="mt-1.5 text-xs text-red">{reason}</p>
+          )}
+          {!reason && name.trim() && !namesReady && (
+            <p className="mt-1.5 text-xs text-ink-3">Checking the names in this folder…</p>
+          )}
         </div>
 
         <div className="px-xl py-md border-t border-line flex justify-end gap-2">
           <BBButton type="button" variant="ghost" size="sm" onClick={onClose}>
             Cancel
           </BBButton>
-          <BBButton type="submit" variant="amber" size="sm" disabled={!name.trim()}>
+          <BBButton type="submit" variant="amber" size="sm" disabled={!canCreate}>
             Create
           </BBButton>
         </div>

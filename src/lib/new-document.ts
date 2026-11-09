@@ -229,3 +229,20 @@ export function checkNewDocumentName(
   }
   return { ok: true, name }
 }
+
+/**
+ * Check a new folder's name against its siblings (files and folders), the
+ * same way {@link checkNewDocumentName} does for documents: the server cannot
+ * catch a clash between encrypted names, so this is the only guard.
+ */
+export function checkNewFolderName(input: string, existingNames: Iterable<string>): NameCheck {
+  const name = input.trim()
+  if (!name) return { ok: false, reason: 'Give the folder a name.' }
+  if (/[/\\]/.test(name)) return { ok: false, reason: 'A name cannot contain / or \\.' }
+  for (const n of existingNames) {
+    if (foldName(n) === foldName(name)) {
+      return { ok: false, reason: `“${name}” already exists in this folder.` }
+    }
+  }
+  return { ok: true, name }
+}
