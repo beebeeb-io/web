@@ -79,6 +79,7 @@ export function payloadToNode(
     is_trashed: false,
     is_starred: false,
     chunk_count: (payload.chunk_count as number | undefined) ?? 1,
+    system_role: (payload.system_role as string | null | undefined) ?? null,
     created_at: now,
     updated_at: now,
   }
