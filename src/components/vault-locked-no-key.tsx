@@ -391,6 +391,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
         e instanceof ApiError ? e.status : undefined,
         e instanceof ApiError ? e.code : undefined,
         e instanceof Error ? e.message : 'Deleting the account failed. Try again.',
+        code !== undefined,
       )
       if (verdict.restartStepUp) setPendingDeleteToken(null)
       if (!verdict.restartStepUp && code !== undefined) setDeleteCodeError(verdict.message)

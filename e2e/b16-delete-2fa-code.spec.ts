@@ -125,24 +125,15 @@ test('2FA account: the delete asks for the code, sends it as `code`, and a wrong
   await expect(page).toHaveURL(/\/settings\/delete-account/)
   await page.screenshot({ path: shotPath('02-2fa-wrong-code-error.png') })
 
-  // Retyping in the same prompt reuses the step-up token, which the server spent on the first
-  // try: the page sends the person back to the password prompt (recorded here as observed).
-  const retry = page.waitForResponse(
-    (r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname === '/api/v1/auth/account',
-  )
-  await dialog.getByLabel('Code').fill(totp(secret))
-  await dialog.getByRole('button', { name: /^delete account$/i }).click()
-  const retried = await retry
-  expect(deletes.length).toBe(2)
-  expect(deletes[1]).toEqual({ confirmation: 'DELETE', code: totp(secret) })
-  const retryStatus = retried.status()
+  // The server spent the step-up on that try: the page drops the token and returns to the
+  // password step with one honest line. Never "Re-authentication expired".
   await expect(codeDialog(page)).toHaveCount(0)
-  await expect(page.getByText('Re-authentication expired. Enter your password again.')).toHaveCount(1)
-  expect(retryStatus).toBe(403)
-  await page.screenshot({ path: shotPath('03-2fa-retry-needs-password-again.png') })
+  await expect(page.getByPlaceholder('Your password')).toHaveCount(1)
+  await expect(page.getByText("That code didn't work. Confirm your password again to try once more.")).toHaveCount(1)
+  await expect(page.getByText(/Re-authentication expired/)).toHaveCount(0)
+  await page.screenshot({ path: shotPath('03-2fa-wrong-code-back-to-password.png') })
 
   // A fresh step-up and an 8-digit backup code: sent as `code`, the account is deleted.
-  await page.getByRole('button', { name: /^delete permanently$/i }).click()
   await page.getByPlaceholder('Your password').fill(PW)
   await page.getByRole('button', { name: /^delete account$/i }).click()
   await expect(codeDialog(page)).toHaveCount(1)
@@ -152,8 +143,8 @@ test('2FA account: the delete asks for the code, sends it as `code`, and a wrong
   await codeDialog(page).getByLabel('Code').fill(backupCodes[0])
   await codeDialog(page).getByRole('button', { name: /^delete account$/i }).click()
   expect((await done).status()).toBe(200)
-  expect(deletes.length).toBe(3)
-  expect(deletes[2]).toEqual({ confirmation: 'DELETE', code: backupCodes[0] })
+  expect(deletes.length).toBe(2)
+  expect(deletes[1]).toEqual({ confirmation: 'DELETE', code: backupCodes[0] })
   expect(backupCodes[0]).toMatch(/^\d{8}$/)
   await page.waitForURL(/\/login/, { timeout: 15_000 })
   await expect(page).toHaveURL(/\/login/)

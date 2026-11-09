@@ -60,12 +60,14 @@ export function DeleteAccount() {
           e instanceof ApiError ? e.status : undefined,
           e instanceof ApiError ? e.code : undefined,
           raw,
+          code !== undefined,
         )
         if (verdict.restartStepUp) {
+          // The step-up token is spent: drop it and start over from the password.
           setPendingToken(null)
-          setError(verdict.message)
+          setError(verdict.serverMessage ? `${verdict.serverMessage} ${verdict.message}` : verdict.message)
+          if (verdict.serverMessage) setPwPromptOpen(true)
         } else if (code !== undefined) {
-          // A wrong code is the person's to retype: the password step-up stays on the page.
           setCodeError(verdict.message)
         } else {
           setError(verdict.message)

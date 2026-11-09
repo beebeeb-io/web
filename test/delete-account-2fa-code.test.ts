@@ -49,4 +49,14 @@ describe('delete error handling', () => {
     expect(classifyDeleteError(403, 'second_factor_required', 'x').restartStepUp).toBe(false)
     expect(classifyDeleteError(403, 'confirmation_required', 'x').restartStepUp).toBe(true)
   })
+
+  test('a wrong code starts over with the password and says why; never "expired"', () => {
+    const v = classifyDeleteError(400, 'invalid_totp_code', 'Invalid code', true)
+    expect(v.restartStepUp).toBe(true)
+    expect(v.message).toBe("That code didn't work. Confirm your password again to try once more.")
+    expect(v.serverMessage).toBe('Invalid code')
+    expect(v.message).not.toContain('expired')
+    // No code was sent: a 400 is not a wrong-code case.
+    expect(classifyDeleteError(400, 'x', 'Bad', false).restartStepUp).toBe(false)
+  })
 })

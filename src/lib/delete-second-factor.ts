@@ -9,7 +9,17 @@ export function classifyDeleteError(
   status: number | undefined,
   code: string | undefined,
   message: string,
-): { restartStepUp: boolean; message: string } {
+  codeSent = false,
+): { restartStepUp: boolean; message: string; serverMessage?: string } {
+  // A wrong code: the server already spent the password step-up on this try, so the next
+  // try starts over from the password. The old token is never reused.
+  if (status === 400 && codeSent) {
+    return {
+      restartStepUp: true,
+      message: "That code didn't work. Confirm your password again to try once more.",
+      serverMessage: message,
+    }
+  }
   if (status === 403 && code !== 'second_factor_required') {
     return { restartStepUp: true, message: 'Re-authentication expired. Enter your password again.' }
   }
