@@ -7,6 +7,7 @@ import { FileRow, type FileRowProps } from './file-list/file-row'
 import { FileListHeader } from './file-list/file-list-header'
 import { displayNameFrom, useDecryptedNames } from './file-list/use-decrypted-names'
 import { useFileThumbnails } from './file-list/use-file-thumbnails'
+import { isProtectedBackupsRoot } from '../lib/backups-root'
 import { needsOwnership, classifyItemIds, isForeignItemById } from '../lib/owner-adoption'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
@@ -1112,6 +1113,7 @@ export function FileList({
         isStarred={ctxMenu.isStarred}
         isPinned={pinnedFolderIds.has(ctxMenu.fileId)}
         hasVersions={!ctxMenu.isFolder}
+        isProtected={files.some((f) => f.id === ctxMenu.fileId && isProtectedBackupsRoot(f))}
         onClose={() => setCtxMenu((prev) => ({ ...prev, open: false }))}
         onAction={(action, fileId) => {
           if (action === 'pin' || action === 'unpin') {

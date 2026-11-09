@@ -34,3 +34,27 @@ export function isBackupsRoot(
   if (decryptedName === null) return false
   return decryptedName === 'Backups'
 }
+
+/**
+ * LD-0113: the server-flagged Backups root. The server refuses to trash, delete,
+ * rename or move it (`409 protected_folder`), so the web never offers those
+ * actions on it. Only the server's flag counts, never the folder's name.
+ */
+export function isProtectedBackupsRoot(file: { system_role?: string | null }): boolean {
+  return file.system_role === 'backups_root'
+}
+
+/** Core's words (beebeeb-core `backup::protect`), the same the server sends. */
+export const BACKUPS_ROOT_REFUSAL = {
+  trash: "Backups is a system folder and can't be deleted.",
+  move: "Backups is a system folder and can't be moved.",
+  rename: "Backups is a system folder and can't be renamed.",
+} as const
+
+/** The refusal for `action` on a protected root, or null when it is allowed. */
+export function backupsRootRefusal(action: string): string | null {
+  if (action === 'trash' || action === 'delete') return BACKUPS_ROOT_REFUSAL.trash
+  if (action === 'move') return BACKUPS_ROOT_REFUSAL.move
+  if (action === 'rename') return BACKUPS_ROOT_REFUSAL.rename
+  return null
+}
