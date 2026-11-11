@@ -13,13 +13,21 @@
 /** The server's code shape: two groups of four from A-Z / 0-9 (the generator skips I, O, 0 and 1). */
 export const CODE_RE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/
 
+/** A complete code standing on its own inside pasted text, with or without the dash. */
+const PASTED_CODE_RE = /(?<![A-Z0-9])([A-Z0-9]{4})-?([A-Z0-9]{4})(?![A-Z0-9])/
+
 /**
- * Format what the person is typing or pasting: upper-case, letters and digits
- * only, a dash after the fourth character, at most eight characters. "abcd efgh"
- * and "abcdefgh" both become "ABCD-EFGH".
+ * Format what the person is typing or pasting: upper-case, a dash after the
+ * fourth character, at most eight characters. A complete code inside pasted
+ * text ("Code: ABCD-EFGH") is extracted first, so the label's letters do not
+ * become part of it. Otherwise (partial typing) letters and digits are kept and
+ * the rest dropped. "abcd efgh" and "abcdefgh" both become "ABCD-EFGH".
  */
 export function formatCodeInput(raw: string): string {
-  const alnum = raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8)
+  const upper = raw.toUpperCase()
+  const pasted = PASTED_CODE_RE.exec(upper)
+  if (pasted) return `${pasted[1]}-${pasted[2]}`
+  const alnum = upper.replace(/[^A-Z0-9]/g, '').slice(0, 8)
   return alnum.length > 4 ? `${alnum.slice(0, 4)}-${alnum.slice(4)}` : alnum
 }
 
