@@ -25,4 +25,8 @@ describe('1798 formatCodeInput', () => {
   test('overlong input is cut to eight characters', () => {
     expect(formatCodeInput('abcdefghijk')).toBe('ABCD-EFGH')
   })
+
+  test('a new code pasted onto an old one never yields a code from neither', () => {
+    expect(formatCodeInput('ABCD-EFGHWXYZ-QRST')).toBe('ABCD-EFGH')
+  })
 })
