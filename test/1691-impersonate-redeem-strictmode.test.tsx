@@ -104,11 +104,42 @@ let cleanup: (() => void) | null = null
 beforeEach(() => { cleanup = null })
 afterEach(() => { cleanup?.(); cleanup = null })
 
+/**
+ * Task 2094: every wait in this file is on OBSERVED state (a recorded mock
+ * call, a navigation, rendered text), never on a fixed sleep. The old
+ * `setTimeout(100)` / `setTimeout(700)` waits raced the dynamic imports, the
+ * module mock and React's scheduler: under CPU contention (11 of 50 runs red
+ * at 36 busy loops on 12 cores) the first test read postCount 0 and bailed
+ * with its page still mounting, and that stray page then called the NEXT
+ * test's mocked redeem (postCount 2).
+ */
+const WAIT_TIMEOUT_MS = 15_000
+// bun's default test timeout is 5s; the waits above need more headroom under load.
+const TEST_TIMEOUT_MS = 30_000
+
+async function waitFor(what: string, predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + WAIT_TIMEOUT_MS
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timed out after ${WAIT_TIMEOUT_MS}ms waiting for: ${what}`)
+    await new Promise((r) => setTimeout(r, 5))
+  }
+}
+
+/** One macrotask turn: lets any already-queued effect or microtask run. */
+const settle = () => new Promise<void>((r) => setTimeout(r, 0))
+
+interface RenderedPage {
+  text: () => string
+  navigations: string[]
+  storage: Map<string, string>
+  unmount: () => void
+}
+
 async function renderRedeemPage(io: {
   redeem: (token: string) => Promise<Record<string, unknown>>
   getMe: () => Promise<Record<string, unknown>>
   token: string | null
-}): Promise<{ text: string; navigations: string[]; storage: Map<string, string> }> {
+}): Promise<RenderedPage> {
   const { doc, win, container, created, navigations, storage } = installDom()
 
   await mockModuleScoped('../src/lib/api.ts', import.meta.dir, (real: Record<string, unknown>) => ({
@@ -128,14 +159,19 @@ async function renderRedeemPage(io: {
       React.createElement(rr.MemoryRouter, { initialEntries: [url] },
         React.createElement(ImpersonateRedeem))),
   )
-  await new Promise((r) => setTimeout(r, 700))
-  root.unmount()
-  await new Promise((r) => setTimeout(r, 50))
-  const text = created
-    .filter((c) => typeof c.textContent === 'string')
-    .map((c) => c.textContent as string)
-    .join('\n')
-  return { text, navigations, storage: storage.store }
+  let unmounted = false
+  const unmount = () => {
+    if (unmounted) return
+    unmounted = true
+    root.unmount()
+  }
+  cleanup = unmount
+  const text = () =>
+    created
+      .filter((c) => typeof c.textContent === 'string')
+      .map((c) => c.textContent as string)
+      .join('\n')
+  return { text, navigations, storage: storage.store, unmount }
 }
 
 describe('task 1691 follow-up: /auth/impersonate completes under StrictMode double-mount', () => {
@@ -146,61 +182,69 @@ describe('task 1691 follow-up: /auth/impersonate completes under StrictMode doub
     const redeemPromise = new Promise<Record<string, unknown>>((res) => { resolveRedeem = res })
     const mePromise = new Promise<Record<string, unknown>>((res) => { resolveMe = res })
 
-    const page = renderRedeemPage({
+    const page = await renderRedeemPage({
       token: 'one-shot-token',
-      redeem: async (t) => { postCount++; return await redeemPromise },
+      redeem: async (_t) => { postCount++; return await redeemPromise },
       getMe: async () => await mePromise,
     })
-    // Give StrictMode's mount1→cleanup→mount2 cycle time to run while the
-    // redeem promise is still pending (the exact interleaving of the bug).
-    await new Promise((r) => setTimeout(r, 100))
+    // Wait until mount1's effect has fired the POST, then let the rest of
+    // StrictMode's mount1→cleanup→mount2 cycle run while the redeem promise is
+    // still pending (the exact interleaving of the bug).
+    await waitFor('the redeem POST to fire', () => postCount >= 1)
+    await settle()
     expect(postCount).toBe(1) // double-POST guard held during the double-mount
     resolveRedeem({ session_token: 'tok', user_id: 'u-target', is_impersonation: true, admin_user_id: 'u-admin' })
     resolveMe({ email: 'target@example.com', user_id: 'u-target', is_impersonation: true })
 
-    const { text, navigations, storage } = await page
     // The success transition must NOT be suppressed by the stale cancelled flag:
     // (the created[] accumulator holds EVERY phase's nodes — the redeeming
     // spinner's copy legitimately remains; assert on phase presence + the
     // navigation, which only the success path can fire).
+    await waitFor('the success screen to render', () => page.text().includes('Redirecting to the drive'))
+    await waitFor('the hard navigation', () => page.navigations.length >= 1)
+    await settle() // a second navigation, if any, would land here
+    const text = page.text()
     expect(text).toContain('Signed in')
     expect(text).toContain('Redirecting to the drive')
     // Hard navigation fired exactly once, to the drive:
-    expect(navigations).toEqual(['/'])
+    expect(page.navigations).toEqual(['/'])
     // Banner markers written:
-    expect(storage.get('bb_impersonating_email')).toBe('target@example.com')
-    expect(storage.get('bb_impersonating_admin_id')).toBe('u-admin')
+    expect(page.storage.get('bb_impersonating_email')).toBe('target@example.com')
+    expect(page.storage.get('bb_impersonating_admin_id')).toBe('u-admin')
     // Exactly one POST for the single-use token:
     expect(postCount).toBe(1)
-  })
+  }, TEST_TIMEOUT_MS)
 
   test('redeem failure still surfaces the error screen (no stale-cancel stuck state either)', async () => {
     let postCount = 0
-    const page = renderRedeemPage({
+    const page = await renderRedeemPage({
       token: 'dead-token',
-      redeem: async (t) => { postCount++; throw new Error('This impersonation link has expired or already been used.') },
+      redeem: async (_t) => { postCount++; throw new Error('This impersonation link has expired or already been used.') },
       getMe: async () => { throw new Error('should not be reached') },
     })
-    await new Promise((r) => setTimeout(r, 100))
-    const { text, navigations } = await page
+    await waitFor('the error screen to render', () => page.text().includes('Link unavailable'))
+    await settle() // a second POST or a late navigation, if any, would land here
+    const text = page.text()
     expect(text).toContain('Link unavailable')
     expect(text).toContain('This impersonation link has expired or already been used.')
     expect(text).not.toContain('Signed in')
-    expect(navigations).toEqual([])
+    expect(page.navigations).toEqual([])
     expect(postCount).toBe(1)
-  })
+  }, TEST_TIMEOUT_MS)
 
   test('missing token → error screen without any POST', async () => {
     let postCount = 0
-    const page = renderRedeemPage({
+    const page = await renderRedeemPage({
       token: null,
       redeem: async () => { postCount++; return {} },
       getMe: async () => ({}),
     })
-    const { text, navigations } = await page
+    await waitFor('the error screen to render', () => page.text().includes('Link unavailable'))
+    await settle()
+    const text = page.text()
     expect(text).toContain('Link unavailable')
     expect(text).toContain('Missing impersonation token in the URL.')
-    expect(navigations).toEqual([])
+    expect(page.navigations).toEqual([])
     expect(postCount).toBe(0)
-  })
+  }, TEST_TIMEOUT_MS)
 })
