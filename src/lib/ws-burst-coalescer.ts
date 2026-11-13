@@ -1,4 +1,4 @@
-// ─── WS event-burst coalescing (task 2489) ──────────────────────────────────
+// ─── WS event-burst coalescing (task 2493) ──────────────────────────────────
 //
 // The server publishes one event per row: emptying a Trash of 2835 files is
 // 2835 `file.deleted` events. A page that refetches over the network per event

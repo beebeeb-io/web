@@ -68,7 +68,7 @@ export function Recent() {
 
   useEffect(() => { fetchFiles() }, [fetchFiles])
 
-  // Task 2489: a bulk delete or move is one event per row; refetch once per burst.
+  // Task 2493: a bulk delete or move is one event per row; refetch once per burst.
   useCoalescedWsEvent(
     ['file.created', 'file.uploaded', 'file.deleted', 'file.trashed', 'file.renamed', 'file.moved', 'version.restored'],
     500,

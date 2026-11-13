@@ -358,13 +358,13 @@ export function useWsEvent(types: string[], callback: (event: WsEvent) => void) 
   }, [ctx, typesKey])
 }
 
-/** A steady event stream still refetches at least this often (task 2489). */
+/** A steady event stream still refetches at least this often (task 2493). */
 const COALESCE_MAX_WAIT_MS = 5_000
 
 /**
  * Like `useWsEvent`, for a callback that refetches over the network: a burst of
  * matching events runs it ONCE, `quietMs` after the last one. The server sends
- * one event per row, so a bulk delete is a burst (task 2489).
+ * one event per row, so a bulk delete is a burst (task 2493).
  */
 export function useCoalescedWsEvent(types: string[], quietMs: number, callback: () => void) {
   const ctx = useContext(WsContext)

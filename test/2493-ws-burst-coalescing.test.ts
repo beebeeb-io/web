@@ -1,5 +1,5 @@
 /**
- * Task 2489 — a bulk delete's event burst must not become a request storm.
+ * Task 2493 — a bulk delete's event burst must not become a request storm.
  *
  * The server publishes one `file.deleted` per erased row, so emptying a Trash
  * of 2835 files is 2835 events. The Trash page re-listed the WHOLE trash

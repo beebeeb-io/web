@@ -126,7 +126,7 @@ export function Trash() {
   const [deleteProgress, setDeleteProgress] = useState<{ current: number; total: number } | null>(
     null,
   )
-  // Task 2489: while an erase runs it owns the list. Live events in that window
+  // Task 2493: while an erase runs it owns the list. Live events in that window
   // (its own batches' included) are deferred to one refetch when it ends.
   const erasingRef = useRef(false)
   const refreshAfterEraseRef = useRef(false)
@@ -155,7 +155,7 @@ export function Trash() {
 
   // Real-time: refresh trash when files are trashed, restored, or permanently deleted. Task 1918
   // round 4d: the erase status (what of the erase is left in the trash) changed too; the restore
-  // offer re-reads it (coalesced) when the shared cache is invalidated. Task 2489: Empty Trash is
+  // offer re-reads it (coalesced) when the shared cache is invalidated. Task 2493: Empty Trash is
   // one event per erased row, and each refetch re-lists the whole trash; once per burst. A refetch
   // between two erase batches would also clear `loading` mid-erase, re-enabling Empty / Restore.
   useCoalescedWsEvent(
