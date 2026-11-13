@@ -22,7 +22,7 @@ import {
   deleteFile,
   type DriveFile,
 } from '../lib/api'
-import { useWsEvent } from '../lib/ws-context'
+import { useCoalescedWsEvent } from '../lib/ws-context'
 import { useSync } from '../lib/sync-context'
 import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { userFriendlyError } from '../lib/user-friendly-error'
@@ -61,8 +61,10 @@ export function Starred() {
 
   useEffect(() => { fetchFiles() }, [fetchFiles])
 
-  useWsEvent(
+  // Task 2489: a bulk trash or delete is one event per row; refetch once per burst.
+  useCoalescedWsEvent(
     ['file.starred', 'file.trashed', 'file.deleted'],
+    500,
     useCallback(() => { fetchFiles() }, [fetchFiles]),
   )
 

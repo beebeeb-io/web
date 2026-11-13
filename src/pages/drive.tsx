@@ -590,8 +590,9 @@ export function Drive() {
   // File list changes: refresh on create, upload, delete, trash, restore, move, rename
   // Task 1700: once tree coverage is complete, the tree already drives the
   // visible rows (refreshFromSync above). Only events touching the watched
-  // folder need an API refetch, and those are coalesced; while coverage is
-  // incomplete the unconditional API fallback is kept.
+  // folder need an API refetch; while coverage is incomplete every event
+  // refetches. Both are coalesced, and a steady stream still refetches every
+  // 5 s (task 2489: a bulk delete elsewhere is one event per row).
   useWsEvent(
     ['file.created', 'file.uploaded', 'file.deleted', 'file.trashed', 'file.restored', 'file.moved', 'file.renamed', 'version.restored'],
     useCallback((event) => {
@@ -606,11 +607,9 @@ export function Drive() {
             return
           }
         }
-        wsRefetchTimer.schedule(500, () => fetchFilesRef.current())
-        return
       }
-      fetchFiles()
-    }, [fetchFiles, sync]),
+      wsRefetchTimer.schedule(500, () => fetchFilesRef.current(), 5_000)
+    }, [sync, wsRefetchTimer]),
   )
 
   // Cross-client search-index pruning. The encrypted index is shared across a

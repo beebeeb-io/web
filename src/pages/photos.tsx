@@ -21,7 +21,7 @@ import { ownedItem } from '../lib/owned-item'
 import { useToast } from '../components/toast'
 import { useDriveData } from '../lib/drive-data-context'
 import { isLikelyAlbumArtOrIcon } from '../lib/photo-library'
-import { useWsEvent } from '../lib/ws-context'
+import { useCoalescedWsEvent } from '../lib/ws-context'
 import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { UpgradeNudge } from '../components/upgrade-nudge'
 import { usePlanBlock } from '../hooks/use-plan-block'
@@ -208,19 +208,10 @@ export function Photos() {
   //
   // Debounced: a bulk delete/move emits one event per file. Coalesce the burst
   // into a single trailing fetchAllFiles() so N events ≠ N full media refetches.
-  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => {
-    if (refetchTimer.current !== null) clearTimeout(refetchTimer.current)
-  }, [])
-  useWsEvent(
+  useCoalescedWsEvent(
     ['file.uploaded', 'file.deleted', 'file.trashed', 'file.moved', 'file.renamed'],
-    useCallback(() => {
-      if (refetchTimer.current !== null) clearTimeout(refetchTimer.current)
-      refetchTimer.current = setTimeout(() => {
-        refetchTimer.current = null
-        fetchAllFiles()
-      }, 400)
-    }, [fetchAllFiles]),
+    400,
+    fetchAllFiles,
   )
 
   // Self-heal when the realtime channel reconnects or the tab refocuses, in case

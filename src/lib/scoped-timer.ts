@@ -10,37 +10,64 @@
 export interface ScopedTimer {
   /**
    * Schedule `fn`, replacing any pending run. `fn` fires only if the scope
-   * still matches the one captured here.
+   * still matches the one captured here. With `maxWaitMs`, a run that keeps
+   * being replaced (a steady event stream) still fires at most `maxWaitMs`
+   * after the first schedule of the stream (task 2489).
    */
-  schedule(delayMs: number, fn: () => void): void
+  schedule(delayMs: number, fn: () => void, maxWaitMs?: number): void
   /** Drop the pending run, if any. */
   cancel(): void
   /** True while a run is scheduled. */
   readonly pending: boolean
 }
 
-export function createScopedTimer(getCurrentScope: () => string): ScopedTimer {
-  let timer: ReturnType<typeof setTimeout> | null = null
+/** The timers and clock a scoped timer runs on; tests pass a fake clock. */
+export interface TimerHooks {
+  setTimeout: (fn: () => void, ms: number) => unknown
+  clearTimeout: (id: unknown) => void
+  now: () => number
+}
+
+const realTimers: TimerHooks = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
+  now: () => Date.now(),
+}
+
+export function createScopedTimer(
+  getCurrentScope: () => string,
+  timers: TimerHooks = realTimers,
+): ScopedTimer {
+  let timer: unknown = null
+  // When the pending run was first scheduled; reset when it fires or is cancelled.
+  let firstScheduledAt: number | null = null
+  const clear = () => {
+    if (timer !== null) {
+      timers.clearTimeout(timer)
+      timer = null
+    }
+  }
   return {
-    schedule(delayMs: number, fn: () => void): void {
-      if (timer) {
-        clearTimeout(timer)
-        timer = null
-      }
+    schedule(delayMs: number, fn: () => void, maxWaitMs?: number): void {
+      clear()
+      const now = timers.now()
+      firstScheduledAt ??= now
+      const delay = maxWaitMs === undefined
+        ? delayMs
+        : Math.max(0, Math.min(delayMs, firstScheduledAt + maxWaitMs - now))
       const scheduled = getCurrentScope()
-      timer = setTimeout(() => {
+      timer = timers.setTimeout(() => {
         timer = null
+        firstScheduledAt = null
         // The view may have navigated since scheduling — never apply a stale
         // parent's action.
         if (scheduled !== getCurrentScope()) return
         fn()
-      }, delayMs)
+      }, delay)
     },
     cancel(): void {
-      if (timer) {
-        clearTimeout(timer)
-        timer = null
-      }
+      clear()
+      firstScheduledAt = null
     },
     get pending(): boolean {
       return timer !== null
