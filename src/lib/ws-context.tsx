@@ -12,6 +12,7 @@ import type { AuthUser } from '@beebeeb/shared'
 import { useWebSocket } from '../hooks/use-websocket'
 import type { WsEvent } from '../hooks/use-websocket'
 import { useAuth, isAuthenticated } from './auth-context'
+import { createWsBurstCoalescer } from './ws-burst-coalescer'
 
 /**
  * Whether the leader tab should attempt to open the WebSocket — task 1471.
@@ -355,6 +356,29 @@ export function useWsEvent(types: string[], callback: (event: WsEvent) => void) 
 
     return ctx.subscribe(listener)
   }, [ctx, typesKey])
+}
+
+/**
+ * Like `useWsEvent`, for a callback that refetches over the network: a burst of
+ * matching events runs it ONCE, `quietMs` after the last one. The server sends
+ * one event per row, so a bulk delete is a burst (task 2489).
+ */
+export function useCoalescedWsEvent(types: string[], quietMs: number, callback: () => void) {
+  const ctx = useContext(WsContext)
+  const callbackRef = useRef(callback)
+  callbackRef.current = callback
+
+  const typesKey = types.join(',')
+
+  useEffect(() => {
+    if (!ctx) return
+    const coalescer = createWsBurstCoalescer(typesKey.split(','), quietMs, () => callbackRef.current())
+    const unsubscribe = ctx.subscribe(coalescer.listener)
+    return () => {
+      unsubscribe()
+      coalescer.cancel()
+    }
+  }, [ctx, typesKey, quietMs])
 }
 
 /**

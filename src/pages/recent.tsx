@@ -23,7 +23,7 @@ import {
   bulkTrashFiles,
   type DriveFile,
 } from '../lib/api'
-import { useWsEvent } from '../lib/ws-context'
+import { useCoalescedWsEvent } from '../lib/ws-context'
 import { useSync } from '../lib/sync-context'
 import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { userFriendlyError } from '../lib/user-friendly-error'
@@ -68,8 +68,10 @@ export function Recent() {
 
   useEffect(() => { fetchFiles() }, [fetchFiles])
 
-  useWsEvent(
+  // Task 2489: a bulk delete or move is one event per row; refetch once per burst.
+  useCoalescedWsEvent(
     ['file.created', 'file.uploaded', 'file.deleted', 'file.trashed', 'file.renamed', 'file.moved', 'version.restored'],
+    500,
     useCallback(() => { fetchFiles() }, [fetchFiles]),
   )
 

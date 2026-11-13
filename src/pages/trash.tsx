@@ -11,7 +11,7 @@ import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { TrashRowSkeleton } from '@beebeeb/shared'
 import { readNameMetadata } from '../lib/crypto'
-import { useWsEvent } from '../lib/ws-context'
+import { useCoalescedWsEvent } from '../lib/ws-context'
 import { EmptyTrash } from '../components/empty-states/empty-trash'
 import { RestoreFromEraseOffer } from '../components/restore-from-erase'
 import { restoreToast, splitRestored } from '../lib/trash-restore-summary'
@@ -151,9 +151,11 @@ export function Trash() {
 
   // Real-time: refresh trash when files are trashed, restored, or permanently deleted. Task 1918
   // round 4d: the erase status (what of the erase is left in the trash) changed too; the restore
-  // offer re-reads it (coalesced) when the shared cache is invalidated.
-  useWsEvent(
+  // offer re-reads it (coalesced) when the shared cache is invalidated. Task 2489: Empty Trash is
+  // one event per erased row, and each refetch re-lists the whole trash; once per burst.
+  useCoalescedWsEvent(
     ['file.trashed', 'file.restored', 'file.deleted'],
+    500,
     useCallback(() => {
       sharedEraseStatus.invalidate()
       fetchTrash()
