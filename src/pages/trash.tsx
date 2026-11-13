@@ -1,5 +1,5 @@
 // The /trash route: deleted files and restore.
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'
 import { BBCheckbox } from '@beebeeb/shared'
@@ -126,6 +126,10 @@ export function Trash() {
   const [deleteProgress, setDeleteProgress] = useState<{ current: number; total: number } | null>(
     null,
   )
+  // Task 2489: while an erase runs it owns the list. Live events in that window
+  // (its own batches' included) are deferred to one refetch when it ends.
+  const erasingRef = useRef(false)
+  const refreshAfterEraseRef = useRef(false)
 
   // Fetch trashed files from API
   const fetchTrash = useCallback(async () => {
@@ -152,12 +156,17 @@ export function Trash() {
   // Real-time: refresh trash when files are trashed, restored, or permanently deleted. Task 1918
   // round 4d: the erase status (what of the erase is left in the trash) changed too; the restore
   // offer re-reads it (coalesced) when the shared cache is invalidated. Task 2489: Empty Trash is
-  // one event per erased row, and each refetch re-lists the whole trash; once per burst.
+  // one event per erased row, and each refetch re-lists the whole trash; once per burst. A refetch
+  // between two erase batches would also clear `loading` mid-erase, re-enabling Empty / Restore.
   useCoalescedWsEvent(
     ['file.trashed', 'file.restored', 'file.deleted'],
     500,
     useCallback(() => {
       sharedEraseStatus.invalidate()
+      if (erasingRef.current) {
+        refreshAfterEraseRef.current = true
+        return
+      }
       fetchTrash()
     }, [fetchTrash]),
   )
@@ -325,6 +334,7 @@ export function Trash() {
 
     setDeleteProgress({ current: 0, total: ids.length })
     setLoading(true)
+    erasingRef.current = true
 
     const erased = new Set<string>()
     try {
@@ -366,11 +376,17 @@ export function Trash() {
         description: message,
         danger: true,
       })
-      fetchTrash()
+      // Some batches may have been erased: resync from the server.
+      refreshAfterEraseRef.current = true
     } finally {
       trashChanged()
+      erasingRef.current = false
       setDeleteProgress(null)
       setLoading(false)
+      if (refreshAfterEraseRef.current) {
+        refreshAfterEraseRef.current = false
+        fetchTrash()
+      }
     }
   }
 

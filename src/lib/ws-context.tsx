@@ -12,7 +12,7 @@ import type { AuthUser } from '@beebeeb/shared'
 import { useWebSocket } from '../hooks/use-websocket'
 import type { WsEvent } from '../hooks/use-websocket'
 import { useAuth, isAuthenticated } from './auth-context'
-import { createWsBurstCoalescer } from './ws-burst-coalescer'
+import { createWsBurstCoalescer, type WsBurstCoalescer } from './ws-burst-coalescer'
 
 /**
  * Whether the leader tab should attempt to open the WebSocket — task 1471.
@@ -358,6 +358,9 @@ export function useWsEvent(types: string[], callback: (event: WsEvent) => void) 
   }, [ctx, typesKey])
 }
 
+/** A steady event stream still refetches at least this often (task 2489). */
+const COALESCE_MAX_WAIT_MS = 5_000
+
 /**
  * Like `useWsEvent`, for a callback that refetches over the network: a burst of
  * matching events runs it ONCE, `quietMs` after the last one. The server sends
@@ -367,18 +370,29 @@ export function useCoalescedWsEvent(types: string[], quietMs: number, callback: 
   const ctx = useContext(WsContext)
   const callbackRef = useRef(callback)
   callbackRef.current = callback
+  const coalescerRef = useRef<WsBurstCoalescer | null>(null)
 
   const typesKey = types.join(',')
 
+  // The pending run lives as long as the page: the provider hands out a new
+  // context value on every render, and re-subscribing must not drop it.
+  useEffect(() => {
+    const coalescer = createWsBurstCoalescer(
+      typesKey.split(','),
+      { quietMs, maxWaitMs: COALESCE_MAX_WAIT_MS },
+      () => callbackRef.current(),
+    )
+    coalescerRef.current = coalescer
+    return () => {
+      coalescer.cancel()
+      coalescerRef.current = null
+    }
+  }, [typesKey, quietMs])
+
   useEffect(() => {
     if (!ctx) return
-    const coalescer = createWsBurstCoalescer(typesKey.split(','), quietMs, () => callbackRef.current())
-    const unsubscribe = ctx.subscribe(coalescer.listener)
-    return () => {
-      unsubscribe()
-      coalescer.cancel()
-    }
-  }, [ctx, typesKey, quietMs])
+    return ctx.subscribe((event) => coalescerRef.current?.listener(event))
+  }, [ctx])
 }
 
 /**

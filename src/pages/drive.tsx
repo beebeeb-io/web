@@ -591,8 +591,8 @@ export function Drive() {
   // Task 1700: once tree coverage is complete, the tree already drives the
   // visible rows (refreshFromSync above). Only events touching the watched
   // folder need an API refetch; while coverage is incomplete every event
-  // refetches. Both are coalesced (task 2489: a bulk delete elsewhere is one
-  // event per row).
+  // refetches. Both are coalesced, and a steady stream still refetches every
+  // 5 s (task 2489: a bulk delete elsewhere is one event per row).
   useWsEvent(
     ['file.created', 'file.uploaded', 'file.deleted', 'file.trashed', 'file.restored', 'file.moved', 'file.renamed', 'version.restored'],
     useCallback((event) => {
@@ -608,7 +608,7 @@ export function Drive() {
           }
         }
       }
-      wsRefetchTimer.schedule(500, () => fetchFilesRef.current())
+      wsRefetchTimer.schedule(500, () => fetchFilesRef.current(), 5_000)
     }, [sync, wsRefetchTimer]),
   )
 
