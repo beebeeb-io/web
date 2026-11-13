@@ -61,7 +61,7 @@ export function Starred() {
 
   useEffect(() => { fetchFiles() }, [fetchFiles])
 
-  // Task 2489: a bulk trash or delete is one event per row; refetch once per burst.
+  // Task 2493: a bulk trash or delete is one event per row; refetch once per burst.
   useCoalescedWsEvent(
     ['file.starred', 'file.trashed', 'file.deleted'],
     500,

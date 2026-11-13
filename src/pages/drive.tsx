@@ -592,7 +592,7 @@ export function Drive() {
   // visible rows (refreshFromSync above). Only events touching the watched
   // folder need an API refetch; while coverage is incomplete every event
   // refetches. Both are coalesced, and a steady stream still refetches every
-  // 5 s (task 2489: a bulk delete elsewhere is one event per row).
+  // 5 s (task 2493: a bulk delete elsewhere is one event per row).
   useWsEvent(
     ['file.created', 'file.uploaded', 'file.deleted', 'file.trashed', 'file.restored', 'file.moved', 'file.renamed', 'version.restored'],
     useCallback((event) => {

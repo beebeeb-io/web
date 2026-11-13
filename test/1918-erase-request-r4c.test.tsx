@@ -124,7 +124,7 @@ describe('1. no count from a cache older than the person\'s own action', () => {
     for (const name of ['handleRestore', 'performPermanentDelete', 'handleRestoreSelected', 'handleRestoreAll']) {
       expect(`${name}: ${/\} finally \{\s*trashChanged\(\)/.test(handlerBody(trash, name))}`).toBe(`${name}: true`)
     }
-    // Round 4d: live trash events invalidate it too (task 2489: once per burst, after its quiet period).
+    // Round 4d: live trash events invalidate it too (task 2493: once per burst, after its quiet period).
     expect(trash).toMatch(/\['file\.trashed', 'file\.restored', 'file\.deleted'\],\s*\d+,\s*useCallback\(\(\) => \{\s*sharedEraseStatus\.invalidate\(\)/)
   })
   test('the restore block (start and finish), the banner cancel and the locked screen invalidate it', async () => {

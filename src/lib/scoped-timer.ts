@@ -12,7 +12,7 @@ export interface ScopedTimer {
    * Schedule `fn`, replacing any pending run. `fn` fires only if the scope
    * still matches the one captured here. With `maxWaitMs`, a run that keeps
    * being replaced (a steady event stream) still fires at most `maxWaitMs`
-   * after the first schedule of the stream (task 2489).
+   * after the first schedule of the stream (task 2493).
    */
   schedule(delayMs: number, fn: () => void, maxWaitMs?: number): void
   /** Drop the pending run, if any. */
