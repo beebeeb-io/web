@@ -41,6 +41,6 @@ Modules 1–38, sorted by path.
 | `2083-resumed-upload-country.config.ts` | Standalone Playwright config for the 2083 resumed upload country spec, with no shared setup or storage state. | — |
 | `2092-pay-now-redirect.config.ts` | Standalone Playwright config for the 2092 pay now redirect spec, with no shared setup or storage state. | — |
 | `2106-confirm-payment.config.ts` | Standalone Playwright config for the 2106 confirm payment spec, with no shared setup or storage state. | — |
+| `2512-follow-server-bundle.config.ts` | Standalone Playwright config for task 2512 (no shared setup or storage state). | — |
 | `checkout-confirmation-resilience-0957.config.ts` | Standalone Playwright config for the checkout confirmation resilience 0957 spec, with no shared setup or storage state. | — |
 | `checkout-redirect-0865.config.ts` | Standalone Playwright config for the checkout redirect 0865 spec, with no shared setup or storage state. | — |
-| `container-proof.config.ts` | Standalone Playwright config for the container proof spec, with no shared setup or storage state. | — |

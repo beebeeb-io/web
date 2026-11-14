@@ -190,15 +190,20 @@ export async function opaqueRegisterStartExisting(
  *
  * Completes OPAQUE enrollment for an existing session. Persists the OPAQUE
  * password file alongside the recovery_check and x25519 public key so the
- * account can use OPAQUE on next login.
+ * account can use OPAQUE on next login. `confirmToken` is a password step-up
+ * token (`confirmAction`), required by the server since task 2506.
  */
 export async function opaqueRegisterFinishExisting(
   clientMessage: string,
   recoveryCheck: string,
   x25519PublicKey: string,
+  confirmToken?: string,
 ): Promise<{ migrated: true }> {
   return request('/api/v1/opaque/register-finish-existing', {
     method: 'POST',
+    // Task 2506/2512: the finish writes the sign-in credential, so the server
+    // wants a step-up token that is a real proof of the password.
+    ...(confirmToken ? { headers: { 'X-Confirm-Token': confirmToken } } : {}),
     body: JSON.stringify({
       client_message: clientMessage,
       recovery_check: recoveryCheck,
@@ -281,10 +286,17 @@ export async function verifyRecoveryCheck(recoveryCheck: string): Promise<boolea
  */
 export async function setRecoveryCheckIfAbsent(
   recoveryCheck: string,
+  confirmToken?: string,
 ): Promise<{ ok: boolean; updated: boolean }> {
+  // Only a real first fill (slot empty) needs `confirmToken` (task 2506/2512):
+  // an identical resend answers `updated: false` without one.
   return request<{ ok: boolean; updated: boolean }>(
     '/api/v1/auth/recovery-check',
-    { method: 'POST', body: JSON.stringify({ recovery_check: recoveryCheck }) },
+    {
+      method: 'POST',
+      ...(confirmToken ? { headers: { 'X-Confirm-Token': confirmToken } } : {}),
+      body: JSON.stringify({ recovery_check: recoveryCheck }),
+    },
   )
 }
 

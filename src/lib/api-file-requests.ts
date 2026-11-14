@@ -27,6 +27,9 @@ export interface FileRequest {
   expires_at: string | null
   closed: boolean
   closed_at: string | null
+  /** Task 2512: the owner removed it from their list. The row stays in the list
+   *  response because its `wrapped_private_key` still opens received files. */
+  hidden?: boolean
   created_at: string
   /** `APP_URL/r/<token>` — the client appends `#<R_pub>` to share. */
   request_url: string | null
@@ -99,6 +102,15 @@ export async function listFileRequests(): Promise<{ file_requests: FileRequest[]
  */
 export async function closeFileRequest(id: string): Promise<{ id: string; closed: boolean; closed_at: string | null }> {
   return request(`/api/v1/file-requests/${encodeURIComponent(id)}/close`, { method: 'POST' })
+}
+
+/**
+ * POST /api/v1/file-requests/:id/hide — take a closed or expired request out of
+ * my list (task 2512). Keeps the row and its private key, so received files
+ * stay readable. An open request is 409 `file_request_open`: close it first.
+ */
+export async function hideFileRequest(id: string): Promise<void> {
+  await request(`/api/v1/file-requests/${encodeURIComponent(id)}/hide`, { method: 'POST' })
 }
 
 /**

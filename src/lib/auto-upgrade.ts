@@ -37,6 +37,7 @@
 import {
   opaqueRegisterStartExisting,
   opaqueRegisterFinishExisting,
+  confirmAction,
 } from './api'
 import {
   opaqueRegistrationStart,
@@ -93,12 +94,19 @@ export async function autoUpgradeToV1(
     const recoveryCheck = await computeRecoveryCheck(masterKey)
     const x25519Pub = await deriveX25519Public(masterKey)
 
+    // 4b. Task 2506/2512: the finish needs a step-up that is a REAL proof of
+    //     the password (a fresh sign-in alone is refused). The password is in
+    //     hand right after sign-in; the token is single-use and short-lived, so
+    //     it is earned last, just before the call that spends it.
+    const { confirmation_token } = await confirmAction(password)
+
     // 5. Finish on the server: writes the V1 OPAQUE password file, preserves
     //    password_hash/salt + sessions, stamps opaque_ksf_version = 1.
     await opaqueRegisterFinishExisting(
       toBase64(regUpload),
       toBase64(recoveryCheck),
       toBase64(x25519Pub),
+      confirmation_token,
     )
     return true
   } catch (err) {

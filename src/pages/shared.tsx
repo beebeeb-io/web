@@ -23,6 +23,7 @@ import {
   resendInvite,
   withdrawInvite,
   hideInvite,
+  declineInvite,
   type ShareInvite,
   type ShareStats,
   type DriveFile,
@@ -84,6 +85,7 @@ export function Shared() {
 
   // "Pending" state
   const [sentInvited, setSentInvited] = useState<ShareInvite[]>([])
+  const [sentDeclined, setSentDeclined] = useState<ShareInvite[]>([])
   const [incomingInvited, setIncomingInvited] = useState<ShareInvite[]>([])
   const [incomingClaimed, setIncomingClaimed] = useState<ShareInvite[]>([])
 
@@ -128,6 +130,7 @@ export function Shared() {
       setWithMeInvites(incoming.filter((i) => i.status === 'approved'))
       setSentApproved(sent.filter((i) => i.status === 'approved'))
       setSentInvited(sent.filter((i) => i.status === 'invited'))
+      setSentDeclined(sent.filter((i) => i.status === 'declined'))
       setIncomingInvited(incoming.filter((i) => i.status === 'invited'))
       setIncomingClaimed(incoming.filter((i) => i.status === 'claimed'))
       setStats(shareStats)
@@ -687,10 +690,11 @@ export function Shared() {
     if (loading) return <LoadingSkeleton />
 
     const hasWaiting = sentInvited.length > 0
+    const hasDeclined = sentDeclined.length > 0
     const hasIncomingInvited = incomingInvited.length > 0
     const hasWaitingSender = incomingClaimed.length > 0
 
-    if (!hasWaiting && !hasIncomingInvited && !hasWaitingSender) {
+    if (!hasWaiting && !hasIncomingInvited && !hasWaitingSender && !hasDeclined) {
       // Only show ShareApprove section — it handles its own empty state
       return (
         <div className="flex-1 overflow-y-auto min-h-0">
@@ -721,6 +725,15 @@ export function Shared() {
                   key={invite.id}
                   variant="claim"
                   invite={invite}
+                  onDecline={async (row) => {
+                    try {
+                      await declineInvite(row.id)
+                      showToast({ icon: 'check', title: 'Declined', description: 'The sender will see that you declined.' })
+                      fetchAll()
+                    } catch (e) {
+                      showToast({ icon: 'x', title: 'Could not decline', description: userFriendlyError(e), danger: true })
+                    }
+                  }}
                   onClaim={async (row) => {
                     try {
                       await claimInvite(row.id)
@@ -752,6 +765,31 @@ export function Shared() {
                       open: true, x: rect.left, y: rect.bottom + 4,
                       inviteId: row.id, tab: 'pending', status: 'invited', role: 'sender',
                     })
+                  }}
+                />
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Section: Declined by the recipient (server #450) */}
+        {hasDeclined && (
+          <>
+            <SectionHeader title="Declined" count={sentDeclined.length} />
+            <div className="divide-y divide-line">
+              {sentDeclined.map((invite) => (
+                <SharedInviteRow
+                  key={invite.id}
+                  variant="declined"
+                  invite={invite}
+                  onDismiss={async (row) => {
+                    try {
+                      await cancelInvite(row.id)
+                      showToast({ icon: 'check', title: 'Dismissed', description: `Removed the declined invite to ${row.recipient_email}.` })
+                      fetchAll()
+                    } catch (e) {
+                      showToast({ icon: 'x', title: 'Could not dismiss', description: userFriendlyError(e), danger: true })
+                    }
                   }}
                 />
               ))}
@@ -791,7 +829,7 @@ export function Shared() {
     ? withMeInvites.length
     : tab === 'by-me'
     ? sentApproved.length
-    : sentInvited.length + incomingInvited.length + incomingClaimed.length
+    : sentInvited.length + incomingInvited.length + incomingClaimed.length + sentDeclined.length
 
   return (
     <DriveLayout>
@@ -830,7 +868,7 @@ export function Shared() {
         ]).map((t) => {
           const isActive = tab === t.id
           const badgeCount = t.id === 'pending'
-            ? sentInvited.length + incomingInvited.length + incomingClaimed.length
+            ? sentInvited.length + incomingInvited.length + incomingClaimed.length + sentDeclined.length
             : 0
 
           return (
