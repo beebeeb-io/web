@@ -23,6 +23,7 @@ import {
   listFileRequests,
   createFileRequest,
   closeFileRequest,
+  hideFileRequest,
   type FileRequest,
 } from '../lib/api'
 import {
@@ -311,7 +312,20 @@ export function FileRequestPage() {
     }
   }, [refresh, showToast])
 
-  const openCount = useMemo(() => requests.filter((r) => statusOf(r) === 'open').length, [requests])
+  // Task 2512: Remove = server-side hide. The row (and the key inside it) stays
+  // in the list response and in `requests`, only the visible list leaves it out.
+  const handleRemove = useCallback(async (id: string) => {
+    try {
+      await hideFileRequest(id)
+      showToast({ icon: 'check', title: 'Removed from your list', description: 'Files already received stay in your vault.' })
+      await refresh()
+    } catch (e) {
+      showToast({ icon: 'shield', title: 'Could not remove the request', description: e instanceof Error ? e.message : undefined, danger: true })
+    }
+  }, [refresh, showToast])
+
+  const visibleRequests = useMemo(() => requests.filter((r) => !r.hidden), [requests])
+  const openCount = useMemo(() => visibleRequests.filter((r) => statusOf(r) === 'open').length, [visibleRequests])
 
   return (
     <DriveLayout>
@@ -462,7 +476,7 @@ export function FileRequestPage() {
           {/* Requests list */}
           {loading ? (
             <div className="py-12 text-center text-[13px] text-ink-3">Loading your requests…</div>
-          ) : requests.length === 0 ? (
+          ) : visibleRequests.length === 0 ? (
             !showForm && (
               <div className="rounded-xl border border-dashed border-line-2 bg-paper-2 p-10 text-center">
                 <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-paper-3 flex items-center justify-center">
@@ -478,9 +492,9 @@ export function FileRequestPage() {
           ) : (
             <div className="space-y-3">
               {openCount > 0 && (
-                <p className="text-[11px] text-ink-4 font-mono">{openCount} open · {requests.length} total</p>
+                <p className="text-[11px] text-ink-4 font-mono">{openCount} open · {visibleRequests.length} total</p>
               )}
-              {requests.map((r) => {
+              {visibleRequests.map((r) => {
                 const status = statusOf(r)
                 const confirming = confirmCloseId === r.id
                 return (
@@ -530,6 +544,15 @@ export function FileRequestPage() {
                             className="text-[12px] text-ink-3 hover:text-red transition-colors cursor-pointer"
                           >
                             Close
+                          </button>
+                        )}
+                        {status !== 'open' && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemove(r.id)}
+                            className="text-[12px] text-ink-3 hover:text-ink transition-colors cursor-pointer"
+                          >
+                            Remove from list
                           </button>
                         )}
                         {confirming && (

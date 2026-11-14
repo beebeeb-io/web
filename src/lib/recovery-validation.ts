@@ -71,7 +71,16 @@ export interface RecoveryCheckBackfillDeps {
    */
   setRecoveryCheckIfAbsent: (
     recoveryCheckB64: string,
+    confirmToken?: string,
   ) => Promise<{ updated: boolean }>
+  /**
+   * Task 2506/2512: a real FIRST fill needs a step-up that proves the password
+   * (`confirmAction`). Supplied only where the password is in hand (password
+   * unlock); omit it on passkey/escrow unlocks, where the fill is then skipped
+   * (the next password sign-in does it). Never called when the slot is already
+   * filled: the first call goes out without a token.
+   */
+  confirmWithPassword?: () => Promise<string>
 }
 
 /**
@@ -100,8 +109,20 @@ export async function backfillRecoveryCheckIfAbsent(
 ): Promise<boolean> {
   try {
     const recoveryCheck = await deps.computeRecoveryCheckB64(masterKey)
-    const res = await deps.setRecoveryCheckIfAbsent(recoveryCheck)
-    return res.updated === true
+    try {
+      const res = await deps.setRecoveryCheckIfAbsent(recoveryCheck)
+      return res.updated === true
+    } catch (err) {
+      // Slot empty: the server asks for a proof first (`confirmation_required`).
+      // Earn one with the password if we hold it, then retry once.
+      // Duck-typed on purpose: the ApiError class can be a second copy across bundles.
+      const e = err as Partial<ApiError> | null
+      const needsProof = e?.status === 403 && e?.code === 'confirmation_required'
+      if (!needsProof || !deps.confirmWithPassword) throw err
+      const token = await deps.confirmWithPassword()
+      const res = await deps.setRecoveryCheckIfAbsent(recoveryCheck, token)
+      return res.updated === true
+    }
   } catch {
     // Best effort — a network/server failure must never surface to the unlock.
     return false

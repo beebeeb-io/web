@@ -301,6 +301,15 @@ export async function withdrawInvite(inviteId: string): Promise<void> {
   await request(`/api/v1/shares/invites/${inviteId}/withdraw`, { method: 'POST' })
 }
 
+/**
+ * Recipient says no (task 2512): the sender's list shows "declined" and the
+ * invite leaves the recipient's inbox. Idempotent; an already-accepted invite
+ * is 409 `invite_already_accepted`. Use `hideInvite` only to tidy a list.
+ */
+export async function declineInvite(inviteId: string): Promise<{ status: 'declined' }> {
+  return request(`/api/v1/shares/invites/${inviteId}/decline`, { method: 'POST' })
+}
+
 export async function hideInvite(inviteId: string): Promise<void> {
   await request(`/api/v1/shares/invites/${inviteId}/hide`, { method: 'POST' })
 }

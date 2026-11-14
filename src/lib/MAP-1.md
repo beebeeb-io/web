@@ -34,7 +34,7 @@ Modules 1–48, sorted by path.
 | `api-support.ts` | ─── API: Support tickets ─── SECTION_MARKER_END | — |
 | `api-transfers.ts` | Device-to-device transfer API calls: join, poll, download, and acknowledge. | — |
 | `api-vault-escrow.ts` | ─── API: Vault key escrow ─── SECTION_MARKER_END | — |
-| `api.ts` | The web API facade: one named re-export per endpoint module, no endpoint logic here. | API_URL, STATUS_URL, clearEmail, getEmail, hexToBytes, setEmail, CAPABILITIES_HEADER, RESET_2FA_CAPABILITY, login, logout, opaqueLoginFinish, opaqueLoginStart, … (+408 more) |
+| `api.ts` | The web API facade: one named re-export per endpoint module, no endpoint logic here. | API_URL, STATUS_URL, clearEmail, getEmail, hexToBytes, setEmail, CAPABILITIES_HEADER, RESET_2FA_CAPABILITY, login, logout, opaqueLoginFinish, opaqueLoginStart, … (+410 more) |
 | `approve-invite-crypto.ts` | Pure key-material logic for approving a pending share invite (task 1545, finding 1). | — |
 | `archive-name.ts` | Archive entry names from core's one path-safety rule (`beebeeb-wasm`). | — |
 | `auth-context.tsx` | Auth state provider: session restore, login/logout callbacks, and useAuth. | — |

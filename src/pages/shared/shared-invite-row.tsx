@@ -9,12 +9,15 @@ import { timeAgo } from './format'
  * sections differ only in icon, copy, chip and action, so they are one
  * component behind a `variant` union; the actions stay in the page.
  */
-export type SharedInviteVariant = 'claim' | 'waiting-to-claim' | 'waiting-approval'
+export type SharedInviteVariant = 'claim' | 'waiting-to-claim' | 'waiting-approval' | 'declined'
 
 export interface SharedInviteRowProps {
   variant: SharedInviteVariant
   invite: ShareInvite
   onClaim?(invite: ShareInvite): void
+  onDecline?(invite: ShareInvite): void
+  /** `declined` rows: the sender clears the row (cancels the invite). */
+  onDismiss?(invite: ShareInvite): void
   onOpenMenu?(invite: ShareInvite, e: MouseEvent): void
 }
 
@@ -22,9 +25,10 @@ const ICON_TONE = {
   claim: { icon: 'share', box: 'bg-amber-bg', tint: 'text-amber-deep' },
   'waiting-to-claim': { icon: 'mail', box: 'bg-paper-2', tint: 'text-ink-3' },
   'waiting-approval': { icon: 'clock', box: 'bg-paper-2', tint: 'text-ink-3' },
+  declined: { icon: 'x', box: 'bg-paper-2', tint: 'text-ink-3' },
 } as const
 
-export function SharedInviteRow({ variant, invite, onClaim, onOpenMenu }: SharedInviteRowProps) {
+export function SharedInviteRow({ variant, invite, onClaim, onDecline, onDismiss, onOpenMenu }: SharedInviteRowProps) {
   const tone = ICON_TONE[variant]
 
   return (
@@ -35,7 +39,7 @@ export function SharedInviteRow({ variant, invite, onClaim, onOpenMenu }: Shared
       <div className="flex-1 min-w-0">
         <div className="text-[13px] font-medium text-ink truncate">
           {variant === 'claim' && `${invite.sender_email ?? 'Someone'} shared a file`}
-          {variant === 'waiting-to-claim' && (
+          {(variant === 'waiting-to-claim' || variant === 'declined') && (
             <span className="font-mono text-xs">{invite.recipient_email}</span>
           )}
           {variant === 'waiting-approval' && (invite.sender_email ?? 'Unknown sender')}
@@ -43,11 +47,22 @@ export function SharedInviteRow({ variant, invite, onClaim, onOpenMenu }: Shared
         <div className="text-[11px] text-ink-3 mt-0.5">
           {variant === 'claim' && timeAgo(invite.created_at)}
           {variant === 'waiting-to-claim' && `Invited ${timeAgo(invite.created_at)}`}
+          {variant === 'declined' && `Invited ${timeAgo(invite.created_at)}`}
           {variant === 'waiting-approval' && (
             `Claimed ${invite.claimed_at ? timeAgo(invite.claimed_at) : timeAgo(invite.created_at)}`
           )}
         </div>
       </div>
+      {variant === 'claim' && onDecline && (
+        <BBButton
+          variant="ghost"
+          size="sm"
+          className="shrink-0"
+          onClick={() => onDecline(invite)}
+        >
+          Decline
+        </BBButton>
+      )}
       {variant === 'claim' && (
         <BBButton
           variant="amber"
@@ -62,10 +77,18 @@ export function SharedInviteRow({ variant, invite, onClaim, onOpenMenu }: Shared
       {variant === 'waiting-to-claim' && (
         <BBChip variant="default" className="text-[10px] shrink-0">Waiting to claim</BBChip>
       )}
+      {variant === 'declined' && (
+        <>
+          <BBChip variant="default" className="text-[10px] shrink-0">Declined</BBChip>
+          <BBButton size="sm" variant="ghost" className="shrink-0" onClick={() => onDismiss?.(invite)}>
+            Dismiss
+          </BBButton>
+        </>
+      )}
       {variant === 'waiting-approval' && (
         <BBChip variant="default" className="text-[10px] shrink-0">Waiting for approval</BBChip>
       )}
-      {variant !== 'claim' && (
+      {variant !== 'claim' && variant !== 'declined' && (
         <BBButton
           size="sm"
           variant="ghost"

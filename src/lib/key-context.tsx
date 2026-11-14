@@ -53,7 +53,7 @@ import {
 import { clearOfflineCaches, setOfflineCacheAccessCheck } from './offline-cache'
 import { clearThumbnailCache } from './thumbnail'
 import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
-import { ApiError, getFolderKeys, getSentInvites, listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
+import { ApiError, confirmAction, getFolderKeys, getSentInvites, listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
 import { sharedFoldersEnabled } from './use-feature-flag'
 import { forgetSharedFolderSession, foreignRowKey, folderKeyForRoot, needsOwnership, openOwnerFile } from './owner-adoption'
@@ -451,10 +451,14 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   //
   // Best-effort + fire-and-forget: never awaited by the caller; the helper
   // swallows all failures — it must never block or break an unlock.
-  const backfillRecoveryCheck = useCallback((key: Uint8Array) => {
+  const backfillRecoveryCheck = useCallback((key: Uint8Array, password?: string) => {
     void backfillRecoveryCheckIfAbsent(key, {
       computeRecoveryCheckB64: async (k) => toBase64(await computeRecoveryCheck(k)),
       setRecoveryCheckIfAbsent,
+      // Task 2512: a first fill needs a password proof; only password paths have one.
+      ...(password
+        ? { confirmWithPassword: async () => (await confirmAction(password)).confirmation_token }
+        : {}),
     })
   }, [])
 
@@ -484,7 +488,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     setVaultExists(true)
     setKeyPresent(true)
     cacheKey(key, userId)
-    backfillRecoveryCheck(key)
+    backfillRecoveryCheck(key, password)
   }, [cacheKey, backfillRecoveryCheck])
 
   // Set the master key directly without password wrapping.
@@ -579,7 +583,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     residentKeyUserIdRef.current = userId
     setKeyPresent(true)
     cacheKey(result.key, userId)
-    backfillRecoveryCheck(result.key)
+    backfillRecoveryCheck(result.key, password)
     return 'unlocked'
   }, [cacheKey, backfillRecoveryCheck, verifyUntaggedKey])
 
