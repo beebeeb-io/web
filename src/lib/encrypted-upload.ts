@@ -26,7 +26,7 @@ import {
   type ContentPin,
 } from './crypto'
 import { abandonUpload, initUpload, uploadChunk, completeUpload, getUploadStatus } from './api'
-import { assertEchoedItemId } from './item-id-echo'
+import { isServerChangedItemIdError } from './item-id-echo'
 import { withNetworkRetry } from './net-retry'
 import { fileStorageCountry } from './storage-regions'
 import type { DriveFile } from './api'
@@ -36,6 +36,7 @@ import {
   saveUploadState,
   removeUploadState,
   recordedCountry,
+  isOwnIdRecord,
   type UploadState,
 } from './upload-resume'
 import { isLikelyAlbumArtOrIcon } from './photo-library'
@@ -165,29 +166,23 @@ async function uploadFile(
 
   // Replace only: the existing file's recorded pin, read BEFORE anything
   // reaches the server. A new file stays `null` and never applies a pin.
-  // A pin belongs to ONE file id (`replacePinFileId`, the replaced file):
-  // it is applied and recorded only while the upload targets that id
-  // (`pinForCurrentFile`, the single gate), and resumed only from a record
-  // that names that id (`adoptRecordedReplacePin`). An init answered with
-  // another id is a brand-new file, which never pins (Codex P2 on web#170).
+  // The pin belongs to the row this upload writes: every init/pin echo check
+  // has already proven `serverFileId` is the id this client proposed, so a
+  // set pin is always the one for this file. Resumed only from a record that
+  // names that id (`adoptRecordedReplacePin`).
   let replacePin: ContentPin | null = null
-  let replacePinFileId: string | null = null
   if (options.replaceOf) {
     try {
       replacePin = (await readFileMetadata(fileKey, options.replaceOf.nameEncrypted)).pin
-      replacePinFileId = fileId
     } catch (err) {
       throw new UnverifiedFileMetadataError(UNVERIFIED_REPLACE_COPY, { cause: err })
     }
   }
 
-  /**
-   * The pin, only when it belongs to the file this upload now writes
-   * (`serverFileId`, which every init may change). The ONLY way the encryptor
-   * and the resume record get a pin.
-   */
+  /** The pin, only when this upload is a replace. The encryptor's and the
+   * resume record's only source of one. */
   function pinForCurrentFile(): ContentPin | null {
-    return replacePin !== null && replacePinFileId === serverFileId ? replacePin : null
+    return replacePin
   }
 
   // A replace sends the replaced file's OWN name, byte for byte (crypto review
@@ -249,23 +244,29 @@ async function uploadFile(
     // `abandonUpload` issued at the moment of abort can land BEFORE that,
     // see `not_uploading` (nothing to abandon yet), and leave the file
     // wedged once init's late response arrives.
-    const init = await withNetworkRetry(() => initUpload({
-      file_id: requestedFileId,
-      name_encrypted: nameEncrypted,
-      size_bytes: file.size,
-      chunk_count: fallbackChunkCount,
-      parent_id: parentId ?? null,
-      is_media: isMedia,
-      conflict_created: options.conflictCreated ?? false,
-    }, signal), signal)
-
-    // L13 (contract 2275, SF-0001): init answers name the item this upload
-    // writes under. Any id but the one this client proposed — a create's own
-    // minted id, or the listed row's id for a replace/version — aborts HERE,
-    // before a chunk, a name, a pin or a resume record can be sealed under it.
-    // (A server dedup/replace-by-name answer lands in this branch too: it is an
-    // abort, never a silent replace.)
-    assertEchoedItemId(requestedFileId, init.file_id)
+    let init: Awaited<ReturnType<typeof initUpload>>
+    try {
+      init = await withNetworkRetry(() => initUpload({
+        file_id: requestedFileId,
+        name_encrypted: nameEncrypted,
+        size_bytes: file.size,
+        chunk_count: fallbackChunkCount,
+        parent_id: parentId ?? null,
+        is_media: isMedia,
+        conflict_created: options.conflictCreated ?? false,
+      }, signal), signal)
+    } catch (err) {
+      // L13 (contract 2275, SF-0001): `initUpload` compares the answer with
+      // `requestedFileId` and aborts before a chunk, a name, a pin or a resume
+      // record is sealed under another item. The session the server may have
+      // opened for the id WE requested is ours to abandon — that id is the one
+      // we named, so this cannot touch another client's live upload. Best
+      // effort: the lease sweep covers a failed call, the echo error must win.
+      if (isServerChangedItemIdError(err)) {
+        await abandonUpload(requestedFileId).catch(() => {})
+      }
+      throw err
+    }
     serverFileId = init.file_id
     totalChunks = init.chunk_count
     // Task 2062: both protocols answer with the pool's country at init.
@@ -287,33 +288,46 @@ async function uploadFile(
     serverFileId = resumeFileId
     fingerprint = await computeFingerprint(file)
     const existing = await findByFingerprint(fingerprint)
-    const record = existing?.fileId === resumeFileId ? existing : null
-    adoptRecordedReplacePin(record, resumeFileId)
-    if (record?.upload_session_id) {
-      uploadSessionId = record.upload_session_id
-      objectVersionId = record.object_version_id ?? null
-      chunkBytes = record.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
-      totalChunks = record.chunk_count ?? record.totalChunks
-      region = record.region ?? null
-      country = recordedCountry(record)
-      resumingStoredFrames = true
-      sessionFormat = record.chunk_format
+    // L13 (SF-0001): a stored session is adopted only when the id it holds is
+    // one THIS client chose (the marker, or a pre-marker replace of a listed
+    // row). An unmarked CREATE record is never adopted, whichever entry point
+    // asked — the fingerprint branch below and Drive both rely on this.
+    const record =
+      existing?.fileId === resumeFileId && isOwnIdRecord(existing) ? existing : null
+    if (!record && existing?.fileId === resumeFileId) {
+      // Not ours to resume. Drop the local entry and start a fresh session
+      // under the id the caller minted; the server's lease sweep owns the row
+      // (a file-wide abandon here could kill another tab's live upload).
+      await removeUploadState(existing.fileId)
+      await startUpload()
     } else {
-      if (record) {
+      adoptRecordedReplacePin(record, resumeFileId)
+      if (record?.upload_session_id) {
+        uploadSessionId = record.upload_session_id
+        objectVersionId = record.object_version_id ?? null
         chunkBytes = record.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
         totalChunks = record.chunk_count ?? record.totalChunks
         region = record.region ?? null
-      country = recordedCountry(record)
-      }
-      try {
-        const status = await getUploadStatus(resumeFileId)
-        skipChunks = new Set(status.uploaded_chunks)
+        country = recordedCountry(record)
         resumingStoredFrames = true
-        sessionFormat = record?.chunk_format
-      } catch {
-        // Status check failed — server record may be gone, start fresh
-        skipChunks = new Set()
-        await startUpload()
+        sessionFormat = record.chunk_format
+      } else {
+        if (record) {
+          chunkBytes = record.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
+          totalChunks = record.chunk_count ?? record.totalChunks
+          region = record.region ?? null
+        country = recordedCountry(record)
+        }
+        try {
+          const status = await getUploadStatus(resumeFileId)
+          skipChunks = new Set(status.uploaded_chunks)
+          resumingStoredFrames = true
+          sessionFormat = record?.chunk_format
+        } catch {
+          // Status check failed — server record may be gone, start fresh
+          skipChunks = new Set()
+          await startUpload()
+        }
       }
     }
   } else {
@@ -324,9 +338,10 @@ async function uploadFile(
     if (
       existing &&
       existing.fileId === fileId &&
-      existing.fileSize === file.size
+      existing.fileSize === file.size &&
+      isOwnIdRecord(existing)
     ) {
-      // Found a prior upload — check server status
+      // Found a prior upload this client owns — check server status
       serverFileId = existing.fileId
       chunkBytes = existing.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
       totalChunks = existing.chunk_count ?? existing.totalChunks
@@ -351,15 +366,18 @@ async function uploadFile(
         }
       }
     } else {
-      if (existing && existing.fileId !== fileId) {
-        // L13: a stored session for another id is not this upload's. A record
-        // this client did not mint (no marker) may hold a server-chosen id, so
-        // abandon it through the endpoint rather than leave it on the server;
-        // then the upload continues under the id this client minted now.
-        if (existing.selfMinted !== true) await abandonUpload(existing.fileId).catch(() => {})
+      if (existing) {
+        // L13: this stored record is not adopted. For another row it is a
+        // fingerprint match only — the file-wide abandon endpoint reverts or
+        // deletes whatever upload that file holds NOW, which may be another
+        // tab's or device's live upload (Codex P1, web#170), so it is never
+        // called from here. The record's own session (a Resume click, which
+        // names it explicitly) or the server's lease sweep owns the row; the
+        // local entry goes so the banner stops offering it and the upload
+        // cannot loop on it.
         await removeUploadState(existing.fileId)
       }
-      // No prior upload — start fresh
+      // No prior upload this client owns — start fresh
       await startUpload()
     }
 
@@ -411,7 +429,6 @@ async function uploadFile(
     if (pinForCurrentFile() !== null || !record || record.replace_pin === undefined) return
     if (record.fileId !== resumedId || record.replace_pin_file_id !== resumedId) return
     replacePin = toContentPin(record.replace_pin)
-    replacePinFileId = resumedId
   }
 
   /**
@@ -442,8 +459,6 @@ async function uploadFile(
     region = null
     await startUpload(id)
     await persistResumeState()
-    // Answered under another id: the old id's record is a different entry.
-    if (serverFileId !== id) await removeUploadState(id).catch(() => {})
   }
 
   // Transfers every chunk against the CURRENT session and completes it. Run
@@ -567,9 +582,10 @@ async function uploadFile(
     // L13: the completion answer names the item that was written. Anything but
     // this upload's id aborts before the resume record is dropped or any key is
     // published under the echoed id.
-    const completed = await completeUpload(serverFileId, uploadSessionId)
-    assertEchoedItemId(serverFileId, completed.id)
-    return completed
+    // `completeUpload` asserts the echoed id itself. On a mismatch it throws
+    // with the record still in place: the chunks are already on the server, so
+    // dropping the record would invite a second upload of the same content.
+    return completeUpload(serverFileId, uploadSessionId)
   }
 
   // ── Upload chunks + complete ──────────────────────

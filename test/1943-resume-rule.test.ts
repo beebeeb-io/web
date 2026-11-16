@@ -25,6 +25,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type * as Wasm from 'beebeeb-wasm'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
+import { assertEchoedItemId } from '../src/lib/item-id-echo'
 import { hexToBytes, loadVectors, loadWasm } from './helpers/wasm-crypto-mirror'
 import { createContentOps } from '../src/lib/content-crypto'
 import type { UploadState } from '../src/lib/upload-resume'
@@ -106,7 +107,10 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
   initUpload: async (metadata: { file_id: string }) => {
     cap.inits.push(metadata.file_id)
     cap.events.push('init')
-    return initAnswer(metadata.file_id)
+    const answered = initAnswer(metadata.file_id)
+    // Mirrors the real `initUpload` primitive (L13): another id is an abort.
+    assertEchoedItemId(metadata.file_id, answered.file_id)
+    return answered
   },
   uploadChunk: async (_fileId: string, index: number, _data: Uint8Array, session?: string | null) => {
     cap.puts.push({ index, session })
@@ -152,7 +156,9 @@ function record(over: Partial<UploadState>): UploadState {
   return {
     fingerprint: 'fp', fileId: V2_FILE_ID, fileName: 'report.bin', fileSize: 4, totalChunks: 1,
     upload_session_id: 'old-session', object_version_id: 'ov-old', chunk_size_bytes: 4, chunk_count: 1,
-    region: 'Europe', parentId: null, createdAt: 1, ...over,
+    region: 'Europe', parentId: null, createdAt: 1,
+    // This client wrote the record; the resume rule under test is for those.
+    selfMinted: true, ...over,
   }
 }
 

@@ -4,9 +4,10 @@ import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { listFiles } from '../lib/api'
-import { createOwnerFolder } from '../lib/owner-upload-key'
+import { createSealedFolder } from '../lib/folder-create'
+import { userFriendlyError } from '../lib/user-friendly-error'
 import { useKeys } from '../lib/key-context'
-import { decryptFileMetadata, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
+import { decryptFileMetadata } from '../lib/crypto'
 
 interface MoveModalProps {
   open: boolean
@@ -41,6 +42,9 @@ export function MoveModal({
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(false)
   const [creatingFolder, setCreatingFolder] = useState(false)
+  // E7 (SF-0001 L13 round 2): a create failure is shown in the modal, not only
+  // console.error'd — a changed-id abort silently did nothing before.
+  const [createError, setCreateError] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
 
@@ -125,29 +129,27 @@ export function MoveModal({
   const handleNewFolder = async () => {
     const name = search.trim() || 'Untitled folder'
     setCreatingFolder(true)
+    setCreateError(null)
     try {
       const parentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
-      const folderId = crypto.randomUUID()
-      let nameEncrypted = name
-      let nameKey: Uint8Array | undefined
-      if (isUnlocked) {
-        nameKey = await getFileKey(folderId)
-        const enc = await encryptFilename(nameKey, name)
-        nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      }
-      // Inside a shared folder its name-key wrap is published too.
-      const created = await createOwnerFolder({
-        nameEncrypted,
+      // A locked vault (or unready crypto) refuses here and sends nothing —
+      // there is no plaintext-name fallback (SF-0001 L13 round 2, E6). Inside a
+      // shared folder its name-key wrap is published too.
+      const created = await createSealedFolder({
+        name,
         parentId,
-        folderId,
-        nameKey,
-        masterKey: nameKey ? getMasterKey() : undefined,
+        isUnlocked,
+        folderKey: getFileKey,
+        masterKey: isUnlocked ? getMasterKey() : undefined,
       })
       setDecryptedNames((prev) => ({ ...prev, [created.id]: name }))
       setSearch('')
       fetchFolders(parentId)
     } catch (err) {
+      // E7: the same honest sentence the other create paths show — including
+      // the changed-id abort, which used to vanish into console.error.
       console.error('[MoveModal] Failed to create folder:', err)
+      setCreateError(userFriendlyError(err))
       setSearch('')
     } finally {
       setCreatingFolder(false)
@@ -337,6 +339,11 @@ export function MoveModal({
             <Icon name="plus" size={11} />
             New folder
           </button>
+          {createError && (
+            <span role="alert" className="text-[11.5px] text-red-600">
+              {createError}
+            </span>
+          )}
           <div className="ml-auto flex gap-2">
             {/* "Copy here" removed (QA #1): there is no server-side copy — the
                 button performed a MOVE, silently losing the original. Re-add only

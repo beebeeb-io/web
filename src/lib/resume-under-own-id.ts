@@ -8,7 +8,7 @@
  * restarted under a fresh id this client mints now — once, never in a loop.
  */
 import { abandonUpload } from './api'
-import { planResume, removeUploadState, type ResumePlan, type UploadState } from './upload-resume'
+import { planResume, removeUploadState, type ResumePlan, type StoredSessionIdFields } from './upload-resume'
 
 export interface PreparedResume extends ResumePlan {
   /** True when a legacy record was abandoned and the upload restarts fresh. */
@@ -16,7 +16,7 @@ export interface PreparedResume extends ResumePlan {
 }
 
 export async function prepareResume(
-  record: Pick<UploadState, 'fileId' | 'selfMinted'>,
+  record: StoredSessionIdFields,
   mintId: () => string,
 ): Promise<PreparedResume> {
   const plan = planResume(record, mintId)

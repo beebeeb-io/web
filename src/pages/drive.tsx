@@ -68,6 +68,7 @@ import {
   type SyncNode,
 } from '../lib/api'
 import { createOwnerFolder, moveOwnerItems } from '../lib/owner-upload-key'
+import { createSealedFolder } from '../lib/folder-create'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { usePlanBlock } from '../hooks/use-plan-block'
 import { noCardTrialStatus, trialCapShortfallNotice } from '../lib/no-card-trial'
@@ -1905,24 +1906,18 @@ export function Drive() {
 
   async function handleCreateFolder(name: string) {
     try {
-      // Create folder first to get the server-assigned ID
-      // Then encrypt the name with that ID as the key derivation input
-      const folderId = crypto.randomUUID()
-      let nameEncrypted = name
-      let nameKey: Uint8Array | undefined
-      if (isUnlocked && cryptoReady) {
-        nameKey = await getFileKey(folderId)
-        const enc = await encryptFileMetadata(nameKey, name)
-        nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      }
-      // Inside a shared folder its name-key wrap is published too (guests and
-      // members read the name through it).
-      const result = await createOwnerFolder({
-        nameEncrypted,
+      // Mint the id first, then seal the name under the key derived from it.
+      // A locked vault (or unready crypto) refuses locally and sends nothing —
+      // there is no plaintext-name fallback (SF-0001 L13 round 2, E6). Inside a
+      // shared folder the name-key wrap is published too (guests and members
+      // read the name through it).
+      const result = await createSealedFolder({
+        name,
         parentId: currentParentId,
-        folderId,
-        nameKey,
-        masterKey: nameKey ? getMasterKey() : undefined,
+        isUnlocked,
+        cryptoReady,
+        folderKey: getFileKey,
+        masterKey: isUnlocked && cryptoReady ? getMasterKey() : undefined,
       })
 
       // Update the encrypted search index with the new folder

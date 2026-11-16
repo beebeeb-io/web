@@ -21,7 +21,7 @@ import type * as Wasm from 'beebeeb-wasm'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import type { UploadState } from '../src/lib/upload-resume'
-import { ServerChangedItemIdError } from '../src/lib/item-id-echo'
+import { ServerChangedItemIdError, assertEchoedItemId } from '../src/lib/item-id-echo'
 
 const wasm = loadWasm()
 const MK = new Uint8Array(32).fill(5)
@@ -102,6 +102,9 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
     }
     current = { session: 'fresh-session', live: true }
     const fileId = remapTo ?? metadata.file_id
+    // Mirrors the real `initUpload` primitive: an answer naming another item
+    // aborts before a chunk, a pin or a record can be written under it.
+    assertEchoedItemId(metadata.file_id, fileId)
     return {
       protocol: 'v2', file_id: fileId, tenant_id: 't', object_version_id: 'ov-fresh',
       upload_session_id: 'fresh-session', chunk_size_bytes: 4, chunk_count: 1,
@@ -151,6 +154,9 @@ function staleRecord(): UploadState {
     fingerprint: 'fp', fileId: FILE_ID, fileName: 'report.bin', fileSize: 4, totalChunks: 1,
     upload_session_id: 'old-session', object_version_id: 'ov-old', chunk_size_bytes: 4, chunk_count: 1,
     region: 'Europe', parentId: null, createdAt: 1,
+    // This client wrote the record (L13 round 2: only an id this client chose
+    // may be resumed; the restart rule under test is for those records).
+    selfMinted: true,
   }
 }
 

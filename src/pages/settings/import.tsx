@@ -33,6 +33,7 @@ import {
 import { encryptedUpload } from '../../lib/encrypted-upload'
 import { googleTokenRefresh } from '../../lib/api'
 import { createOwnerFolder } from '../../lib/owner-upload-key'
+import { createImportRun } from '../../lib/import-folders'
 import { deriveFileKey, encryptFilename, serializeEncryptedBlob } from '../../lib/crypto'
 import {
   GD_TOKEN_KEY,
@@ -909,7 +910,6 @@ export function SettingsImport() {
 
   const pausedRef    = useRef(false)
   const cancelCtrlRef = useRef<AbortController | null>(null)
-  const folderCacheRef = useRef<Map<string, string>>(new Map())
   const speedWindowRef = useRef<{ t: number; b: number }[]>([])
 
   function trackThroughput(bytes: number) {
@@ -928,46 +928,9 @@ export function SettingsImport() {
     setQueueCount(0)
     setSkippedDocs(0)
     speedWindowRef.current = []
-    folderCacheRef.current.clear()
     pausedRef.current = false
   }
 
-  /** Ensure the Beebeeb folder hierarchy for a provider path exists, returning the leaf folder ID. */
-  async function ensureFolderPath(folderPath: string, masterKey: Uint8Array): Promise<string | undefined> {
-    if (!folderPath || folderPath === '') return undefined
-    if (folderCacheRef.current.has(folderPath)) return folderCacheRef.current.get(folderPath)
-
-    const parts = folderPath.split('/').filter(Boolean)
-    const name = parts[parts.length - 1] ?? folderPath
-    const parentPath = '/' + parts.slice(0, -1).join('/')
-    const parentId = parts.length > 1
-      ? await ensureFolderPath(parentPath === '/' ? '' : parentPath, masterKey)
-      : undefined
-
-    const pathBytes = new TextEncoder().encode(folderPath)
-    const pathHash = await crypto.subtle.digest('SHA-256', pathBytes)
-    const folderId = Array.from(new Uint8Array(pathHash))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('')
-      .slice(0, 36)
-      .replace(/^(.{8})(.{4})(.{4})(.{4})(.{12}).*$/, '$1-$2-$3-$4-$5')
-
-    if (folderCacheRef.current.has(folderId)) return folderCacheRef.current.get(folderId)
-
-    const folderKey = await deriveFileKey(masterKey, folderId)
-    const encName = await encryptFilename(folderKey, name)
-    const nameEncrypted = serializeEncryptedBlob(encName.nonce, encName.ciphertext)
-
-    try {
-      // Inside a shared folder its name-key wrap is published too.
-      const folder = await createOwnerFolder({ nameEncrypted, parentId, folderId, nameKey: folderKey, masterKey })
-      folderCacheRef.current.set(folderPath, folder.id)
-      return folder.id
-    } catch {
-      folderCacheRef.current.set(folderPath, folderId)
-      return folderId
-    }
-  }
 
   // ── Core worker loop (runs the actual import for any provider) ───────────────
 
@@ -978,6 +941,25 @@ export function SettingsImport() {
   ) {
     let bytesAccum = 0
     const localFailed: string[] = []
+
+    // One run per import: folder ids are minted fresh here and cached only for
+    // this run (SF-0001 L13 round 2, E1). A folder create that fails stops its
+    // subtree and surfaces — never a guessed parent id.
+    const run = createImportRun({
+      masterKey,
+      mintId: () => crypto.randomUUID(),
+      deriveKey: (id) => deriveFileKey(masterKey, id),
+      encryptName: async (nameKey, name) => {
+        const enc = await encryptFilename(nameKey, name)
+        return serializeEncryptedBlob(enc.nonce, enc.ciphertext)
+      },
+      // Inside a shared folder its name-key wrap is published too.
+      create: (args) => createOwnerFolder({ ...args, masterKey }),
+      upload: (file, fileId, fileKey, parentId, mk, signal) =>
+        encryptedUpload(file, fileId, fileKey, mk, parentId, (p) => {
+          if (p.stage === 'Uploading' && p.bytesUploaded) trackThroughput(p.bytesUploaded)
+        }, undefined, undefined, signal),
+    })
 
     for (let i = 0; i < rawQueue.length; i++) {
       while (pausedRef.current) {
@@ -1006,17 +988,12 @@ export function SettingsImport() {
           const blob = await downloadFn(item.key, ctrl.signal)
           trackThroughput(blob.size)
 
-          const parentId = await ensureFolderPath(item.parentPath, masterKey)
-
           updateStatus('encrypting')
-          const fileId = crypto.randomUUID()
-          const fileKey = await deriveFileKey(masterKey, fileId)
+          const file = new File([blob], item.name, { type: blob.type || 'application/octet-stream' })
 
           updateStatus('uploading')
-          const file = new File([blob], item.name, { type: blob.type || 'application/octet-stream' })
-          await encryptedUpload(file, fileId, fileKey, masterKey, parentId, (p) => {
-            if (p.stage === 'Uploading' && p.bytesUploaded) trackThroughput(p.bytesUploaded)
-          }, undefined, undefined, ctrl.signal)
+          // Resolves the folder first: a folder that failed never gets an init.
+          await run.uploadItem(file, item.parentPath, ctrl.signal)
 
           updateStatus('done')
           bytesAccum += item.size

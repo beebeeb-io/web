@@ -12,6 +12,10 @@ import { ApiError } from './api'
 import { consumeAccountDeletedNotice, type NoticeStorage } from './account-deleted-notice'
 import { ACCOUNT_INACTIVE_NOTICE } from './account-inactive'
 import { UploadRestartFailedError } from './upload-session-reinit'
+import {
+  ServerChangedItemIdAfterUploadError,
+  ServerChangedItemIdError,
+} from './item-id-echo'
 import { FOLDER_NEEDS_UPGRADE, FolderUpgradeRefusedError, needsFolderUpgrade } from './folder-upgrade'
 import { strictRefusalMessage } from './storage-regions'
 import { shareRefusalCopy, startTrialErrorCopy, trialBillingRefusalCopy } from './no-card-trial'
@@ -122,6 +126,12 @@ export function userFriendlyError(err: unknown): string {
   // Task 1589 — a swept upload session whose fresh re-init also failed. Its
   // message is written for users and says what to do (upload again).
   if (err instanceof UploadRestartFailedError) return err.message
+
+  // L13 (SF-0001): an item answered with another id. The after-upload copy is
+  // longer than the short-message heuristic accepts and must not be trimmed —
+  // it says the file may already exist, so a retry does not upload it twice.
+  if (err instanceof ServerChangedItemIdAfterUploadError) return err.message
+  if (err instanceof ServerChangedItemIdError) return err.message
 
   // Contract 2237 §2: a folder with legacy rows needs the upgrade before it can
   // get a link or a new invite. Its own sentence, never a generic conflict.

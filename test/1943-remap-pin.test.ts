@@ -12,7 +12,7 @@ import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { hexToBytes, loadVectors, loadWasm } from './helpers/wasm-crypto-mirror'
 import { createContentOps } from '../src/lib/content-crypto'
 import type { UploadState } from '../src/lib/upload-resume'
-import { SERVER_CHANGED_ITEM_ID_MESSAGE, ServerChangedItemIdError } from '../src/lib/item-id-echo'
+import { SERVER_CHANGED_ITEM_ID_MESSAGE, ServerChangedItemIdError, assertEchoedItemId } from '../src/lib/item-id-echo'
 
 const wasm = loadWasm()
 const ops = createContentOps(wasm)
@@ -90,6 +90,8 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
     const answer = initAnswers.length > 1 ? initAnswers.shift()! : initAnswers[0]
     const init = answer(metadata.file_id) as { file_id: string; upload_session_id: string }
     cap.events.push(`init:${metadata.file_id}->${init.file_id}`)
+    // Mirrors the real `initUpload` primitive (L13): another id is an abort.
+    assertEchoedItemId(metadata.file_id, init.file_id)
     return init
   },
   uploadChunk: async (fileId: string, index: number, _data: Uint8Array, session?: string | null) => {
@@ -202,7 +204,9 @@ describe('L13: a replace answered with another file id aborts before anything is
     await expect(upload(V2_FILE_ID, V2_KEY, undefined, V2_FILE_ID)).rejects.toBeInstanceOf(ServerChangedItemIdError)
 
     expect(cap.events).toContain('policy(none)=restart')
-    expect(cap.abandons).toEqual([])
+    // E5 (L13 round 2): the refused re-init abandons the id this client
+    // REQUESTED (its own named row), never the answered one.
+    expect(cap.abandons).toEqual([V2_FILE_ID])
     expect(cap.events.filter((e) => e.startsWith('pin:'))).toEqual([`pin:2@${V2_FILE_ID}`])
     expect(cap.puts).toEqual([])
     expect(cap.saved).toEqual([])
@@ -220,15 +224,18 @@ describe('resume never applies a pin recorded for a different file id', () => {
     stored = recordFor({ replace_pin: 2, replace_pin_file_id: V2_FILE_ID } as Partial<UploadState>)
     await upload(NEW_ID, NEW_KEY, undefined, NEW_ID)
     expect(cap.events.filter((e) => e.startsWith('pin:'))).toEqual([])
-    expect(cap.events).toContain('policy(1)=continue')
-    expect(cap.puts).toEqual([{ fileId: NEW_ID, session: 'new-session' }])
+    // L13 round 2: an unmarked create record is never adopted, so the upload
+    // starts fresh — and still applies no pin recorded for another file.
+    expect(cap.events).toContain(`init:${NEW_ID}->${NEW_ID}`)
+    expect(cap.puts).toEqual([{ fileId: NEW_ID, session: 'fresh-session' }])
   })
 
   test('a record with a pin but no owning file id (unknown origin) is resumed without the pin', async () => {
     stored = recordFor({ replace_pin: 2 })
     await upload(NEW_ID, NEW_KEY, undefined, NEW_ID)
     expect(cap.events.filter((e) => e.startsWith('pin:'))).toEqual([])
-    expect(cap.events).toContain('policy(1)=continue')
+    // Unmarked record: never adopted (L13 round 2), and never pinned.
+    expect(cap.events).toContain(`init:${NEW_ID}->${NEW_ID}`)
   })
 
   test('a record whose pin names its own file still resumes with that pin (a resumed replace)', async () => {

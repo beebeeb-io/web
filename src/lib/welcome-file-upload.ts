@@ -2,7 +2,7 @@
  * The encrypted upload of "Welcome to Beebeeb.md" (task 1037 split — see
  * `welcome-file.ts` for when it runs). Same pipeline as any drive upload:
  * `encryptedUpload` with the master key; the per-file key is derived in core
- * from the server-assigned file id.
+ * from the file id this client mints and proposes.
  */
 
 import { encryptedUpload } from './encrypted-upload'

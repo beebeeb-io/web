@@ -13,6 +13,7 @@
  * Call `await installMocks()` at the top level of the test file.
  */
 import { mockModuleScoped } from './scoped-module-mock'
+import { assertEchoedItemId, assertEchoedItemIdAfterUpload } from '../../src/lib/item-id-echo'
 
 // ── Shared state ─────────────────────────────────────────────────────────────
 // Upload-contract captures (the contract suite asserts on these).
@@ -28,7 +29,14 @@ export const cap = {
   createdFolders: [] as Array<{ nameEncrypted: string; parentId?: string; folderId?: string }>,
   movedItems: [] as Array<{ id: string; parentId: string | null }>,
   abandons: [] as string[],
+  /** Content pins the encryptor was told to write with (a resumed replace). */
+  appliedPins: [] as number[],
 }
+/**
+ * The stored upload record the resume lookup answers (null: none). Default null
+ * so a fingerprint match means "nothing to resume", as before.
+ */
+export const resume: { record: Record<string, unknown> | null } = { record: null }
 /**
  * L13 (contract 2275, SF-0001): by default the mocked server ECHOES the id the
  * client proposed — the only answer an uploader may write under. A test that
@@ -63,6 +71,8 @@ export function resetCaptures(): void {
   cap.createdFolders.length = 0
   cap.movedItems.length = 0
   cap.abandons.length = 0
+  cap.appliedPins.length = 0
+  resume.record = null
 }
 
 // Listing pager (the folder-share suite drives this).
@@ -76,6 +86,7 @@ const stubStream = (masterKey: Uint8Array) => ({
   // session) and, on a resume, core's resume policy. A new v1 upload here.
   format: async () => 1,
   resumePolicy: async () => 'continue' as const,
+  applyRecordedPin: async (pin: number) => { cap.appliedPins.push(pin) },
   pushChunk: async () => new Uint8Array([masterKey[0]]),
   finish: async () => ({ chunk_count: 1, total_plaintext_bytes: 4, total_ciphertext_bytes: 1 }),
   dispose: async () => {},
@@ -129,6 +140,8 @@ export async function installMocks(): Promise<void> {
       cap.initCalls.push(metadata)
       const requested = (metadata as { file_id: string }).file_id
       const answered = echo.init ? echo.init(requested) : requested
+      // Mirrors the real primitive: the check lives in `./api`, once.
+      assertEchoedItemId(requested, answered)
       if (echo.protocol === 'v1') return { protocol: 'v1', file_id: answered, chunk_count: 1 }
       return {
         protocol: 'v2', file_id: answered, tenant_id: 'tenant-id',
@@ -142,11 +155,17 @@ export async function installMocks(): Promise<void> {
       cap.uploadedChunks.push({ fileId, index, firstByte: data[0], uploadSessionId })
       return { index, size: data.byteLength }
     },
-    completeUpload: async (fileId: string) => ({
-      id: echo.complete ? echo.complete(fileId) : fileId, name_encrypted: cap.updatedFiles.at(-1)?.nameEncrypted ?? '',
-      mime_type: null, size_bytes: 4, chunk_count: 1, is_folder: false, is_uploading: false,
-      created_at: '2026-05-08T00:00:00.000Z', updated_at: '2026-05-08T00:00:00.000Z',
-    }),
+    completeUpload: async (fileId: string) => {
+      const id = echo.complete ? echo.complete(fileId) : fileId
+      // Mirrors the real primitive: a completion mismatch is the typed
+      // after-upload error, thrown with every chunk already written.
+      assertEchoedItemIdAfterUpload(fileId, id)
+      return {
+        id, name_encrypted: cap.updatedFiles.at(-1)?.nameEncrypted ?? '',
+        mime_type: null, size_bytes: 4, chunk_count: 1, is_folder: false, is_uploading: false,
+        created_at: '2026-05-08T00:00:00.000Z', updated_at: '2026-05-08T00:00:00.000Z',
+      }
+    },
     addFolderKeys: async (inviteId: string, keys: unknown[], folderKeyId: string, format?: string) => {
       cap.addFolderKeysCalls.push({ inviteId, keys, folderKeyId, format })
     },
@@ -160,8 +179,11 @@ export async function installMocks(): Promise<void> {
     },
     createFolder: async (nameEncrypted: string, parentId?: string, folderId?: string) => {
       cap.createdFolders.push({ nameEncrypted, parentId, folderId })
+      const id = echo.createFolder ? echo.createFolder(folderId) : (folderId ?? 'server-folder-id')
+      // Mirrors the real primitive: another folder id aborts in `./api`.
+      if (folderId !== undefined) assertEchoedItemId(folderId, id)
       return {
-        id: echo.createFolder ? echo.createFolder(folderId) : (folderId ?? 'server-folder-id'),
+        id,
         name_encrypted: nameEncrypted, mime_type: null, size_bytes: 0, chunk_count: 0,
         is_folder: true, is_uploading: false,
         created_at: '2026-05-08T00:00:00.000Z', updated_at: '2026-05-08T00:00:00.000Z',
@@ -179,7 +201,7 @@ export async function installMocks(): Promise<void> {
 
   await mockModuleScoped('../../src/lib/upload-resume', here, {
     computeFingerprint: async () => 'fingerprint',
-    findByFingerprint: async () => null,
+    findByFingerprint: async () => resume.record as never,
     saveUploadState: async (state: { fileId: string; upload_session_id?: string | null }) => {
       cap.savedStates.push(state)
     },

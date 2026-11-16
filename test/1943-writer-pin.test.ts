@@ -24,7 +24,7 @@ import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { hexToBytes, inProcessPort, loadVectors, loadWasm, toHex } from './helpers/wasm-crypto-mirror'
 import { applyRecordedPinInRegistry, createContentOps } from '../src/lib/content-crypto'
 
-import { ServerChangedItemIdError } from '../src/lib/item-id-echo'
+import { ServerChangedItemIdError, assertEchoedItemId } from '../src/lib/item-id-echo'
 
 const wasm = loadWasm()
 const ops = createContentOps(wasm)
@@ -88,8 +88,11 @@ await mockModuleScoped('../src/lib/net-retry', import.meta.dir, {
 await mockModuleScoped('../src/lib/api', import.meta.dir, {
   initUpload: async (metadata: { file_id: string; name_encrypted: string }) => {
     cap.initCalls.push(metadata)
+    const answered = serverFileId(metadata.file_id)
+    // Mirrors the real `initUpload` primitive (L13): another id is an abort.
+    assertEchoedItemId(metadata.file_id, answered)
     return {
-      protocol: 'v2', file_id: serverFileId(metadata.file_id), tenant_id: 't',
+      protocol: 'v2', file_id: answered, tenant_id: 't',
       object_version_id: 'ov', upload_session_id: 'us', chunk_size_bytes: 4, chunk_count: 1,
       storage_format_version: 2, storage_pool_id: 'p', region: 'Europe',
     }
@@ -103,6 +106,9 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
     is_folder: false, is_uploading: false, created_at: '2026-10-18T00:00:00Z', updated_at: '2026-10-18T00:00:00Z',
   }),
   getUploadStatus: async () => ({ uploaded_chunks: [] }),
+  // E5 (SF-0001 L13 round 2): an init answered with another id abandons the
+  // id this client REQUESTED (best effort, before the typed error surfaces).
+  abandonUpload: async () => ({ outcome: 'reverted_to_previous_version' as const }),
   updateFile: async (fileId: string, patch: { name_encrypted?: string }) => {
     cap.nameUpdates.push({ id: fileId, name_encrypted: patch.name_encrypted })
     return { id: fileId }

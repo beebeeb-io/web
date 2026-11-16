@@ -110,18 +110,40 @@ export interface ResumePlan {
   abandonId: string | null
 }
 
+/** The fields that decide whether a stored session's id is one THIS client chose. */
+export type StoredSessionIdFields = Pick<
+  UploadState,
+  'fileId' | 'selfMinted' | 'replace_pin' | 'replace_pin_file_id'
+>
+
+/**
+ * L13 (contract 2275, SF-0001): is the id in this record one THIS client chose?
+ *
+ * Yes for a record written with the `selfMinted` marker. Also yes for a record
+ * written before the marker by a REPLACE of a listed row: its `fileId` is that
+ * row's id, which the client was targeting, and the record names the pin it
+ * wrote with (`replace_pin_file_id === fileId`). Those restart as a version of
+ * the SAME row — same id, same pin — not as a fresh file.
+ *
+ * No for every other pre-marker record: a CREATE's id may be one the server
+ * picked, so it is never resumed under.
+ */
+export function isOwnIdRecord(record: StoredSessionIdFields): boolean {
+  if (record.selfMinted === true) return true
+  return record.replace_pin !== undefined && record.replace_pin_file_id === record.fileId
+}
+
 /**
  * L13: a persisted session may only be resumed when this client minted the id
  * itself. A record without the marker (or whose stored id is not the one being
  * resumed) is abandoned through the upload-abandon endpoint and the upload
  * restarts under a fresh id the client chooses now — it is never resumed, and
- * never left looping on the old id.
+ * never left looping on the old id. A pre-marker REPLACE keeps its row id.
  */
-export function planResume(
-  record: Pick<UploadState, 'fileId' | 'selfMinted'>,
-  mintId: () => string,
-): ResumePlan {
-  if (record.selfMinted === true) return { resumeId: record.fileId, abandonId: null }
+export function planResume(record: StoredSessionIdFields, mintId: () => string): ResumePlan {
+  if (isOwnIdRecord(record)) {
+    return { resumeId: record.fileId, abandonId: null }
+  }
   return { resumeId: mintId(), abandonId: record.fileId }
 }
 

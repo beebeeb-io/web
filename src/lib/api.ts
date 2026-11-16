@@ -1,5 +1,6 @@
 import { isPasswordSetSignInRequired } from './reset-2fa'
 import { collectPaged } from './paginate'
+import { assertEchoedItemId, assertEchoedItemIdAfterUpload } from './item-id-echo'
 import { buildUploadInitV2Body, type UploadInitMetadata } from './upload-init-body'
 import {
   opaqueLoginStart as wasmOpaqueLoginStart,
@@ -1124,10 +1125,15 @@ export async function createFolder(
   parentId?: string,
   folderId?: string,
 ): Promise<DriveFile> {
-  return request<DriveFile>('/api/v1/files/folder', {
+  const created = await request<DriveFile>('/api/v1/files/folder', {
     method: 'POST',
     body: JSON.stringify({ name_encrypted: nameEncrypted, parent_id: parentId, folder_id: folderId }),
   })
+  // L13 (SF-0001): an answer that names another folder would hand its key to
+  // whoever already derives it, so the check lives here, once, for every
+  // caller. No proposed id (a legacy probe) means nothing to compare.
+  if (folderId !== undefined) assertEchoedItemId(folderId, created.id)
+  return created
 }
 
 // ─── Chunked upload endpoints ────────────────────
@@ -1171,6 +1177,7 @@ export async function initUpload(
       body: JSON.stringify(buildUploadInitV2Body(metadata)),
       signal,
     })
+    if (metadata.file_id !== undefined) assertEchoedItemId(metadata.file_id, v2.file_id)
     return { ...v2, protocol: 'v2' }
   } catch (err) {
     if (!(err instanceof ApiError) || err.status !== 404) {
@@ -1183,6 +1190,7 @@ export async function initUpload(
     body: JSON.stringify(metadata),
     signal,
   })
+  if (metadata.file_id !== undefined) assertEchoedItemId(metadata.file_id, v1.file_id)
   return { ...v1, protocol: 'v1' }
 }
 
@@ -1278,17 +1286,23 @@ export async function completeUpload(
   uploadSessionId?: string | null,
 ): Promise<DriveFile> {
   // No legacy fallback on a v2 404 (task 1589) — see uploadChunk() above.
+  let completed: DriveFile
   if (uploadSessionId) {
-    return request<DriveFile>(`/api/v1/uploads/${uploadSessionId}/complete`, {
+    completed = await request<DriveFile>(`/api/v1/uploads/${uploadSessionId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+  } else {
+    completed = await request<DriveFile>(`/api/v1/files/${fileId}/upload/complete`, {
       method: 'POST',
       body: JSON.stringify({}),
     })
   }
-
-  return request<DriveFile>(`/api/v1/files/${fileId}/upload/complete`, {
-    method: 'POST',
-    body: JSON.stringify({}),
-  })
+  // L13: the completion names the item that was written. Every chunk is
+  // already on the server here, so the error says the file may exist rather
+  // than claiming nothing happened.
+  assertEchoedItemIdAfterUpload(fileId, completed.id)
+  return completed
 }
 
 export async function getUploadStatus(
