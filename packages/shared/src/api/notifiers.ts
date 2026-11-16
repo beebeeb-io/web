@@ -15,7 +15,8 @@
  * particular toast/router library.
  */
 
-type ErrorNotifier = (message: string) => void
+export type ErrorNotifierKind = 'connection' | 'rate_limit'
+type ErrorNotifier = (message: string, kind?: ErrorNotifierKind) => void
 type SessionExpiredHandler = () => void
 /**
  * Receives the full parsed 403 body (`{error, message, deleted_at,
@@ -44,7 +45,7 @@ let onAccountDeleted: AccountDeletedHandler | null = null
 let onConnectionStatus: ConnectionStatusHandler | null = null
 let onAccountMismatch: AccountMismatchHandler | null = null
 
-export function registerErrorNotifier(fn: ErrorNotifier): void {
+export function registerErrorNotifier(fn: ErrorNotifier | null): void {
   notifyError = fn
 }
 
@@ -65,8 +66,8 @@ export function registerAccountMismatchHandler(fn: AccountMismatchHandler): void
 }
 
 // Read-side accessors used by `request()`. Not part of the public surface.
-export function fireErrorNotifier(message: string): void {
-  notifyError?.(message)
+export function fireErrorNotifier(message: string, kind: ErrorNotifierKind = 'connection'): void {
+  notifyError?.(message, kind)
 }
 
 export function fireSessionExpired(): void {

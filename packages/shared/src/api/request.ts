@@ -42,6 +42,7 @@ const CONNECTION_FAILURE_THRESHOLD = 2
 const RETRY_DELAY_MS = 800
 const RATE_LIMIT_MAX_RETRIES = 3
 const RATE_PACE_THRESHOLD = 0.2
+<<<<<<< Updated upstream
 // Ceiling on how long we'll automatically sleep-and-retry a 429. Retry-After
 // windows up to this are treated as brief-burst smoothing (worth an
 // automatic retry). Anything above it (hourly/daily quota limiters) must
@@ -55,6 +56,9 @@ function formatRetryAfter(seconds: number): string {
   const hours = Math.round(minutes / 60)
   return `${hours} hour${hours === 1 ? '' : 's'}`
 }
+=======
+const RATE_LIMIT_MESSAGE = 'Rate limited — please wait a moment and try again'
+>>>>>>> Stashed changes
 
 let consecutiveFailures = 0
 let lastReported: 'ok' | 'flaky' = 'ok'
@@ -179,6 +183,7 @@ export async function request<T>(
         await delay(retryAfter * 1000)
         continue
       }
+<<<<<<< Updated upstream
       if (retryAfter > RATE_LIMIT_MAX_AUTO_RETRY_SECONDS) {
         throw new ApiError(
           `Rate limited — try again in ${formatRetryAfter(retryAfter)}`,
@@ -187,6 +192,10 @@ export async function request<T>(
         )
       }
       throw new ApiError('Rate limited — please wait a moment and try again', 429, 'rate_limit_exceeded')
+=======
+      fireErrorNotifier(RATE_LIMIT_MESSAGE, 'rate_limit')
+      throw new ApiError(RATE_LIMIT_MESSAGE, 429, 'rate_limit_exceeded')
+>>>>>>> Stashed changes
     }
 
     if (!res.ok) {
@@ -259,7 +268,8 @@ export async function request<T>(
     return res.json() as Promise<T>
   }
 
-  throw new ApiError('Rate limited — please wait a moment and try again', 429, 'rate_limit_exceeded')
+  fireErrorNotifier(RATE_LIMIT_MESSAGE, 'rate_limit')
+  throw new ApiError(RATE_LIMIT_MESSAGE, 429, 'rate_limit_exceeded')
 }
 
 export interface ResolveSessionTokenDeps {

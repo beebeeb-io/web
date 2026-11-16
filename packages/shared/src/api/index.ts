@@ -34,8 +34,13 @@ export {
   markSessionConfirmed,
   clearSessionConfirmed,
 } from './notifiers'
+<<<<<<< Updated upstream
 export { request, resolveSessionToken } from './request'
 export type { ResolveSessionTokenDeps } from './request'
+=======
+export type { ErrorNotifierKind } from './notifiers'
+export { request } from './request'
+>>>>>>> Stashed changes
 export {
   ApiError,
   IncorrectPasswordError,

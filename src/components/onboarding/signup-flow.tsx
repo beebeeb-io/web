@@ -197,6 +197,9 @@ function PilotKeyStep({ ctx }: { ctx: Ctx }) {
 
 // ── verify_email_code ────────────────────────────────────────────────────────
 
+/** Wrong guesses the server allows across all live codes of one address (contract README). */
+const GUESS_BUDGET = 5
+
 function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
   const { policy, session, ports, screen } = ctx
   const length = typeof screen.step.params.length === 'number' ? screen.step.params.length : policy.emailCode.length
@@ -204,23 +207,32 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [resent, setResent] = useState(false)
+  // Wrong codes on this screen. The server gives all live codes ONE shared
+  // guess budget (5); once it is spent a fresh code is the only way forward
+  // and the server issues it at once, so the wait is lifted (task 1738 F2).
+  const [failedVerifies, setFailedVerifies] = useState(0)
+  const budgetSpent = failedVerifies >= GUESS_BUDGET
 
   // A resend sends a fresh code, but only `resend_after_seconds` after the last
   // one (the server enforces the same window); count it down live.
+  // `sentAt` lives in state, not just in the session ref: the effect below must
+  // re-run on EVERY resend, and a boolean that stays true after the first one
+  // would not (the countdown froze at 1:00 on the second resend).
+  const [sentAt, setSentAt] = useState<number | null>(session.current.emailSentAt)
   const [now, setNow] = useState(() => Date.now())
-  const remaining = resendRemainingSeconds(session.current.emailSentAt, policy.emailCode.resendAfterSeconds, now)
+  const remaining = resendRemainingSeconds(sentAt, policy.emailCode.resendAfterSeconds, now)
   useEffect(() => {
-    if (resendRemainingSeconds(session.current.emailSentAt, policy.emailCode.resendAfterSeconds, Date.now()) <= 0) return
+    if (resendRemainingSeconds(sentAt, policy.emailCode.resendAfterSeconds, Date.now()) <= 0) return
     setNow(Date.now())
     const timer = setInterval(() => {
       const t = Date.now()
       setNow(t)
-      if (resendRemainingSeconds(session.current.emailSentAt, policy.emailCode.resendAfterSeconds, t) <= 0) {
+      if (resendRemainingSeconds(sentAt, policy.emailCode.resendAfterSeconds, t) <= 0) {
         clearInterval(timer)
       }
     }, 1000)
     return () => clearInterval(timer)
-  }, [resent, session, policy.emailCode.resendAfterSeconds])
+  }, [sentAt, policy.emailCode.resendAfterSeconds])
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -240,6 +252,7 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
       if (err instanceof ActionError && err.code === 'rate_limited') {
         setError('Too many tries. Wait a few minutes before trying again.')
       } else {
+        setFailedVerifies((n) => n + 1)
         setError('That code is not right, or it has expired.')
       }
     } finally {
@@ -254,6 +267,9 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
       await ports.actions.emailStart(session.current.email, session.current.pilotKey)
       session.current.emailSentAt = Date.now()
       setNow(session.current.emailSentAt)
+      setSentAt(session.current.emailSentAt)
+      setFailedVerifies(0)
+      setCode('')
       setResent(true)
     } catch {
       setError('We could not send another email. Try again later.')
@@ -262,7 +278,7 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
     }
   }
 
-  const canAskAgain = remaining <= 0
+  const canAskAgain = remaining <= 0 || budgetSpent
 
   return (
     <OnboardingFrame
@@ -291,6 +307,11 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
           required
         />
         {error && <ErrorLine>{error}</ErrorLine>}
+        {budgetSpent && (
+          <p className="text-xs text-ink-2 mb-3" data-testid="guess-budget-spent">
+            Too many wrong codes. Ask for a new one.
+          </p>
+        )}
         <BBButton type="submit" variant="amber" size="lg" className="w-full" disabled={busy || code.length !== length}>
           Verify
         </BBButton>

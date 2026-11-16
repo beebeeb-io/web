@@ -32,7 +32,11 @@ const mockFetch = (async () =>
 const {
   request,
   registerSessionExpiredHandler,
+<<<<<<< Updated upstream
   registerAccountDeletedHandler,
+=======
+  registerErrorNotifier,
+>>>>>>> Stashed changes
   markSessionConfirmed,
   clearSessionConfirmed,
   setApiUrl,
@@ -67,7 +71,20 @@ afterAll(() => {
 })
 
 describe('request() 401 → session-expiry gate (0741)', () => {
+<<<<<<< Updated upstream
+=======
+  beforeAll(() => {
+    globalThis.fetch = mockFetch
+  })
+  afterAll(() => {
+    registerErrorNotifier(null)
+    globalThis.fetch = originalFetch
+    mock.restore()
+  })
+>>>>>>> Stashed changes
   beforeEach(() => {
+    globalThis.fetch = mockFetch
+    registerErrorNotifier(null)
     fired = 0
     accountDeletedBodies = []
     mockToken = null
@@ -90,6 +107,34 @@ describe('request() 401 → session-expiry gate (0741)', () => {
     mockToken = 'legacy-token'
     await expect(request('/api/v1/auth/me')).rejects.toThrow()
     expect(fired).toBe(1)
+  })
+
+  test('final 429 after retries fires one global rate-limit notifier', async () => {
+    const notifications: Array<{ message: string; kind: string | undefined }> = []
+    let attempts = 0
+    globalThis.fetch = (async () => {
+      attempts++
+      return new Response(JSON.stringify({ error: 'rate_limit_exceeded' }), {
+        status: 429,
+        headers: {
+          'content-type': 'application/json',
+          'retry-after': '0',
+        },
+      })
+    }) as unknown as typeof fetch
+    registerErrorNotifier((message, kind) => {
+      notifications.push({ message, kind })
+    })
+
+    await expect(request('/api/v1/files', { method: 'POST' })).rejects.toThrow('Rate limited')
+
+    expect(attempts).toBe(4)
+    expect(notifications).toEqual([
+      {
+        message: 'Rate limited — please wait a moment and try again',
+        kind: 'rate_limit',
+      },
+    ])
   })
 })
 

@@ -106,6 +106,7 @@ function sessionTypeLabel(type: string): string {
 
 // ─── SSE hook ───────────────────────────────────
 
+<<<<<<< Updated upstream
 const SSE_BASE_BACKOFF_MS = 1_000
 const SSE_MAX_BACKOFF_MS = 30_000
 
@@ -158,10 +159,61 @@ export async function attemptSessionSSEConnect(deps: {
 
   if (!isCurrent()) return
   openSource(buildSessionSSEUrl(streamToken))
+=======
+type SessionSSEUpdate =
+  | { type: 'replace'; sessions: ClientSession[] }
+  | { type: 'upsert'; session: ClientSession }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isClientSession(value: unknown): value is ClientSession {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.session_type === 'string' &&
+    typeof value.remote_path === 'string' &&
+    typeof value.status === 'string' &&
+    typeof value.device_id === 'string' &&
+    typeof value.device_hostname === 'string' &&
+    typeof value.device_platform === 'string' &&
+    typeof value.created_at === 'string'
+  )
+}
+
+function parseSessionListEvent(data: string): SessionSSEUpdate | null {
+  try {
+    const payload: unknown = JSON.parse(data)
+    if (
+      isRecord(payload) &&
+      Array.isArray(payload.sessions) &&
+      payload.sessions.every(isClientSession)
+    ) {
+      return { type: 'replace', sessions: payload.sessions }
+    }
+  } catch {
+    // ignore malformed events
+  }
+  return null
+}
+
+function parseLegacySessionEvent(data: string): SessionSSEUpdate | null {
+  try {
+    const payload: unknown = JSON.parse(data)
+    if (isClientSession(payload)) {
+      return { type: 'upsert', session: payload }
+    }
+  } catch {
+    // ignore malformed events
+  }
+  return null
+>>>>>>> Stashed changes
 }
 
 function useSessionSSE(
-  onEvent: (data: ClientSession) => void,
+  onEvent: (update: SessionSSEUpdate) => void,
 ) {
   const { user } = useAuth()
   const authed = isAuthenticated(user)
@@ -180,6 +232,7 @@ function useSessionSSE(
     let cancelled = false
     const isCurrent = () => !cancelled
 
+<<<<<<< Updated upstream
     let es: EventSource | null = null
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let backoff = SSE_BASE_BACKOFF_MS
@@ -240,6 +293,28 @@ function useSessionSSE(
     }
 
     connect()
+=======
+    const handleSessionListEvent = (e: Event) => {
+      const update = parseSessionListEvent((e as MessageEvent).data)
+      if (update) {
+        callbackRef.current(update)
+      }
+    }
+
+    const handleLegacySessionEvent = (e: Event) => {
+      const update = parseLegacySessionEvent((e as MessageEvent).data)
+      if (update) {
+        callbackRef.current(update)
+      }
+    }
+
+    es.addEventListener('snapshot', handleSessionListEvent)
+    es.addEventListener('update', handleSessionListEvent)
+
+    es.addEventListener('heartbeat', handleLegacySessionEvent)
+    es.addEventListener('session_created', handleLegacySessionEvent)
+    es.addEventListener('session_stopped', handleLegacySessionEvent)
+>>>>>>> Stashed changes
 
     return () => {
       cancelled = true
@@ -359,8 +434,14 @@ export function DevicesPage() {
   }, [loadData])
 
   // Real-time updates via SSE
-  useSessionSSE((updatedSession) => {
+  useSessionSSE((update) => {
+    if (update.type === 'replace') {
+      setSessions(update.sessions)
+      return
+    }
+
     setSessions((prev) => {
+      const updatedSession = update.session
       const idx = prev.findIndex((s) => s.id === updatedSession.id)
       if (idx >= 0) {
         const next = [...prev]

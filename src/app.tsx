@@ -390,8 +390,13 @@ function ApiErrorWiring() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    registerErrorNotifier((message) => {
-      showToast({ icon: 'cloud', title: 'Connection error', description: message, danger: true })
+    registerErrorNotifier((message, kind) => {
+      showToast({
+        icon: 'cloud',
+        title: kind === 'rate_limit' ? 'Rate limited' : 'Connection error',
+        description: message,
+        danger: true,
+      })
     })
     registerSessionExpiredHandler(() => {
       // Never redirect off a public route — an anonymous share/file-request
@@ -417,7 +422,7 @@ function ApiErrorWiring() {
       navigate('/login', { replace: true })
     })
     return () => {
-      registerErrorNotifier(null as unknown as (m: string) => void)
+      registerErrorNotifier(null)
       registerSessionExpiredHandler(null as unknown as () => void)
       registerAccountDeletedHandler(null as unknown as (b: Record<string, unknown>) => void)
     }
