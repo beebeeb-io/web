@@ -4,6 +4,7 @@ React web client for Beebeeb: encrypted file management in the browser (PUBLIC r
 React 19 + Vite 6 + Tailwind 4 + react-router-dom 7. Package manager: **bun**.
 Moved detail (regenerating beebeeb-wasm, search index, thumbnails, share-key wrapping, streaming upload, routes, design tokens,
 how-to recipes): `docs/agent-notes.md`. Per-task incident narratives: `docs/runbook/web-task-history.md`.
+Task recipes: `docs/agents/recipes.md`.
 
 ## Commands
 
@@ -19,10 +20,6 @@ make wasm-sync                                       # from the workspace root: 
 ```
 
 Quiet runs: `make test-quiet REPO=web` · `make check-quiet REPO=web` · `make e2e-quiet REPO=web` — one PASS line per target, at most 25 printed lines; the full log path is the last line.
-
-Truth lines: `bun test` → `N pass, 0 fail`; Playwright → `N passed`; `tsc` exit 0. Assert N, not the absence of "failed";
-a Playwright filter that matched 0 tests is a RED. UI tasks are verified in a browser (screenshots in the task's evidence path),
-never by curl. A new spec is trusted only after it has been seen to fail against a deliberate mutation.
 
 ## Module map
 
@@ -76,19 +73,5 @@ The rules whose breakage costs data, a key, a credential or a user. One line eac
 - When core's WASM surface changes you MUST regenerate + commit this package or web won't see it (`packages/beebeeb-wasm`, `make wasm-sync`).
 - `maybeRestart()` skips the 256 MiB worker recycle while `liveEncryptorCount() > 0`, so an in-flight upload is never orphaned.
 - Folder shares: active invites with no usable owner blob abort (never mint); only an authentication failure skips a blob (task 2133).
-
-## How we work
-
-Workspace `CLAUDE.md` → "How we work" is the rule set. Here: the truth lines above; design before code (`../../design/hifi/*.jsx` wins over
-the code, deviations go in `DEVIATIONS.md`/the task file before the code changes); UI verified with Playwright screenshots.
-Task recipes: docs/agents/recipes.md — the path for a recurring task; each is ≤ 30 lines and the checker proves its files and items exist. Route list: `docs/agent-notes.md`.
-
-## Graphify and shared docs
-
-Knowledge graph at `graphify-out/`. Architecture question: `graphify query "<question>"` / `graphify explain <symbol>` /
-`graphify path "<A>" "<B>"`; overview: `graphify-out/GRAPH_SUMMARY.md` (at most 3k tokens); never read `GRAPH_REPORT.md` whole.
-Run `graphify update .` for your own navigation; never commit `graphify-out/` on a feature branch (the lead regenerates it on main).
-When you add/change/remove endpoints, types, build commands or dependencies, update the matching skill in the workspace
-`.claude/skills/` (beebeeb-api.md, beebeeb-designs.md, beebeeb-stack.md, beebeeb-dev.md).
 
 - **Design files** live in the workspace root `../../design/hifi/` — never copy them into this public repo (a snapshot once published a false external-audit claim).
