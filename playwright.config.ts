@@ -62,7 +62,8 @@ export default defineConfig({
   // E2E_NO_WEBSERVER=1 to skip this block entirely — it manages its own Vite+API
   // lifecycle on a fresh per-spec backend. The API is NOT started here; point it
   // via E2E_API_URL (default :3001), which web-e2e.sh / the CI job provision.
-  webServer: process.env.E2E_NO_WEBSERVER
+  // The firefox/chromium SW-download projects boot their own server.
+  webServer: process.env.E2E_NO_WEBSERVER || process.argv.some(a => /^--project=(firefox|chromium)$/.test(a))
     ? undefined
     : {
         command: `VITE_API_URL=${API_URL} bunx vite --port ${WEB_PORT} --strictPort`,
@@ -118,12 +119,16 @@ export default defineConfig({
       // wrapped in <GuestRoute> — with this project's saved signed-in state it
       // redirects away before the form renders (PR #162, Codex P2). It runs in
       // the unauthenticated project below, through this root config.
-      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943|checkout-confirmation-resilience-0957|forgot-password-recovery|1474-devices-sse|1605-trial-limits-ui|1865-passkey-login-wording|1884-error-reporting)\.spec\.ts$/,
+      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943|checkout-confirmation-resilience-0957|forgot-password-recovery|1474-devices-sse|1605-trial-limits-ui|1865-passkey-login-wording|1884-error-reporting|2301-sw-download-firefox)\.spec\.ts$/,
       dependencies: ['setup'],
       use: {
         storageState: STORAGE_STATE,
       },
     },
+
+    // ── SW streaming download: self-contained, run in both engines ───────────
+    { name: 'firefox', testMatch: /2301-sw-download-firefox\.spec\.ts$/, use: { browserName: 'firefox' } },
+    { name: 'chromium', testMatch: /2301-sw-download-firefox\.spec\.ts$/, use: { browserName: 'chromium' } },
 
     // ── Step 2b: tests that must run unauthenticated (login page, etc.) ───────
     {
