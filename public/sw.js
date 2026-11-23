@@ -241,6 +241,13 @@ self.addEventListener('fetch', e => {
       // Prevent caches / extensions from re-using this URL.
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
+      // The page is served with COEP: require-corp (nginx.conf). A navigation
+      // response synthesized here carries no headers of its own, so Firefox
+      // refuses to load it into the page's download iframe
+      // (NS_ERROR_BLOCKED_BY_POLICY, "your organization has blocked access").
+      // Declaring COEP + CORP on the response makes it embeddable.
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Resource-Policy': 'same-origin',
     })
     if (entry.totalSize != null) {
       headers.set('Content-Length', String(entry.totalSize))
