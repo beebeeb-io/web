@@ -28,10 +28,33 @@ export async function addFolderKeys(
   })
 }
 
-export async function getFolderMembers(
-  folderId: string,
-): Promise<{ members: { user_id: string; public_key: string | null; email: string; is_owner?: boolean }[]; owner_id: string }> {
-  return request(`/api/v1/shares/invites/folder-members/${folderId}`)
+type FolderMembers = { members: { user_id: string; public_key: string | null; email: string; is_owner?: boolean }[]; owner_id: string }
+
+// A 404 means "not a shared folder" and is a final answer. Presence polling and
+// drive listings call this repeatedly, so remember the 404 per folder (prod saw
+// ~300 identical 404s in 20 min). Call `forgetFolderMembersMiss` after sharing.
+const FOLDER_MEMBERS_MISS_TTL_MS = 5 * 60_000
+const folderMembersMiss = new Map<string, number>()
+
+export function forgetFolderMembersMiss(folderId?: string): void {
+  if (folderId) folderMembersMiss.delete(folderId)
+  else folderMembersMiss.clear()
+}
+
+export async function getFolderMembers(folderId: string): Promise<FolderMembers> {
+  const missAt = folderMembersMiss.get(folderId)
+  if (missAt !== undefined) {
+    if (Date.now() - missAt < FOLDER_MEMBERS_MISS_TTL_MS) {
+      throw new ApiError('Not found', 404)
+    }
+    folderMembersMiss.delete(folderId)
+  }
+  try {
+    return await request<FolderMembers>(`/api/v1/shares/invites/folder-members/${folderId}`)
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) folderMembersMiss.set(folderId, Date.now())
+    throw err
+  }
 }
 
 export async function listSharedFolderFiles(
