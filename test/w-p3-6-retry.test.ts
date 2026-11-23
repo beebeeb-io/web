@@ -52,7 +52,7 @@ describe('retry vector (one backoff policy)', () => {
       expect(retryDelayMs(policy, retry)).toBe(ms)
     }
     // The shipped policy itself: six requests in all, 500 ms base, 30 s cap.
-    expect(policy).toEqual({ max_attempts: 6, base_ms: 500, cap_ms: 30000, jitter: 'full' })
+    expect(policy).toEqual({ max_attempts: 6, base_ms: 500, cap_ms: 30000, jitter: 'none' })
   })
 
   it('full jitter shortens the ladder by the sample; none ignores it; the cap holds', () => {
@@ -60,7 +60,7 @@ describe('retry vector (one backoff policy)', () => {
     expect(retryJitteredDelayMs(full, 1, 0)).toBe(0)
     expect(retryJitteredDelayMs(full, 1, 250)).toBe(125)
     expect(retryJitteredDelayMs(full, 1, 1000)).toBe(500)
-    expect(retryJitteredDelayMs({ ...policy, jitter: 'none' }, 1, 250)).toBe(500)
+    expect(retryJitteredDelayMs(policy, 1, 250)).toBe(500)
     expect(retryJitteredDelayMs(full, 7, 1000)).toBe(30000)
   })
 
