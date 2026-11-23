@@ -4,6 +4,7 @@ import { BBLogo } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
+import { fetchRemainingPages } from '../../lib/bundle-pages'
 import { getShare, downloadBundleItem, ApiError, type ShareView as ShareViewData, type ShareItem } from '../../lib/api'
 import { unwrapBundleItemKey, initCrypto, readFileMetadata, ContentPin } from '../../lib/crypto'
 import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize, UNVERIFIED_FILE_COPY } from '../../lib/encrypted-download'
@@ -188,11 +189,17 @@ export function BundleShareView({
     try {
       // Make sure every page is loaded first, then download each decryptable
       // item sequentially (browsers throttle parallel programmatic downloads).
-      while (nextCursor != null) {
-        // eslint-disable-next-line no-await-in-loop
-        await loadMore()
+      let all = rows
+      if (nextCursor != null && clientKey) {
+        const rest = await fetchRemainingPages(nextCursor, (cursor) => getShare(token, { cursor }))
+        await initCrypto()
+        const more = await Promise.all(rest.items.map((it) => decryptBundleItem(clientKey, it)))
+        const seen = new Set(rows.map((r) => r.file_id))
+        all = [...rows, ...more.filter((r) => !seen.has(r.file_id))].sort((a, b) => a.position - b.position)
+        setRows(all)
+        setNextCursor(rest.next)
       }
-      for (const row of rows) {
+      for (const row of all) {
         if (!row.fileKey) continue
         // eslint-disable-next-line no-await-in-loop
         await downloadRow(row)
@@ -200,7 +207,7 @@ export function BundleShareView({
     } finally {
       setDownloadingId(null)
     }
-  }, [rows, nextCursor, loadMore, downloadRow])
+  }, [rows, nextCursor, clientKey, token, downloadRow])
 
   const anyDownloading = downloadingId !== null
   const downloadableCount = rows.filter((r) => r.fileKey).length
