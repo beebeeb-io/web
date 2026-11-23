@@ -99,6 +99,7 @@ export type CeremonyOps = {
   /** `breachHandle` is null only for a document that declares no breach check. */
   setPassword: { args: [password: string, confirmation: string, breachHandle: number | null]; result: unknown }
   beginPhrase: { args: []; result: null }
+  adoptPhrase: { args: [phrase: string]; result: null }
   phrase: { args: []; result: string }
   acknowledgePhrase: { args: []; result: null }
   challengePositions: { args: []; result: number[] }
@@ -962,6 +963,7 @@ const cryptoWorker = {
           return c.setPassword(password, confirmation, b)
         }
         case 'beginPhrase': c.beginPhrase(); return null
+        case 'adoptPhrase': c.adoptPhrase(a[0] as string); return null
         case 'phrase': return c.phrase()
         case 'acknowledgePhrase': c.acknowledgePhrase(); return null
         case 'challengePositions': return Array.from(c.challengePositions())
