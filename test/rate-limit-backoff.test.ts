@@ -1,47 +1,89 @@
-import { describe, expect, test } from 'bun:test'
-import { ApiError } from '@beebeeb/shared'
-import { backoffDelayMs, parseRetryAfter, withRateLimitBackoff } from '../src/lib/rate-limit-backoff'
+import { beforeEach, describe, expect, test } from 'bun:test'
+import { rateLimitWaitMs, resetRateLimitPause, withRateLimitBackoff } from '../src/lib/rate-limit-backoff'
 
-describe('withRateLimitBackoff', () => {
-  test('429 forever: waits grow 2s..60s, so only a few calls a minute', async () => {
-    let calls = 0
-    const waits: number[] = []
-    const ac = new AbortController()
-    const p = withRateLimitBackoff(
-      async () => { calls++; throw new ApiError('slow down', 429) },
-      { signal: ac.signal, sleep: async (ms) => { waits.push(ms); if (waits.length === 8) ac.abort() } },
-    )
-    await expect(p).rejects.toThrow()
-    expect(waits).toEqual([2000, 4000, 8000, 16000, 32000, 60000, 60000, 60000])
-    expect(calls).toBe(8)
-    // virtual minute: calls fitting in 60 s of waiting
-    let t = 0, inMinute = 0
-    for (const w of waits) { t += w; if (t <= 60_000) inMinute++ }
-    expect(inMinute + 1).toBeLessThanOrEqual(5)
+const ORIGIN = 'https://api.test'
+const r429 = (body: object, retryAfter?: string) =>
+  new Response(JSON.stringify(body), {
+    status: 429,
+    headers: retryAfter ? { 'Retry-After': retryAfter } : {},
+  })
+const ok = () => new Response('{}', { status: 200 })
+
+function setup(responses: Response[]) {
+  let calls = 0
+  const base = (async () => responses[Math.min(calls++, responses.length - 1)]) as unknown as typeof fetch
+  return { f: withRateLimitBackoff(base, { apiOrigin: ORIGIN, random: () => 0 }), calls: () => calls }
+}
+
+beforeEach(resetRateLimitPause)
+
+describe('rateLimitWaitMs', () => {
+  test('max of header and body, plus jitter up to 25%', () => {
+    expect(rateLimitWaitMs('2', 3, () => 0)).toBe(3000)
+    expect(rateLimitWaitMs('4', 1, () => 1)).toBe(5000)
+  })
+})
+
+describe('429 backoff', () => {
+  test('retries a GET after Retry-After then succeeds', async () => {
+    const s = setup([r429({ retry_after: 1 }, '1'), ok()])
+    const t = Date.now()
+    const res = await s.f(ORIGIN + '/files')
+    expect(res.status).toBe(200)
+    expect(s.calls()).toBe(2)
+    expect(Date.now() - t).toBeGreaterThanOrEqual(950)
   })
 
-  test('honours Retry-After, capped at 60s', async () => {
-    expect(backoffDelayMs(0, 7)).toBe(7000)
-    expect(backoffDelayMs(0, 600)).toBe(60000)
-    expect(parseRetryAfter('12')).toBe(12)
-    expect(parseRetryAfter('Wed, 21 Oct')).toBeNull()
+  test('does not retry POST', async () => {
+    const s = setup([r429({}, '1'), ok()])
+    const res = await s.f(ORIGIN + '/files', { method: 'POST' })
+    expect(res.status).toBe(429)
+    expect(s.calls()).toBe(1)
   })
 
-  test('429 then success retries once', async () => {
-    let calls = 0
-    const v = await withRateLimitBackoff(
-      async () => { if (++calls === 1) throw new ApiError('x', 429); return 'ok' },
-      { sleep: async () => {} },
-    )
-    expect(v).toBe('ok')
-    expect(calls).toBe(2)
+  test('retry-after above 60 s is a policy refusal, no retry', async () => {
+    const s = setup([r429({ error: 'rate_limited' }, '120'), ok()])
+    const res = await s.f(ORIGIN + '/files')
+    expect(res.status).toBe(429)
+    const j = await res.json()
+    expect(j.error).toBe('rate_limited')
+    expect(j.policy).toBe(true)
+    expect(s.calls()).toBe(1)
+    // the tab is now paused: the next request is answered locally
+    const again = await s.f(ORIGIN + '/files')
+    expect(again.status).toBe(429)
+    expect(s.calls()).toBe(1)
   })
 
-  test.each([400, 403, 404, 410, 500])('%i stops after one call', async (status) => {
-    let calls = 0
-    await expect(
-      withRateLimitBackoff(async () => { calls++; throw new ApiError('no', status) }, { sleep: async () => {} }),
-    ).rejects.toThrow()
-    expect(calls).toBe(1)
+  test('banned is surfaced as banned', async () => {
+    const s = setup([r429({ error: 'banned', retry_after: 5 }, '5'), ok()])
+    const res = await s.f(ORIGIN + '/files')
+    expect((await res.json()).error).toBe('banned')
+    expect(s.calls()).toBe(1)
   })
+
+  test('server_busy and other origins pass through', async () => {
+    const a = setup([r429({ error: 'server_busy', retry_after: 1 }, '1')])
+    expect((await a.f(ORIGIN + '/x')).status).toBe(429)
+    expect(a.calls()).toBe(1)
+    const b = setup([r429({}, '1')])
+    expect((await b.f('https://other.test/x')).status).toBe(429)
+    expect(b.calls()).toBe(1)
+  })
+
+  test('a pause holds other API requests', async () => {
+    const s = setup([r429({}, '1'), ok(), ok()])
+    const first = s.f(ORIGIN + '/a', { method: 'POST' }) // sets pause, returns 429
+    await first
+    const t = Date.now()
+    await s.f(ORIGIN + '/b')
+    expect(Date.now() - t).toBeGreaterThanOrEqual(900)
+  })
+
+  test('gives up after 4 retries', async () => {
+    const s = setup([r429({}, '0')])
+    const res = await s.f(ORIGIN + '/files')
+    expect(res.status).toBe(429)
+    expect(s.calls()).toBe(5)
+  }, 15000)
 })

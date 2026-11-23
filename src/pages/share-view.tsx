@@ -24,7 +24,6 @@ import { useAuth, isAuthenticated } from '../lib/auth-context'
 import { fromBase64, toBase64url, unwrapKeyFromShare, initCrypto, readFileMetadata, readNameMetadata, PIN_V2, type ContentPin } from '../lib/crypto'
 import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize, UNVERIFIED_FILE_COPY } from '../lib/encrypted-download'
 import { withNetworkRetry } from '../lib/net-retry'
-import { withRateLimitBackoff } from '../lib/rate-limit-backoff'
 import { formatBytes } from '../lib/format'
 import { parseShareKey, extractShareKeyToken, decodeShareKeyToken } from '../lib/share-key'
 // Task 2238 — the honest page for a folder link minted before this task.
@@ -48,7 +47,6 @@ export function ShareViewPage() {
   const [shareData, setShareData] = useState<ShareViewData | null>(null)
   const [decryptedName, setDecryptedName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [busyRetrySecs, setBusyRetrySecs] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   // Distinct heading for the load-error card — set from the typed server codes
   // (share_revoked / share_expired / not-found) so each reads honestly (0708).
@@ -196,15 +194,11 @@ export function ShareViewPage() {
     setManualKey('')
     setReportOpen(false)
     setLoading(true)
-    setBusyRetrySecs(null)
     const ac = new AbortController()
-    withRateLimitBackoff(() => getShare(token), {
-      signal: ac.signal,
-      onWait: (ms) => { if (!ac.signal.aborted) setBusyRetrySecs(Math.ceil(ms / 1000)) },
-    })
+    // 429s are retried by the fetch wrapper (rate-limit-backoff), the one owner.
+    getShare(token)
       .then((data) => {
         if (ac.signal.aborted) return
-        setBusyRetrySecs(null)
         setShareData(data)
         // Task 2238: a `file` share whose target is a folder (a link minted
         // before folder links existed) cannot download anything. Detect it from
@@ -215,7 +209,6 @@ export function ShareViewPage() {
       })
       .catch((e) => {
         if (ac.signal.aborted) return
-        setBusyRetrySecs(null)
         // Typed server codes (0708): expired → 410, revoked → 403, not-found → 404.
         // Split them so the recipient reads the truth, not a generic failure.
         if (e instanceof ApiError && (e.status === 410 || e.message === 'share_expired')) {
@@ -468,11 +461,6 @@ export function ShareViewPage() {
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>
-        {busyRetrySecs !== null && (
-          <p className="ml-3 text-sm text-ink-2" role="status">
-            Beebeeb is busy, retrying in {busyRetrySecs}s…
-          </p>
-        )}
       </div>
     )
   }

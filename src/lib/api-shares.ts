@@ -1,5 +1,4 @@
 // Share API calls: create, fetch, passphrase-verify, and download shared items.
-import { parseRetryAfter } from './rate-limit-backoff'
 import { ApiError, readErrorResponse, request } from '@beebeeb/shared'
 import type { CreateBundleShareRequest, InviteActivity, MyShare, ShareInfo, ShareInvite, ShareOptions, ShareStats, ShareView, SharedFileDownload } from '@beebeeb/shared'
 import { API_URL } from './api-session'
@@ -53,10 +52,6 @@ export async function getShare(
     throw new ApiError(
       (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
-      undefined,
-      res.status === 429
-        ? { retry_after: parseRetryAfter(res.headers.get('Retry-After')) }
-        : undefined,
     )
   }
 
@@ -88,7 +83,7 @@ export async function downloadBundleItem(
   if (!res.ok) {
     const body = await res.json().catch(() => null) as Record<string, unknown> | null
     const message = ((body?.message ?? body?.error) || res.statusText || 'Download failed') as string
-    throw new ApiError(message, res.status)
+    throw new ApiError(message, res.status, typeof body?.error === 'string' ? body.error : undefined)
   }
 
   const parseHeaderInt = (value: string | null): number | null => {
@@ -146,7 +141,7 @@ export async function downloadSharedFile(
     // HTTP status text, which is empty in HTTP/2.
     const body = await res.json().catch(() => null) as Record<string, unknown> | null
     const message = ((body?.message ?? body?.error) || res.statusText || 'Download failed') as string
-    throw new ApiError(message, res.status)
+    throw new ApiError(message, res.status, typeof body?.error === 'string' ? body.error : undefined)
   }
 
   const parseHeaderInt = (value: string | null): number | null => {
@@ -180,6 +175,10 @@ export async function fetchShareCiphertextPreview(
     : {}
   const res = await fetch(`${API_URL}/api/v1/shares/${token}/download`, { headers })
   if (!res.ok) {
+    if (res.status === 429) {
+      const { code, body } = await readErrorResponse(res)
+      throw new ApiError(res.statusText, 429, code, body)
+    }
     throw new ApiError(res.statusText, res.status)
   }
   const buf = await res.arrayBuffer()

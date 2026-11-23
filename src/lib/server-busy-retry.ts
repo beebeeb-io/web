@@ -35,7 +35,7 @@ function abortError(): Error {
   return new DOMException('Cancelled', 'AbortError')
 }
 
-function secondsFrom(value: unknown): number | null {
+export function secondsFrom(value: unknown): number | null {
   const n = typeof value === 'string' ? Number(value.trim() === '' ? NaN : value) : value
   return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null
 }
@@ -66,7 +66,7 @@ async function serverBusyWait(res: Response): Promise<number | null> {
   return serverBusyWaitSeconds(res.headers.get('Retry-After'), body.retry_after)
 }
 
-function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
+export function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
       reject(abortError())
