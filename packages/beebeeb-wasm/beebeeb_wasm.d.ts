@@ -639,6 +639,11 @@ export class WasmSignupCeremony {
      */
     acknowledgePhrase(): void;
     /**
+     * Take an existing recovery phrase instead of generating one; counts as confirmed.
+     * Throws `crypto` for an invalid phrase, `invalid_state` once confirmed or registering.
+     */
+    adoptPhrase(phrase: string): void;
+    /**
      * Generate the recovery phrase and master key (Argon2id, about a second).
      * Idempotent.
      */
@@ -2047,6 +2052,7 @@ export interface InitOutput {
     readonly wasmsignupceremony_abandon: (a: number) => void;
     readonly wasmsignupceremony_accountCreated: (a: number, b: number) => void;
     readonly wasmsignupceremony_acknowledgePhrase: (a: number, b: number) => void;
+    readonly wasmsignupceremony_adoptPhrase: (a: number, b: number, c: number, d: number) => void;
     readonly wasmsignupceremony_beginPhrase: (a: number, b: number) => void;
     readonly wasmsignupceremony_challengePositions: (a: number, b: number) => void;
     readonly wasmsignupceremony_confirmPhrase: (a: number, b: number, c: number) => void;

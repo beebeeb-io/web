@@ -1937,6 +1937,26 @@ export class WasmSignupCeremony {
         }
     }
     /**
+     * Take an existing recovery phrase instead of generating one; counts as confirmed.
+     * Throws `crypto` for an invalid phrase, `invalid_state` once confirmed or registering.
+     * @param {string} phrase
+     */
+    adoptPhrase(phrase) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(phrase, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmsignupceremony_adoptPhrase(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * Generate the recovery phrase and master key (Argon2id, about a second).
      * Idempotent.
      */
