@@ -3,6 +3,8 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { initTelemetry } from '@beebeeb/shared'
 import { App } from './app'
+import { getApiUrl } from '@beebeeb/shared'
+import { installRateLimitBackoff } from './lib/rate-limit-backoff'
 import { ensureShareLinkWasm } from './lib/share-links-wasm'
 import './lib/i18n'
 import './index.css'
@@ -17,6 +19,8 @@ initTelemetry({
   release: `web@${__APP_VERSION__}`,
   environment: import.meta.env.PROD ? 'production' : 'development',
 })
+
+installRateLimitBackoff(new URL(getApiUrl(), window.location.href).origin)
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {})
