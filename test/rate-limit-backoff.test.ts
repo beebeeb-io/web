@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { rateLimitWaitMs, resetRateLimitPause, withRateLimitBackoff } from './rate-limit-backoff'
+import { rateLimitWaitMs, resetRateLimitPause, withRateLimitBackoff } from '../src/lib/rate-limit-backoff'
 
 const ORIGIN = 'https://api.test'
 const r429 = (body: object, retryAfter?: string) =>
