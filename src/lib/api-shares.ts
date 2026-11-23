@@ -1,4 +1,5 @@
 // Share API calls: create, fetch, passphrase-verify, and download shared items.
+import { parseRetryAfter } from './rate-limit-backoff'
 import { ApiError, readErrorResponse, request } from '@beebeeb/shared'
 import type { CreateBundleShareRequest, InviteActivity, MyShare, ShareInfo, ShareInvite, ShareOptions, ShareStats, ShareView, SharedFileDownload } from '@beebeeb/shared'
 import { API_URL } from './api-session'
@@ -52,6 +53,10 @@ export async function getShare(
     throw new ApiError(
       (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
+      undefined,
+      res.status === 429
+        ? { retry_after: parseRetryAfter(res.headers.get('Retry-After')) }
+        : undefined,
     )
   }
 
