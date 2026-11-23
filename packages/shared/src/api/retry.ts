@@ -10,8 +10,8 @@ import init, { parseRetryAfter as coreParseRetryAfter, retryDecide } from 'beebe
 
 /**
  * The JS shape of a policy, as `retryPolicy()` returns it and as every core
- * entry point accepts it back. `jitter` is `'none'` (the shipped default) or
- * `'full'`.
+ * entry point accepts it back. `jitter` is `'full'` (the shipped default, `Jitter::Full`)
+ * or `'none'`.
  */
 export interface RetryPolicy {
   max_attempts: number

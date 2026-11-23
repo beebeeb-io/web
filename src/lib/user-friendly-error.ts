@@ -262,7 +262,7 @@ export function userFriendlyError(err: unknown): string {
     if (status === 403) return "You don't have permission to do that."
     if (status === 404) return 'Not found.'
     if (err.code === 'banned') return 'Access from this network is temporarily blocked. Try again later.'
-    if (err.code === 'rate_limit_policy') return 'Request limit reached. Try again in a few minutes.'
+    if (err.details?.policy === true) return 'Request limit reached. Try again in a few minutes.'
     if (status === 429) return 'Too many requests. Try again in a moment.'
     if (status >= 500 && status <= 599) {
       return 'Beebeeb is having trouble. Try again in a moment.'

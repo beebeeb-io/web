@@ -13,10 +13,9 @@
  *  - Single retry on raw network failure (no retry on HTTP error responses).
  *  - Surfaces "flaky" connection state after CONNECTION_FAILURE_THRESHOLD
  *    consecutive failures and clears the flag on the first success.
- *  - On 429: auto-retries ONLY when the server's `Retry-After` is <=
- *    RATE_LIMIT_MAX_AUTO_RETRY_SECONDS (brief-burst smoothing). A longer
- *    Retry-After (hourly/daily quota limiter) throws immediately with the
- *    actual wait time in the message — never sleeps for hours (task 1148).
+ *  - A 429 is NOT retried here: `src/lib/rate-limit-backoff.ts` (a `fetch` wrapper)
+ *    owns the backoff, idempotent methods only. A 429 reaching this point is a
+ *    final answer and throws an ApiError whose `code` is the body's `error`.
  *  - On 401 with an authenticated request: clears the token and triggers the
  *    registered session-expired handler. Unauthenticated 401s (e.g. wrong-
  *    password login) fall through so the caller sees the actual server
@@ -28,7 +27,7 @@
 import { ApiError, readErrorResponse } from './errors'
 import { getApiUrl, provenanceHeaders, expectedUserHeaders } from './config'
 import { clearToken, getToken } from './token'
-import { decideRetry, parseRetryAfterHeader, type RetryPolicy } from './retry'
+import { decideRetry, type RetryPolicy } from './retry'
 import {
   fireAccountDeleted,
   fireAccountMismatch,
@@ -44,41 +43,18 @@ import {
 
 const CONNECTION_FAILURE_THRESHOLD = 2
 const RETRY_DELAY_MS = 800
-const RATE_LIMIT_MAX_RETRIES = 3
 const RATE_PACE_THRESHOLD = 0.2
-// Ceiling on how long we'll automatically sleep-and-retry a 429. Retry-After
-// windows up to this are treated as brief-burst smoothing (worth an
-// automatic retry). Anything above it (hourly/daily quota limiters) must
-// throw immediately instead of blocking the caller for hours — see task 1148.
-const RATE_LIMIT_MAX_AUTO_RETRY_SECONDS = 10
-// What the server sends when a 429 carries no usable Retry-After (absent, or
-// not delta-seconds): the same 5 s the helper has always assumed.
-const DEFAULT_RETRY_AFTER_SECONDS = 5
 
 // This client's policies. The ladder, the jitter bounds and the decision are
 // core's (`./retry`); what stays here is the transport's choice — how many
 // tries it is willing to make, and how long its own ladder is. Both are
-// single-step ladders on purpose: this client retries 429s only, never a 5xx,
-// and a raw network failure gets exactly one 800 ms second chance.
+// single-step ladders on purpose: this client never retries a 5xx or a 429 (the
+// fetch wrapper owns 429s), and a raw network failure gets one 800 ms second chance.
 const NETWORK_RETRY_POLICY: RetryPolicy = {
   max_attempts: 2,
   base_ms: RETRY_DELAY_MS,
   cap_ms: RETRY_DELAY_MS,
   jitter: 'none',
-}
-const RATE_LIMIT_RETRY_POLICY: RetryPolicy = {
-  max_attempts: RATE_LIMIT_MAX_RETRIES + 1,
-  base_ms: RETRY_DELAY_MS,
-  cap_ms: RETRY_DELAY_MS,
-  jitter: 'none',
-}
-
-function formatRetryAfter(seconds: number): string {
-  if (seconds < 60) return `${seconds} second${seconds === 1 ? '' : 's'}`
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'}`
-  const hours = Math.round(minutes / 60)
-  return `${hours} hour${hours === 1 ? '' : 's'}`
 }
 
 let consecutiveFailures = 0
@@ -161,163 +137,130 @@ export async function request<T>(
     await paceIfNeeded()
   }
 
-  for (let attempt = 0; attempt <= RATE_LIMIT_MAX_RETRIES; attempt++) {
-    let res: Response
+  let res: Response
+  try {
+    res = await fetch(`${apiUrl}${path}`, init)
+  } catch (firstErr) {
+    // A caller-provided AbortSignal firing mid-request is a deliberate
+    // cancellation, not a transient network blip — surface it immediately
+    // as the same AbortError `fetch` itself throws, with no artificial
+    // 800ms retry delay and no second fetch attempt (task 1571 web PR
+    // #106, Codex P1: initUpload previously never wired its signal into
+    // this call at all, so an aborted save's init request ran to
+    // completion server-side regardless of the abort). Callers rely on
+    // `err instanceof DOMException && err.name === 'AbortError'` to tell
+    // a deliberate cancel apart from a genuine save failure — wrapping it
+    // in `ApiError(_, 0)` like an ordinary network failure would defeat
+    // that check and also risk a retry re-issuing the same request after
+    // the caller has already moved on.
+    if (options.signal?.aborted) throw firstErr
+    await delay((await decideRetry(NETWORK_RETRY_POLICY, 1, 'network', null)) ?? RETRY_DELAY_MS)
     try {
       res = await fetch(`${apiUrl}${path}`, init)
-    } catch (firstErr) {
-      // A caller-provided AbortSignal firing mid-request is a deliberate
-      // cancellation, not a transient network blip — surface it immediately
-      // as the same AbortError `fetch` itself throws, with no artificial
-      // 800ms retry delay and no second fetch attempt (task 1571 web PR
-      // #106, Codex P1: initUpload previously never wired its signal into
-      // this call at all, so an aborted save's init request ran to
-      // completion server-side regardless of the abort). Callers rely on
-      // `err instanceof DOMException && err.name === 'AbortError'` to tell
-      // a deliberate cancel apart from a genuine save failure — wrapping it
-      // in `ApiError(_, 0)` like an ordinary network failure would defeat
-      // that check and also risk a retry re-issuing the same request after
-      // the caller has already moved on.
-      if (options.signal?.aborted) throw firstErr
-      await delay((await decideRetry(NETWORK_RETRY_POLICY, 1, 'network', null)) ?? RETRY_DELAY_MS)
-      try {
-        res = await fetch(`${apiUrl}${path}`, init)
-      } catch (secondErr) {
-        if (options.signal?.aborted) throw secondErr
-        consecutiveFailures += 1
-        if (consecutiveFailures >= CONNECTION_FAILURE_THRESHOLD) {
-          reportConnection('flaky')
-        }
-        const message = 'Could not reach the server. Check your connection and try again.'
-        fireErrorNotifier(message)
-        throw new ApiError(message, 0)
+    } catch (secondErr) {
+      if (options.signal?.aborted) throw secondErr
+      consecutiveFailures += 1
+      if (consecutiveFailures >= CONNECTION_FAILURE_THRESHOLD) {
+        reportConnection('flaky')
       }
+      const message = 'Could not reach the server. Check your connection and try again.'
+      fireErrorNotifier(message)
+      throw new ApiError(message, 0)
     }
-
-    consecutiveFailures = 0
-    reportConnection('ok')
-    updateRateLimitState(res)
-
-    if (res.status === 429) {
-      // `Retry-After` is parsed by core: delta-seconds only, trimmed, leading
-      // zeros fine, anything else (a date, a fraction, a sign) is "no
-      // instruction". A 429 without one keeps the helper's 5 s assumption.
-      const retryAfter =
-        (await parseRetryAfterHeader(res.headers.get('retry-after'))) ?? DEFAULT_RETRY_AFTER_SECONDS
-      // Only auto-retry short windows (brief-burst smoothing). A long
-      // Retry-After (hourly/daily quota limiter) must throw immediately —
-      // sleeping for it would hang the caller for hours (task 1148).
-      if (retryAfter <= RATE_LIMIT_MAX_AUTO_RETRY_SECONDS) {
-        // Core decides whether another try fits the policy; a server
-        // Retry-After replaces the ladder exactly, so the sleep is the
-        // server's number of seconds.
-        const waitMs = await decideRetry(RATE_LIMIT_RETRY_POLICY, attempt + 1, { status: 429 }, retryAfter)
-        if (waitMs !== null) {
-          await delay(waitMs)
-          continue
-        }
-      }
-      if (retryAfter > RATE_LIMIT_MAX_AUTO_RETRY_SECONDS) {
-        throw new ApiError(
-          `Rate limited — try again in ${formatRetryAfter(retryAfter)}`,
-          429,
-          'rate_limit_exceeded',
-        )
-      }
-      throw new ApiError('Rate limited — please wait a moment and try again', 429, 'rate_limit_exceeded')
-    }
-
-    if (!res.ok) {
-      const { body, code, message } = await readErrorResponse(res)
-
-      // Soft-deleted account (task 1403/1404) — the session/credentials were
-      // fine, the ACCOUNT itself is gone. Always a 403, never a 401 (the
-      // server checks this only AFTER credentials/session are verified, so
-      // it can't be used to enumerate accounts). Treat it like a forced
-      // sign-out regardless of WHICH call surfaced it — a fresh login
-      // attempt, or any authenticated call on a tab that was already open
-      // when the account got deleted elsewhere — by dropping any local
-      // token and notifying apps with the full body (this is the one error
-      // whose UI copy needs deleted_at/shred_after, not just `code`) so they
-      // can render the exact copy and redirect. Mirrors the 401 session-
-      // expiry handling below, for "the account, not the session, is gone".
-      if (code === 'account_deleted') {
-        if (token) clearToken()
-        fireAccountDeleted(body)
-      }
-
-      // Task 1948 (1c): the session belongs to an account that is suspended or
-      // disabled. Every later request would carry the same dead login, so it is
-      // signed out on this device from WHICHEVER call surfaced it, like
-      // account_deleted above: drop the legacy bearer, forget that a session was
-      // confirmed this page load (so a later anonymous 401 is not "expired"),
-      // and let the app do the rest (local key/vault cleanup and the notice).
-      // The httpOnly `bb_session` cookie cannot be removed from here; the
-      // server has to expire it.
-      //
-      // Only for the login this request was issued under (web#169 review, Codex
-      // P1): when a newer login became current while it waited for its answer,
-      // the token and the confirmed session are that newer login's and stay. The
-      // handler gets the stamp and makes the same check before it signs out.
-      if (code === 'account_suspended') {
-        if (isCurrentAuthStamp(authStamp)) {
-          if (token) clearToken()
-          clearSessionConfirmed()
-        }
-        fireAccountSuspended(authStamp)
-      }
-
-      // Task 1531 (web #85 round 2) / server task 1554: the server refused a
-      // mutating request because the caller's `X-Beebeeb-Expected-User`
-      // header (the resident key's bound account) did not match the
-      // session's actual user — genuine cross-account key confusion, or a
-      // stale header left over from a just-switched account. Either way the
-      // resident key must not be trusted further; the registered handler
-      // (web: key-context.tsx) locks it and routes to login.
-      if (res.status === 409 && code === 'account_mismatch') {
-        fireAccountMismatch()
-      }
-
-      if (res.status === 401) {
-        if (code === 'opaque_ksf_outdated') {
-          throw new ApiError(message, 401, code)
-        }
-        // Only treat a 401 as session EXPIRY (→ global handler → /login) when a
-        // session plausibly existed (bearer token, or a confirmed auth this
-        // page-load). An anonymous 401 — e.g. a logged-out visitor on a public
-        // route whose boot getMe() 401s — must NOT fire the global handler, or
-        // it yanks them off /s/:token before the share ever loads (task 0741).
-        if (token || wasSessionConfirmed()) {
-          if (token) {
-            clearToken()
-          }
-          clearSessionConfirmed()
-          fireSessionExpired()
-          throw new ApiError('Session expired', 401, code)
-        }
-        // No session ever existed this page-load — surface a plain 401 for the
-        // caller to handle (share-view, etc.); do not bounce to /login.
-        throw new ApiError(message, 401, code)
-      }
-
-      // Task 1605: carry the parsed body through as `.details` so callers can
-      // read additive fields (`is_trial_cap`, `limit_bytes`, …) without a
-      // second parse — the 401 branches above stay message/code-only (no
-      // caller needs more there today).
-      throw new ApiError(message, res.status, code, body)
-    }
-
-    // 204 No Content (and other empty-body 2xx, e.g. DELETE) carry no JSON —
-    // res.json() would throw "Unexpected end of JSON input". Resolve to
-    // undefined so callers typed Promise<void> complete cleanly.
-    if (res.status === 204) {
-      return undefined as T
-    }
-
-    return res.json() as Promise<T>
   }
 
-  throw new ApiError('Rate limited — please wait a moment and try again', 429, 'rate_limit_exceeded')
+  consecutiveFailures = 0
+  reportConnection('ok')
+  updateRateLimitState(res)
+
+  if (!res.ok) {
+    const { body, code, message } = await readErrorResponse(res)
+
+    // Soft-deleted account (task 1403/1404) — the session/credentials were
+    // fine, the ACCOUNT itself is gone. Always a 403, never a 401 (the
+    // server checks this only AFTER credentials/session are verified, so
+    // it can't be used to enumerate accounts). Treat it like a forced
+    // sign-out regardless of WHICH call surfaced it — a fresh login
+    // attempt, or any authenticated call on a tab that was already open
+    // when the account got deleted elsewhere — by dropping any local
+    // token and notifying apps with the full body (this is the one error
+    // whose UI copy needs deleted_at/shred_after, not just `code`) so they
+    // can render the exact copy and redirect. Mirrors the 401 session-
+    // expiry handling below, for "the account, not the session, is gone".
+    if (code === 'account_deleted') {
+      if (token) clearToken()
+      fireAccountDeleted(body)
+    }
+
+    // Task 1948 (1c): the session belongs to an account that is suspended or
+    // disabled. Every later request would carry the same dead login, so it is
+    // signed out on this device from WHICHEVER call surfaced it, like
+    // account_deleted above: drop the legacy bearer, forget that a session was
+    // confirmed this page load (so a later anonymous 401 is not "expired"),
+    // and let the app do the rest (local key/vault cleanup and the notice).
+    // The httpOnly `bb_session` cookie cannot be removed from here; the
+    // server has to expire it.
+    //
+    // Only for the login this request was issued under (web#169 review, Codex
+    // P1): when a newer login became current while it waited for its answer,
+    // the token and the confirmed session are that newer login's and stay. The
+    // handler gets the stamp and makes the same check before it signs out.
+    if (code === 'account_suspended') {
+      if (isCurrentAuthStamp(authStamp)) {
+        if (token) clearToken()
+        clearSessionConfirmed()
+      }
+      fireAccountSuspended(authStamp)
+    }
+
+    // Task 1531 (web #85 round 2) / server task 1554: the server refused a
+    // mutating request because the caller's `X-Beebeeb-Expected-User`
+    // header (the resident key's bound account) did not match the
+    // session's actual user — genuine cross-account key confusion, or a
+    // stale header left over from a just-switched account. Either way the
+    // resident key must not be trusted further; the registered handler
+    // (web: key-context.tsx) locks it and routes to login.
+    if (res.status === 409 && code === 'account_mismatch') {
+      fireAccountMismatch()
+    }
+
+    if (res.status === 401) {
+      if (code === 'opaque_ksf_outdated') {
+        throw new ApiError(message, 401, code)
+      }
+      // Only treat a 401 as session EXPIRY (→ global handler → /login) when a
+      // session plausibly existed (bearer token, or a confirmed auth this
+      // page-load). An anonymous 401 — e.g. a logged-out visitor on a public
+      // route whose boot getMe() 401s — must NOT fire the global handler, or
+      // it yanks them off /s/:token before the share ever loads (task 0741).
+      if (token || wasSessionConfirmed()) {
+        if (token) {
+          clearToken()
+        }
+        clearSessionConfirmed()
+        fireSessionExpired()
+        throw new ApiError('Session expired', 401, code)
+      }
+      // No session ever existed this page-load — surface a plain 401 for the
+      // caller to handle (share-view, etc.); do not bounce to /login.
+      throw new ApiError(message, 401, code)
+    }
+
+    // Task 1605: carry the parsed body through as `.details` so callers can
+    // read additive fields (`is_trial_cap`, `limit_bytes`, …) without a
+    // second parse — the 401 branches above stay message/code-only (no
+    // caller needs more there today).
+    throw new ApiError(message, res.status, code, body)
+  }
+
+  // 204 No Content (and other empty-body 2xx, e.g. DELETE) carry no JSON —
+  // res.json() would throw "Unexpected end of JSON input". Resolve to
+  // undefined so callers typed Promise<void> complete cleanly.
+  if (res.status === 204) {
+    return undefined as T
+  }
+
+  return res.json() as Promise<T>
 }
 
 export interface ResolveSessionTokenDeps {

@@ -52,7 +52,7 @@ describe('retry vector (one backoff policy)', () => {
       expect(retryDelayMs(policy, retry)).toBe(ms)
     }
     // The shipped policy itself: six requests in all, 500 ms base, 30 s cap.
-    expect(policy).toEqual({ max_attempts: 6, base_ms: 500, cap_ms: 30000, jitter: 'none' })
+    expect(policy).toEqual({ max_attempts: 6, base_ms: 500, cap_ms: 30000, jitter: 'full' })
   })
 
   it('full jitter shortens the ladder by the sample; none ignores it; the cap holds', () => {
@@ -60,7 +60,7 @@ describe('retry vector (one backoff policy)', () => {
     expect(retryJitteredDelayMs(full, 1, 0)).toBe(0)
     expect(retryJitteredDelayMs(full, 1, 250)).toBe(125)
     expect(retryJitteredDelayMs(full, 1, 1000)).toBe(500)
-    expect(retryJitteredDelayMs(policy, 1, 250)).toBe(500)
+    expect(retryJitteredDelayMs({ ...policy, jitter: 'none' }, 1, 250)).toBe(500)
     expect(retryJitteredDelayMs(full, 7, 1000)).toBe(30000)
   })
 
@@ -140,29 +140,19 @@ describe('request() failure schedule (unchanged from main)', () => {
     }) as unknown as typeof fetch
   }
 
-  it('three 429 retries inside the short window, then the wait-a-moment error', async () => {
+  it('a 429 is final in request(): one fetch, no sleep (the fetch wrapper owns retries)', async () => {
     installFetch()
     responses = [
-      { status: 429, body: {}, headers: { 'retry-after': '0' } },
-      { status: 429, body: {}, headers: { 'retry-after': '0' } },
-      { status: 429, body: {}, headers: { 'retry-after': '0' } },
-      { status: 429, body: {}, headers: { 'retry-after': '0' } },
+      { status: 429, body: { error: 'upload_rate_limited' }, headers: { 'retry-after': '3' } },
+      { status: 200, body: { ok: true } },
     ]
     const { request } = await import('../packages/shared/src/api/index')
-    await expect(request('/api/v1/x')).rejects.toThrow(/please wait a moment/)
-    // One try plus exactly three retries — main's schedule for this sequence.
-    expect(calls).toBe(4)
-    globalThis.fetch = originalFetch
-  })
-
-  it('a long Retry-After throws at once, carrying the wait time', async () => {
-    installFetch()
-    responses = [{ status: 429, body: {}, headers: { 'retry-after': '86400' } }]
-    const { request } = await import('../packages/shared/src/api/index')
     const start = Date.now()
-    await expect(request('/api/v1/x')).rejects.toThrow(/24 hours/)
-    expect(Date.now() - start).toBeLessThan(2000)
+    const err = await request('/api/v1/x').catch((e) => e)
+    expect(err.status).toBe(429)
+    expect(err.code).toBe('upload_rate_limited')
     expect(calls).toBe(1)
+    expect(Date.now() - start).toBeLessThan(1000)
     globalThis.fetch = originalFetch
   })
 
@@ -181,18 +171,4 @@ describe('request() failure schedule (unchanged from main)', () => {
     globalThis.fetch = originalFetch
   })
 
-  it('a Retry-After that is not delta-seconds is no instruction: 5 s, then the retry', async () => {
-    installFetch()
-    responses = [
-      { status: 429, body: {}, headers: { 'retry-after': 'Wed, 21 Oct 2015 07:28:00 GMT' } },
-      { status: 200, body: { ok: true } },
-    ]
-    const { request } = await import('../packages/shared/src/api/index')
-    const start = Date.now()
-    const result = await request<{ ok: boolean }>('/api/v1/x')
-    expect(result).toEqual({ ok: true })
-    expect(calls).toBe(2)
-    expect(Date.now() - start).toBeGreaterThanOrEqual(4900)
-    globalThis.fetch = originalFetch
-  }, 15000)
 })

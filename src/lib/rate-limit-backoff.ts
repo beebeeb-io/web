@@ -5,8 +5,9 @@
  * max(Retry-After, body.retry_after) + 0-25 % jitter, then retries an idempotent
  * request (GET, HEAD, PUT) at most 4 times. While a wait is active, every API
  * request from this tab waits for it (no herd). A Retry-After above 60 s, or
- * `error: "banned"`, is a policy refusal: the 429 is returned at once with
- * `error` set to "banned" / "rate_limit_policy" so the UI says so.
+ * `error: "banned"`, is a policy refusal: the 429 is returned at once (the server's
+ * `error` code kept, plus `policy: true`), the tab pauses for min(wait, 60 s) and
+ * answers further requests locally with the same refusal until then.
  * `server_busy` keeps its own path (server-busy-retry.ts) and passes through.
  */
 import { SERVER_BUSY_CODE, secondsFrom, sleepAbortable } from './server-busy-retry'
@@ -14,7 +15,6 @@ import { SERVER_BUSY_CODE, secondsFrom, sleepAbortable } from './server-busy-ret
 export const RATE_LIMIT_MAX_RETRIES = 4
 /** A longer Retry-After is a policy refusal, not a wait. */
 export const RATE_LIMIT_POLICY_SECONDS = 60
-export const RATE_LIMITED_POLICY_CODE = 'rate_limit_policy'
 export const BANNED_CODE = 'banned'
 const IDEMPOTENT = new Set(['GET', 'HEAD', 'PUT'])
 
@@ -23,6 +23,7 @@ let pauseUntil = 0
 /** Test hook: clear the tab-wide pause. */
 export function resetRateLimitPause(): void {
   pauseUntil = 0
+  refusal = null
 }
 
 /** Seconds to wait: max(header, body) with 0-25 % jitter added. */
@@ -60,9 +61,22 @@ function methodOf(input: RequestInfo | URL, init?: RequestInit): string {
   return (init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET')).toUpperCase()
 }
 
-function policyResponse(res: Response, body: Record<string, unknown>): Response {
-  const error = body.error === BANNED_CODE ? BANNED_CODE : RATE_LIMITED_POLICY_CODE
-  return new Response(JSON.stringify({ ...body, error }), { status: 429, headers: res.headers })
+/** A refusal: keep the server's `error` code, mark it with a separate `policy: true`. */
+function policyResponse(headers: Headers, body: Record<string, unknown>): Response {
+  return new Response(JSON.stringify({ ...body, policy: true }), { status: 429, headers })
+}
+
+/** The last refusal, replayed locally until its pause ends. */
+let refusal: { until: number; body: Record<string, unknown> } | null = null
+
+function localRefusal(): Response | null {
+  if (!refusal) return null
+  const left = refusal.until - Date.now()
+  if (left <= 0) {
+    refusal = null
+    return null
+  }
+  return policyResponse(new Headers({ 'Retry-After': String(Math.ceil(left / 1000)) }), refusal.body)
 }
 
 export interface BackoffOptions {
@@ -80,6 +94,8 @@ export function withRateLimitBackoff(base: typeof fetch, opts: BackoffOptions): 
       IDEMPOTENT.has(methodOf(input, init)) && !(init?.body instanceof ReadableStream)
     for (let attempt = 0; ; attempt++) {
       if (signal?.aborted) throw abortError()
+      const local = localRefusal()
+      if (local) return local
       await waitForPause(signal)
       const res = await base(input, init)
       if (res.status !== 429) return res
@@ -93,7 +109,10 @@ export function withRateLimitBackoff(base: typeof fetch, opts: BackoffOptions): 
       const header = res.headers.get('Retry-After')
       const seconds = Math.max(secondsFrom(header) ?? 0, secondsFrom(body.retry_after) ?? 0)
       if (body.error === BANNED_CODE || seconds > RATE_LIMIT_POLICY_SECONDS) {
-        return policyResponse(res, body)
+        const until = Date.now() + Math.min(Math.max(seconds, 1), RATE_LIMIT_POLICY_SECONDS) * 1000
+        pauseUntil = Math.max(pauseUntil, until)
+        refusal = { until, body }
+        return policyResponse(res.headers, body)
       }
       const waitMs = rateLimitWaitMs(header, body.retry_after, random)
       pauseUntil = Math.max(pauseUntil, Date.now() + waitMs)

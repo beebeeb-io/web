@@ -45,7 +45,13 @@ describe('429 backoff', () => {
     const s = setup([r429({ error: 'rate_limited' }, '120'), ok()])
     const res = await s.f(ORIGIN + '/files')
     expect(res.status).toBe(429)
-    expect((await res.json()).error).toBe('rate_limit_policy')
+    const j = await res.json()
+    expect(j.error).toBe('rate_limited')
+    expect(j.policy).toBe(true)
+    expect(s.calls()).toBe(1)
+    // the tab is now paused: the next request is answered locally
+    const again = await s.f(ORIGIN + '/files')
+    expect(again.status).toBe(429)
     expect(s.calls()).toBe(1)
   })
 
