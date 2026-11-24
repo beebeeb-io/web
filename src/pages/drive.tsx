@@ -22,6 +22,7 @@ import {DriveCreationOverlays} from './drive/drive-creation-overlays'
 import {DriveFileOverlays} from './drive/drive-file-overlays'
 import {DriveGuideOverlays} from './drive/drive-guide-overlays'
 import {useDriveUploads} from './drive/use-drive-uploads'
+import {FirstFiles} from '../components/onboarding/first-files'
 import {useDriveCommands} from './drive/use-drive-commands'
 import {useDriveActions} from './drive/use-drive-actions'
 import {useDriveFiles} from './drive/use-drive-files'
@@ -938,6 +939,7 @@ export function Drive() {
   return (
     <DriveLayout>
       <HiddenInput />
+      <FirstFiles onFiles={guardedFilesSelected} />
       <HiddenFolderInput />
       <HiddenResumeInput />
       {/* Top bar */}

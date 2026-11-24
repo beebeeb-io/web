@@ -20,6 +20,8 @@ export interface AuthShellFrameProps {
   subtitle?: string
   step?: number
   totalSteps?: number
+  /** Sign-up step bar (master-key-naming 13): "Step n of N" beside the logo and one label per segment. */
+  stepLabels?: string[]
   children: ReactNode
   /** Hide the trust footer (default: shown) */
   hideTrust?: boolean
@@ -39,6 +41,7 @@ export function AuthShellFrame({
   subtitle,
   step,
   totalSteps,
+  stepLabels,
   children,
   hideTrust,
   wide,
@@ -51,7 +54,14 @@ export function AuthShellFrame({
       <div className={`auth-card w-full ${wide ? 'max-w-[34rem]' : 'max-w-[28rem]'} bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden`}>
         {/* Header */}
         <div className="px-5 py-4 sm:px-xl sm:py-lg border-b border-line">
-          <BBLogo size={16} />
+          {stepLabels && step != null && totalSteps != null ? (
+            <div className="flex items-center justify-between">
+              <BBLogo size={16} />
+              <span className="text-xs text-ink-3" data-testid="step-count">Step {step} of {totalSteps}</span>
+            </div>
+          ) : (
+            <BBLogo size={16} />
+          )}
           {totalSteps != null && step != null && (
             <div className="flex gap-1 mt-3.5">
               {Array.from({ length: totalSteps }).map((_, i) => (
@@ -61,6 +71,18 @@ export function AuthShellFrame({
                     i < step ? 'bg-amber' : 'bg-paper-3'
                   }`}
                 />
+              ))}
+            </div>
+          )}
+          {stepLabels && step != null && (
+            <div className="flex gap-1 mt-2.5" data-testid="step-labels">
+              {stepLabels.map((label, i) => (
+                <span
+                  key={label}
+                  className={`flex-1 text-xs ${i + 1 === step ? 'text-ink font-medium' : 'text-ink-4'}`}
+                >
+                  {i + 1} {label}
+                </span>
               ))}
             </div>
           )}

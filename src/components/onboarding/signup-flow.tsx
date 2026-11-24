@@ -16,6 +16,8 @@ import {
   UpdateRequired,
 } from './blocking-screens'
 import { RecoveryPhraseExport } from '../recovery-phrase-export'
+import { PasskeyOffer, SIGNUP_STEP_LABELS, passkeyOfferSupported } from './passkey-offer'
+import { markFirstFilesPending } from './first-files'
 import { ErrorLine, OnboardingFrame, RegionFooter, Spinner } from './frame'
 
 /**
@@ -417,7 +419,7 @@ function hintText(e: PasswordEvaluation): { text: string; tone: string } {
 }
 
 function SetPasswordStep({ ctx }: { ctx: CeremonyCtx }) {
-  const { policy, ports, ceremony, session, screen } = ctx
+  const { policy, ports, ceremony, session } = ctx
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [show, setShow] = useState(false)
@@ -487,8 +489,9 @@ function SetPasswordStep({ ctx }: { ctx: CeremonyCtx }) {
       screen="step:set_password"
       title="Choose a password for this device"
       subtitle="Your password only unlocks your master key on this device."
-      position={screen.position}
-      total={screen.total}
+      position={2}
+      total={4}
+      stepLabels={SIGNUP_STEP_LABELS}
     >
       <form onSubmit={submit}>
         <BBInput
@@ -607,7 +610,7 @@ function listPositions(positions: readonly number[]): string {
 }
 
 function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
-  const { ceremony, screen, policy, session } = ctx
+  const { ceremony, policy, session } = ctx
   const [phase, setPhase] = useState<'loading' | 'show' | 'confirm'>('loading')
   const [words, setWords] = useState<string[]>([])
   const [saved, setSaved] = useState(false)
@@ -716,7 +719,7 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
 
   if (phase === 'loading') {
     return (
-      <OnboardingFrame screen="step:save_recovery_phrase" title="Your master key" position={screen.position} total={screen.total}>
+      <OnboardingFrame screen="step:save_recovery_phrase" title="Your master key" position={1} total={4} stepLabels={SIGNUP_STEP_LABELS}>
         <Spinner label="Generating your master key" />
       </OnboardingFrame>
     )
@@ -728,8 +731,9 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
         screen="step:save_recovery_phrase"
         title="Use your existing master key"
         subtitle="Your offline Pass vault will open with this account."
-        position={screen.position}
-        total={screen.total}
+        position={1}
+        total={4}
+        stepLabels={SIGNUP_STEP_LABELS}
         wide
       >
         <form onSubmit={adopt} data-phase="adopt">
@@ -776,8 +780,9 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
         screen="step:save_recovery_phrase"
         title="Confirm your master key"
         subtitle={`Type words ${listPositions(positions)} of your master key.`}
-        position={screen.position}
-        total={screen.total}
+        position={1}
+        total={4}
+        stepLabels={SIGNUP_STEP_LABELS}
       >
         <form onSubmit={confirm} data-phase="confirm">
           <div className="flex flex-col gap-3 mb-3.5">
@@ -820,8 +825,9 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
       screen="step:save_recovery_phrase"
       title="Your master key"
       subtitle={`Your master key: ${policy.recoveryPhrase.wordCount} words. Your password only unlocks it on this device. Anyone with these words can open your vault; without them, a forgotten password means the data is gone. Beebeeb can't recover it.`}
-      position={screen.position}
-      total={screen.total}
+      position={1}
+      total={4}
+      stepLabels={SIGNUP_STEP_LABELS}
       wide
     >
       <div data-phase="show">
@@ -1038,6 +1044,22 @@ export function PreAccountFlow({
   const [ceremonyFailed, setCeremonyFailed] = useState(false)
   const [generation, setGeneration] = useState(0)
   const session = useRef<Session>(freshSession())
+  // Step 3: the passkey offer, shown between "the account exists" and the port that moves on.
+  const [offer, setOffer] = useState<{ masterKey: Uint8Array; password: string; resolve: () => void } | null>(null)
+  const flowPorts = useMemo<OnboardingPorts>(
+    () => ({
+      ...ports,
+      async onAccountCreated(info) {
+        markFirstFilesPending(info.userId)
+        if (await passkeyOfferSupported()) {
+          await new Promise<void>((resolve) => setOffer({ masterKey: info.masterKey, password: info.password, resolve }))
+          setOffer(null)
+        }
+        await ports.onAccountCreated(info)
+      },
+    }),
+    [ports],
+  )
 
   // Core's step order, loaded with the ceremony; until then the document's own order (the first
   // screens, enter_email and the email code, come first in both).
@@ -1118,6 +1140,7 @@ export function PreAccountFlow({
     }
   }, [screen.kind, ports.actions])
 
+  if (offer) return <PasskeyOffer masterKey={offer.masterKey} password={offer.password} onDone={offer.resolve} />
   if (screen.kind === 'created') {
     return (
       <OnboardingFrame screen="created" title="Your account is ready">
@@ -1138,6 +1161,6 @@ export function PreAccountFlow({
     )
   }
 
-  const ctx: Ctx = { doc, policy, ports, ceremony, session, screen, done, undo, notice, setNotice, startOver }
+  const ctx: Ctx = { doc, policy, ports: flowPorts, ceremony, session, screen, done, undo, notice, setNotice, startOver }
   return <>{renderStep(ctx)}</>
 }

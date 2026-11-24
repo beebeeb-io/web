@@ -18,6 +18,8 @@ import {
 import { initialOnboardingStep, signupTicketInvalidCopy } from '../lib/signup-email-code'
 import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY, REFERRAL_CODE_KEY } from './signup'
 import { readPlanIntent, postSignupDestination } from '../lib/plan-intent'
+import { PasskeyOffer, passkeyOfferSupported } from '../components/onboarding/passkey-offer'
+import { markFirstFilesPending } from '../components/onboarding/first-files'
 import { RecoveryPhraseExport } from '../components/recovery-phrase-export'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
@@ -34,29 +36,20 @@ import { markWelcomeFilePending, uploadWelcomeFile } from '../lib/welcome-file-u
 import { welcomeFileAtSignup } from '../lib/welcome-file'
 import { accountStateFromError, resolveAccountState } from '../lib/account-state'
 
-type Step = 'code' | 'display' | 'verify' | 'password' | 'processing'
+type Step = 'code' | 'display' | 'verify' | 'password' | 'processing' | 'passkey'
 
-// Task 1525: a code step now precedes the master key display WHEN the
-// server has the capability (`navState.emailCodeSupported`, decided by
-// signup.tsx's email-start call). A legacy/stale server (404 on
-// /signup/email-start) skips it entirely — step numbers below fall back to
-// the exact pre-1525 4-step count so that path looks unchanged.
-const STEP_NUMBER_WITH_CODE: Record<Step, number> = {
-  code: 2,
-  display: 3,
-  verify: 4,
-  password: 5,
-  processing: 5,
+// Master-key-naming 13: the step bar is "Step n of 4" in both server shapes: 1 Master key (the 12
+// words and their check), 2 Password, 3 Passkey, 4 First files (on the drive). The email code step
+// (task 1525, only when the server has it) comes before step 1 and carries no bar.
+const STEP_NUMBER: Record<Step, number> = {
+  code: 0,
+  display: 1,
+  verify: 1,
+  password: 2,
+  processing: 2,
+  passkey: 3,
 }
-const STEP_NUMBER_LEGACY: Record<Step, number> = {
-  code: 2, // unreachable when emailCodeSupported is false
-  display: 2,
-  verify: 3,
-  password: 4,
-  processing: 4,
-}
-const TOTAL_STEPS_WITH_CODE = 5
-const TOTAL_STEPS_LEGACY = 4
+const TOTAL_STEPS = 4
 
 const BULLET_POINTS = [
   { icon: 'eye' as const, title: "We can't see it", desc: 'Encrypted on your device before upload.' },
@@ -194,6 +187,8 @@ export function Onboarding() {
   // Processing step
   const [error, setError] = useState('')
   const [processingStatus, setProcessingStatus] = useState('')
+  // Step 3 hands control back here: resolved by the passkey card's "Not now" or after the passkey is added.
+  const offerDone = useRef<(() => void) | null>(null)
 
   const strength = evaluatePassword(password)
   const passwordsMatch =
@@ -367,6 +362,17 @@ export function Onboarding() {
         // Welcome file is a nice-to-have — never block account creation on failure
       }
 
+      // 5b. Step 3: offer a passkey (the account and the unlocked vault exist; "Not now" goes on).
+      markFirstFilesPending(registerResult.user_id)
+      if (await passkeyOfferSupported()) {
+        await new Promise<void>((resolve) => {
+          offerDone.current = resolve
+          setStep('passkey')
+        })
+        offerDone.current = null
+        setStep('processing')
+      }
+
       // 6. Refresh user state and navigate to drive
       setProcessingStatus('Almost there...')
       await refreshUser()
@@ -423,8 +429,12 @@ export function Onboarding() {
 
   if (!email) return null
 
-  const stepNumber = emailCodeSupported ? STEP_NUMBER_WITH_CODE[step] : STEP_NUMBER_LEGACY[step]
-  const totalSteps = emailCodeSupported ? TOTAL_STEPS_WITH_CODE : TOTAL_STEPS_LEGACY
+  const stepNumber = STEP_NUMBER[step]
+  const totalSteps = TOTAL_STEPS
+
+  if (step === 'passkey' && masterKeyBytes) {
+    return <PasskeyOffer masterKey={masterKeyBytes} password={password} onDone={() => offerDone.current?.()} />
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-paper px-4 py-6 sm:p-xl">
@@ -432,6 +442,7 @@ export function Onboarding() {
         {/* Header */}
         <div className="flex items-center gap-4 px-5 py-4 sm:px-xl sm:py-lg border-b border-line">
           <BBLogo size={15} />
+          {stepNumber > 0 && (
           <div className="ml-auto flex items-center gap-1.5">
             {Array.from({ length: totalSteps }).map((_, i) => (
               <div
@@ -442,9 +453,10 @@ export function Onboarding() {
               />
             ))}
             <span className="ml-2 text-xs font-medium text-ink-2">
-              {stepNumber} / {totalSteps}
+              Step {stepNumber} of {totalSteps}
             </span>
           </div>
+          )}
         </div>
 
         {/* Processing step — full width */}

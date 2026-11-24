@@ -13,6 +13,7 @@ export function OnboardingFrame({
   subtitle,
   position,
   total,
+  stepLabels,
   wide,
   children,
 }: {
@@ -21,6 +22,7 @@ export function OnboardingFrame({
   subtitle?: string
   position?: number
   total?: number
+  stepLabels?: string[]
   wide?: boolean
   children: ReactNode
 }) {
@@ -30,6 +32,7 @@ export function OnboardingFrame({
       subtitle={subtitle}
       step={position}
       totalSteps={total}
+      stepLabels={stepLabels}
       hideTrust
       wide={wide}
     >
