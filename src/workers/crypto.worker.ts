@@ -918,6 +918,12 @@ const cryptoWorker = {
     return ceremonyResult(() => wasm.evaluate_password(password, minLength))
   },
 
+  /** Core's canonical pre-account order (master key first, then the password): `[{ step, spec_step_id }]`. */
+  async ceremonyStepOrder(): Promise<CeremonyResult<{ step: string; spec_step_id: string }[]>> {
+    const wasm = await ensureWasm()
+    return ceremonyResult(() => wasm.WasmSignupCeremony.ceremonyStepOrder() as { step: string; spec_step_id: string }[])
+  },
+
   async ceremonyNew(
     minLength: number,
     emailVerificationRequired: boolean,

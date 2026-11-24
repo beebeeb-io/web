@@ -36,7 +36,7 @@ import { accountStateFromError, resolveAccountState } from '../lib/account-state
 
 type Step = 'code' | 'display' | 'verify' | 'password' | 'processing'
 
-// Task 1525: a code step now precedes the recovery-phrase display WHEN the
+// Task 1525: a code step now precedes the master key display WHEN the
 // server has the capability (`navState.emailCodeSupported`, decided by
 // signup.tsx's email-start call). A legacy/stale server (404 on
 // /signup/email-start) skips it entirely — step numbers below fall back to
@@ -60,8 +60,8 @@ const TOTAL_STEPS_LEGACY = 4
 
 const BULLET_POINTS = [
   { icon: 'eye' as const, title: "We can't see it", desc: 'Encrypted on your device before upload.' },
-  { icon: 'key' as const, title: "We can't reset it", desc: "Lost phrase = lost access. That's the deal." },
-  { icon: 'shield' as const, title: "You're the only custodian", desc: 'No backdoors, no master keys, no exceptions.' },
+  { icon: 'key' as const, title: "We can't reset it", desc: "Lost master key = lost access. That's the deal." },
+  { icon: 'shield' as const, title: "You're the only custodian", desc: 'No backdoors, no spare keys, no exceptions.' },
 ]
 
 type PasswordFeedback = {
@@ -208,7 +208,7 @@ export function Onboarding() {
   // Generate mnemonic on mount — but only once the email is actually
   // VERIFIED. Task 1525: before this, the phrase was generated the instant
   // /onboarding mounted, so a phantom signup (an existing user who "signed
-  // up" again) was shown a recovery phrase that never got stored anywhere —
+  // up" again) was shown a master key that never got stored anywhere —
   // locked out, no explanation. When the server has the code capability,
   // wait for a valid `ticket` (proof the email-verify succeeded) before
   // generating anything. The legacy fallback (emailCodeSupported === false)
@@ -475,14 +475,15 @@ export function Onboarding() {
               {step === 'display' && (
                 <>
                   <p className="text-xs font-medium text-ink-2 mb-2.5">
-                    Recovery phrase &middot; {words.length} words
+                    Master key &middot; {words.length} words
                   </p>
                   <h1 className="text-xl font-semibold text-ink mb-1.5">
-                    Your master key, in words.
+                    Your master key
                   </h1>
                   <p className="text-sm text-ink-3 leading-relaxed mb-5">
-                    These {words.length} words are the only way to recover your account.
-                    Write them down or save to a password manager.
+                    Your master key: {words.length} words. Your password only unlocks it on this device.
+                    Anyone with these words can open your vault; without them, a forgotten password
+                    means the data is gone. Beebeeb can't recover it.
                   </p>
 
                   {words.length > 0 ? (
@@ -510,7 +511,7 @@ export function Onboarding() {
                           <BBCheckbox
                             checked={saved}
                             onChange={setSaved}
-                            label="I've saved my recovery phrase offline."
+                            label="I have saved my master key somewhere safe, outside Beebeeb."
                           />
                         </div>
                         <BBButton
@@ -528,7 +529,7 @@ export function Onboarding() {
                   ) : (
                     <div className="flex items-center gap-2 text-sm text-ink-3">
                       <div className="w-4 h-4 border-2 border-ink-3 border-t-transparent rounded-full animate-spin" />
-                      Generating recovery phrase...
+                      Generating your master key...
                     </div>
                   )}
                 </>
@@ -546,11 +547,10 @@ export function Onboarding() {
                 <>
                   <p className="text-xs font-medium text-ink-2 mb-2.5">Device password</p>
                   <h1 className="text-xl font-semibold text-ink mb-1.5">
-                    Set a password for quick access
+                    Choose a password for this device
                   </h1>
                   <p className="text-sm text-ink-3 leading-relaxed mb-5">
-                    This password unlocks your vault on this device.
-                    Your recovery phrase remains the ultimate backup.
+                    Your password only unlocks your master key on this device.
                   </p>
 
                   <div className="mb-1.5">
@@ -693,8 +693,8 @@ export function Onboarding() {
                 {step === 'code' && (
                   <p className="text-sm text-ink-3 leading-relaxed">
                     We check your email before anything is created — so a
-                    mistyped address never leaves you holding a recovery
-                    phrase and password for an account that doesn't exist.
+                    mistyped address never leaves you holding a master
+                    key and password for an account that doesn't exist.
                   </p>
                 )}
                 {step === 'display' && (
@@ -703,7 +703,7 @@ export function Onboarding() {
                       <BBCheckbox
                         checked={saved}
                         onChange={setSaved}
-                        label="I've saved my recovery phrase offline."
+                        label="I have saved my master key somewhere safe, outside Beebeeb."
                       />
                     </div>
                     <BBButton
@@ -720,14 +720,14 @@ export function Onboarding() {
                 )}
                 {step === 'verify' && (
                   <p className="text-sm text-ink-3 leading-relaxed">
-                    Type the requested words to confirm you have your recovery phrase.
+                    Type the requested words to confirm you have your master key.
                     This is the only time we'll show it.
                   </p>
                 )}
                 {step === 'password' && (
                   <p className="text-sm text-ink-3 leading-relaxed">
-                    Your password wraps the master key on this device.
-                    On a new device, you'll use either your password or recovery phrase to unlock.
+                    Your password unlocks your master key on this device.
+                    On a new device, you'll use either your password or your master key to unlock.
                   </p>
                 )}
                 <p className="text-center mt-2.5 text-[11px] text-ink-4">

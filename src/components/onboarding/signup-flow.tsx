@@ -20,13 +20,14 @@ import { ErrorLine, OnboardingFrame, RegionFooter, Spinner } from './frame'
 
 /**
  * The pre-account flow (stage `pre_account`): enter_email, verify_email_code,
- * accept_terms, set_password, save_recovery_phrase, create_account, in the
- * order and with the numbers the document declares.
+ * accept_terms, save_recovery_phrase (the master key: words, then confirm), set_password,
+ * create_account, in core's order (`ceremonyStepOrder`: master key first, then the password)
+ * with the numbers the document declares.
  *
  * What lives where (spec 5.5, 5.12):
  *   - The planner (`planScreen`) picks the screen. This file never decides
  *     order, never skips a step on its own, never invents policy.
- *   - Password policy, the breach gate, the recovery phrase and OPAQUE all run
+ *   - Password policy, the breach gate, the master key and OPAQUE all run
  *     in the core WASM ceremony. The fields below are inputs and buttons.
  *   - The ceremony is wiped (`dispose` = `abandon` + free) when the flow is
  *     left, restarted, or fails for a reason the person cannot retry.
@@ -62,7 +63,7 @@ interface Ctx {
   startOver: () => void
 }
 
-/** A context in which the ceremony exists (the steps that touch the password or phrase). */
+/** A context in which the ceremony exists (the steps that touch the password or master key). */
 type CeremonyCtx = Ctx & { ceremony: CeremonyProxy }
 
 function ceremonyMessage(code: string): string {
@@ -72,7 +73,7 @@ function ceremonyMessage(code: string): string {
     case 'password_too_short':
       return 'That password is too short.'
     case 'phrase_word_mismatch':
-      return 'Those words do not match your recovery phrase. Check them against what you wrote down.'
+      return "These words don't match your master key. Check them against what you saved."
     case 'breach_prefix_mismatch':
       return 'We could not check this password against known breaches. Try again.'
     case 'phrase_answer_count':
@@ -377,7 +378,7 @@ function AcceptTermsStep({ ctx }: { ctx: Ctx }) {
         <BBCheckbox
           checked={understood}
           onChange={setUnderstood}
-          label="I understand that Beebeeb cannot recover my account if I lose both my password and my recovery phrase. We can't recover this."
+          label="I understand that Beebeeb can't recover my account if I forget my password and lose my master key."
         />
       </div>
       <BBButton
@@ -484,8 +485,8 @@ function SetPasswordStep({ ctx }: { ctx: CeremonyCtx }) {
   return (
     <OnboardingFrame
       screen="step:set_password"
-      title="Set a password"
-      subtitle="It unlocks your vault on this device. Your recovery phrase stays the ultimate backup."
+      title="Choose a password for this device"
+      subtitle="Your password only unlocks your master key on this device."
       position={screen.position}
       total={screen.total}
     >
@@ -575,7 +576,7 @@ function SetPasswordStep({ ctx }: { ctx: CeremonyCtx }) {
 /** Message for a failed `adoptPhrase`: core's `crypto` code means the 12 words are not a valid phrase. */
 export function adoptPhraseMessage(code: string | undefined): string {
   return code === 'crypto' || code === 'phrase_invalid'
-    ? 'Those 12 words are not a valid recovery phrase.'
+    ? 'That is not a valid master key. Check the 12 words and their order.'
     : 'Something went wrong on this device. Try again.'
 }
 
@@ -597,6 +598,12 @@ export async function adoptTypedPhrase(
   } catch (err) {
     return adoptPhraseMessage(err instanceof CeremonyError ? err.code : undefined)
   }
+}
+
+/** "3, 7 and 10" for the confirm sub-title. */
+function listPositions(positions: readonly number[]): string {
+  if (positions.length < 2) return positions.join('')
+  return `${positions.slice(0, -1).join(', ')} and ${positions[positions.length - 1]}`
 }
 
 function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
@@ -622,7 +629,7 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
         setWords((await ceremony.phrase()).split(' '))
         setPhase('show')
       } catch (err) {
-        setError(err instanceof CeremonyError ? ceremonyMessage(err.code) : 'Could not create your recovery phrase.')
+        setError(err instanceof CeremonyError ? ceremonyMessage(err.code) : 'Could not create your master key.')
         setPhase('show')
       }
     })()
@@ -703,14 +710,14 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
       setPhase('show')
       setSaved(false)
     } catch {
-      setError('The words are no longer available. Start over to get a new phrase.')
+      setError('The words are no longer available. Start over to get a new master key.')
     }
   }
 
   if (phase === 'loading') {
     return (
-      <OnboardingFrame screen="step:save_recovery_phrase" title="Your recovery phrase" position={screen.position} total={screen.total}>
-        <Spinner label="Generating your recovery phrase" />
+      <OnboardingFrame screen="step:save_recovery_phrase" title="Your master key" position={screen.position} total={screen.total}>
+        <Spinner label="Generating your master key" />
       </OnboardingFrame>
     )
   }
@@ -719,7 +726,7 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
     return (
       <OnboardingFrame
         screen="step:save_recovery_phrase"
-        title="Use your existing recovery phrase"
+        title="Use your existing master key"
         subtitle="Your offline Pass vault will open with this account."
         position={screen.position}
         total={screen.total}
@@ -745,7 +752,7 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
           {error && <ErrorLine>{error}</ErrorLine>}
           <div className="flex items-center gap-3">
             <BBButton type="button" variant="ghost" onClick={backToNewPhrase} data-testid="adopt-back">
-              Back to a new phrase
+              Back to a new master key
             </BBButton>
             <BBButton
               type="submit"
@@ -767,8 +774,8 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
     return (
       <OnboardingFrame
         screen="step:save_recovery_phrase"
-        title="Confirm your phrase"
-        subtitle="Type the words you wrote down. This is how we know you can recover your account."
+        title="Confirm your master key"
+        subtitle={`Type words ${listPositions(positions)} of your master key.`}
         position={screen.position}
         total={screen.total}
       >
@@ -811,8 +818,8 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
   return (
     <OnboardingFrame
       screen="step:save_recovery_phrase"
-      title="Your recovery phrase"
-      subtitle={`These ${policy.recoveryPhrase.wordCount} words are the only way to recover your account. Write them down or save them in a password manager. We can't recover this for you.`}
+      title="Your master key"
+      subtitle={`Your master key: ${policy.recoveryPhrase.wordCount} words. Your password only unlocks it on this device. Anyone with these words can open your vault; without them, a forgotten password means the data is gone. Beebeeb can't recover it.`}
       position={screen.position}
       total={screen.total}
       wide
@@ -837,7 +844,7 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
         )}
         {error && <ErrorLine>{error}</ErrorLine>}
         <div className="mb-3">
-          <BBCheckbox checked={saved} onChange={setSaved} label="I have saved my recovery phrase offline." />
+          <BBCheckbox checked={saved} onChange={setSaved} label="I have saved my master key somewhere safe, outside Beebeeb." />
         </div>
         <BBButton
           variant="amber"
@@ -856,7 +863,7 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
           className="mt-4 block text-xs text-ink-3 underline underline-offset-2 hover:text-ink-2"
           data-testid="adopt-link"
         >
-          I already have a recovery phrase (from Beebeeb Pass offline)
+          I already have a master key
         </button>
       </div>
     </OnboardingFrame>
@@ -876,7 +883,7 @@ export function AccountCreatedSetupFailed({ position, total }: { position?: numb
     <OnboardingFrame
       screen="account_created_setup_failed"
       title="Your account was created"
-      subtitle="We could not finish setting it up on this device. Nothing is lost: your account, password and recovery phrase are all valid."
+      subtitle="We could not finish setting it up on this device. Nothing is lost: your account, password and master key are all valid."
       position={position}
       total={total}
     >
@@ -920,7 +927,7 @@ function CreateAccountStep({ ctx }: { ctx: CeremonyCtx }) {
           ctx.done('create_account')
           return
         case 'ticket_invalid':
-          ctx.setNotice('Your email code expired before the account was created. Request a new one. Your password and recovery phrase are kept.')
+          ctx.setNotice('Your email code expired before the account was created. Request a new one. Your password and master key are kept.')
           ctx.undo('verify_email_code')
           return
         case 'account_exists_setup_failed':
@@ -1032,7 +1039,10 @@ export function PreAccountFlow({
   const [generation, setGeneration] = useState(0)
   const session = useRef<Session>(freshSession())
 
-  const screen = useMemo(() => planScreen(doc, completed), [doc, completed])
+  // Core's step order, loaded with the ceremony; until then the document's own order (the first
+  // screens, enter_email and the email code, come first in both).
+  const [stepOrder, setStepOrder] = useState<string[] | null>(null)
+  const screen = useMemo(() => planScreen(doc, completed, stepOrder), [doc, completed, stepOrder])
 
   const needsEmailVerification = doc.steps.some((s) => s.id === 'verify_email_code' && s.required)
   const minLength = policy?.password.minLength ?? 12
@@ -1048,6 +1058,14 @@ export function PreAccountFlow({
     let cancelled = false
     let made: CeremonyProxy | null = null
     setCeremonyFailed(false)
+    ports.ceremony
+      .stepOrder()
+      .then((order) => {
+        if (!cancelled) setStepOrder(order)
+      })
+      .catch(() => {
+        if (!cancelled) setCeremonyFailed(true)
+      })
     ports.ceremony
       .create({
         minLength,

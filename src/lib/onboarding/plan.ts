@@ -20,7 +20,7 @@
  * so progress is local; once the account exists the document is refetched and
  * the server's `status` is the truth.
  *
- * No React, no I/O, no crypto: the password and phrase steps are carried out by
+ * No React, no I/O, no crypto: the password and master key steps are carried out by
  * the core WASM ceremony in the components, never here.
  */
 
@@ -277,7 +277,33 @@ export function unsupportedAccountSteps(doc: OnboardingDocument, completed: Read
   return out
 }
 
-export function planScreen(doc: OnboardingDocument, completed: ReadonlySet<string> = new Set()): Screen {
+/**
+ * Put the ceremony steps of a pre-account document in core's order (`ceremonyStepOrder`, spec ids),
+ * whatever order the server listed them in: the master key words come before the password. Steps
+ * core does not order (enter_email, pilot_key, accept_terms, unknown ones) keep their place; the
+ * ordered ones only swap among the places they already occupy.
+ */
+export function withCeremonyOrder(doc: OnboardingDocument, order: readonly string[] | null | undefined): OnboardingDocument {
+  if (!order || order.length === 0 || doc.stage !== 'pre_account') return doc
+  const rank = (id: string) => order.indexOf(id)
+  const slots: number[] = []
+  doc.steps.forEach((s, i) => {
+    if (rank(s.id) !== -1) slots.push(i)
+  })
+  const sorted = slots.map((i) => doc.steps[i]).sort((a, b) => rank(a.id) - rank(b.id))
+  const steps = doc.steps.slice()
+  slots.forEach((slot, n) => {
+    steps[slot] = sorted[n]
+  })
+  return { ...doc, steps }
+}
+
+export function planScreen(
+  doc: OnboardingDocument,
+  completed: ReadonlySet<string> = new Set(),
+  ceremonyOrder?: readonly string[] | null,
+): Screen {
+  doc = withCeremonyOrder(doc, ceremonyOrder)
   // Rule 7: update_required blocks everything except Sign out and the update.
   if (doc.client.status === 'update_required') {
     return {

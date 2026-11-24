@@ -1,4 +1,4 @@
-// The recovery-phrase verification step: ordered word selection.
+// The master key confirmation step: type three of the 12 words.
 import { useState, useMemo } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
@@ -33,6 +33,11 @@ function pickIndicesFromPhrase(phrase: string, wordCount: number, count: number)
   return Array.from(indices).sort((a, b) => a - b)
 }
 
+function listWords(nums: number[]): string {
+  if (nums.length < 2) return nums.join('')
+  return `${nums.slice(0, -1).join(', ')} and ${nums[nums.length - 1]}`
+}
+
 export function MnemonicVerify({ phrase, onVerified, onBack }: MnemonicVerifyProps) {
   const words = phrase.split(' ').filter(Boolean)
 
@@ -57,7 +62,7 @@ export function MnemonicVerify({ phrase, onVerified, onBack }: MnemonicVerifyPro
     if (allCorrect) {
       onVerified()
     } else {
-      setError('One or more words are incorrect. Check your recovery phrase and try again.')
+      setError("These words don't match your master key. Check them against what you saved.")
     }
   }
 
@@ -65,10 +70,10 @@ export function MnemonicVerify({ phrase, onVerified, onBack }: MnemonicVerifyPro
     <div>
       <p className="text-xs font-medium text-ink-2 mb-2.5">Verification</p>
       <h1 className="text-xl font-semibold text-ink mb-1.5">
-        Confirm your recovery phrase
+        Confirm your master key
       </h1>
       <p className="text-sm text-ink-3 leading-relaxed mb-5">
-        Enter the requested words to confirm you saved your phrase.
+        Type words {listWords(indices.map((i) => i + 1))} of your master key.
       </p>
 
       <div className="space-y-3.5 mb-5">

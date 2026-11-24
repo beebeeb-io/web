@@ -11,7 +11,7 @@ import { opaqueRegisterStart, opaqueRegisterFinish } from '../src/lib/api'
  * fix, `opaqueRegisterFinish` had no `pilotKey` parameter at all, so the header
  * was silently dropped on the final "Create account" request — the account was
  * rejected 403 `pilot_key_required` after the user had already generated and
- * verified their recovery phrase, and the app bounced them back to /signup with
+ * verified their master key, and the app bounced them back to /signup with
  * an empty email field.
  *
  * This test asserts EVERY registration request in the flow carries the header

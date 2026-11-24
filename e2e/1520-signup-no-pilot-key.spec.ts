@@ -121,7 +121,7 @@ test.describe('1520 — /signup no longer hard-requires a pilot access key', () 
 
     await page.getByLabel(/email/i).fill('launch-day@beebeeb.io')
     await page
-      .getByRole('checkbox', { name: /Beebeeb cannot recover/i })
+      .getByRole('checkbox', { name: /Beebeeb can.?t recover/i })
       .click()
 
     const continueButton = page.getByRole('button', { name: /^continue$/i })
@@ -130,7 +130,7 @@ test.describe('1520 — /signup no longer hard-requires a pilot access key', () 
 
     // Proceeds straight to onboarding — no round trip through a pilot-key step.
     await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
-    await expect(page.getByText(/your master key, in words/i)).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: /^your master key$/i })).toBeVisible({ timeout: 15_000 })
 
     await page.screenshot({ path: 'e2e/screenshots/1520-gate-a-reached-onboarding.png', fullPage: true })
   })
@@ -155,7 +155,7 @@ test.describe('1520 — /signup no longer hard-requires a pilot access key', () 
     await expect(page.getByTestId('pilot-key-input')).toHaveCount(0)
 
     await page.getByLabel(/email/i).fill('gate-rollback@beebeeb.io')
-    await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
+    await page.getByRole('checkbox', { name: /Beebeeb can.?t recover/i }).click()
     await page.getByRole('button', { name: /^continue$/i }).click()
 
     // Recovery phrase step.
@@ -164,7 +164,7 @@ test.describe('1520 — /signup no longer hard-requires a pilot access key', () 
     await expect(wordEls).toHaveCount(12, { timeout: 15_000 })
     const phraseWords = (await wordEls.allInnerTexts()).map((w) => w.trim())
 
-    await page.getByRole('checkbox', { name: /I've saved my recovery phrase offline/i }).click()
+    await page.getByRole('checkbox', { name: /I have saved my master key somewhere safe/i }).click()
     await page.getByRole('button', { name: /I saved it/i }).click()
 
     // Verify step — retype the requested words.

@@ -34,7 +34,7 @@ test.describe('Signup email verification code (task 1525)', () => {
     })
   })
 
-  test('new email: code screen -> verify -> recovery phrase (generated AFTER the ticket) -> password -> drive', async ({
+  test('new email: code screen -> verify -> master key (generated AFTER the ticket) -> password -> drive', async ({
     page,
   }) => {
     const email = uniqueEmail('1525-new')
@@ -47,7 +47,7 @@ test.describe('Signup email verification code (task 1525)', () => {
     await expect(page.getByTestId('signup-code-copy')).toContainText('can sign up')
     await expect(page.getByTestId('signup-code-email')).toHaveText(email)
 
-    // Task 1525's core fix: the recovery phrase must not exist yet — it is
+    // Task 1525's core fix: the master key must not exist yet — it is
     // generated ONLY after a valid ticket, never before.
     await expect(page.locator('span.font-mono.text-sm.font-medium')).toHaveCount(0)
 
@@ -59,12 +59,12 @@ test.describe('Signup email verification code (task 1525)', () => {
     // under the click.
     await page.getByTestId('signup-code-input').fill(code)
 
-    // Code step cleared -> recovery phrase now renders.
+    // Code step cleared -> master key now renders.
     const wordEls = page.locator('span.font-mono.text-sm.font-medium')
     await expect(wordEls).toHaveCount(12, { timeout: 15_000 })
     const phraseWords = (await wordEls.allInnerTexts()).map((w) => w.trim())
 
-    await page.getByRole('checkbox', { name: /I've saved my recovery phrase offline/i }).click()
+    await page.getByRole('checkbox', { name: /I have saved my master key somewhere safe/i }).click()
     await page.getByRole('button', { name: /I saved it/i }).click()
 
     const verifyLabels = page.locator('label', { hasText: /^Word #\d+$/ })

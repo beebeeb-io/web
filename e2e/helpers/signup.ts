@@ -42,7 +42,7 @@ export async function fillSignupForm(page: Page, opts: FillSignupFormOptions): P
   await expect(page).toHaveURL(/\/signup/)
   await expect(page.getByTestId('pilot-key-input')).toHaveCount(0)
   await page.getByLabel(/email/i).fill(opts.email)
-  await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
+  await page.getByRole('checkbox', { name: /Beebeeb can.?t recover/i }).click()
   await page.getByRole('button', { name: /^continue$/i }).click()
 }
 
@@ -51,7 +51,7 @@ export async function fillSignupForm(page: Page, opts: FillSignupFormOptions): P
  * /signup (onboarding.tsx's 403 pilot_key_required catch handler routed
  * here with `pilotKeyError` in router state, so the field is now visible +
  * required), fill the key and resubmit — lands back on /onboarding with a
- * FRESH mount (a new recovery phrase gets generated; the old one is void).
+ * FRESH mount (a new master key gets generated; the old one is void).
  * Does not `page.goto()` — that would discard the router state carrying the
  * bounced-back email + error.
  */
@@ -62,7 +62,7 @@ export async function retrySignupWithPilotKey(page: Page, pilotKey: string): Pro
   // The bounce-back is a fresh /signup mount: the "cannot recover" acknowledgement
   // starts unchecked again (the email + key survive via router state), so a real
   // user re-ticks it before Continue is enabled — do the same here.
-  const ack = page.getByRole('checkbox', { name: /Beebeeb cannot recover/i })
+  const ack = page.getByRole('checkbox', { name: /Beebeeb can.?t recover/i })
   if (!(await ack.isChecked())) await ack.click()
   await page.getByRole('button', { name: /^continue$/i }).click()
 }
@@ -72,10 +72,10 @@ export async function retrySignupWithPilotKey(page: Page, pilotKey: string): Pro
  * the email-code capability (task 1525 — the common case against a current
  * server), first clears the "check your inbox" code step by reading the
  * code back out of the mail sink (e2e/helpers/mail-sink.ts) and submitting
- * it. Then waits for the generated 12-word recovery phrase to render,
+ * it. Then waits for the generated 12-word master key to render,
  * captures it, acknowledges it, and re-types the words the verify step
  * asks for. Leaves the page on the password step (its "At least 12
- * characters" field visible). Returns the captured recovery phrase words in
+ * characters" field visible). Returns the captured master key words in
  * order, for callers that need to restore a vault on a second device later
  * (e.g. cli-auth-redirect.spec.ts).
  *
@@ -119,7 +119,7 @@ export async function reachPasswordStep(page: Page): Promise<string[]> {
   expect(phraseWords.length).toBe(12)
 
   await page
-    .getByRole('checkbox', { name: /I've saved my recovery phrase offline/i })
+    .getByRole('checkbox', { name: /I have saved my master key somewhere safe/i })
     .click()
   await page.getByRole('button', { name: /I saved it/i }).click()
 
@@ -164,12 +164,12 @@ export interface SignupAndUnlockOptions {
 
 export interface SignedUpAccount {
   email: string
-  /** Space-joined 12-word recovery phrase, for restoring the vault on another device. */
+  /** Space-joined 12-word master key, for restoring the vault on another device. */
   recoveryPhrase: string
 }
 
 /**
- * Full signup flow (email → recovery phrase → verify → password), landing on
+ * Full signup flow (email → master key → verify → password), landing on
  * `/` with the vault unlocked. Composes fillSignupForm + reachPasswordStep +
  * createAccount and waits for the drive to render.
  */

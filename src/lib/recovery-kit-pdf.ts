@@ -1,5 +1,5 @@
 /**
- * Recovery Kit PDF generator.
+ * Master key PDF generator ("Your Beebeeb master key").
  *
  * Zero-dependency approach: builds a print-optimised HTML document in memory,
  * opens it in a new window, and calls window.print() so the browser's
@@ -42,7 +42,7 @@ export function generateRecoveryKitPDF(phrase: string, email: string): void {
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Beebeeb Recovery Kit — ${escapeHtml(email)}</title>
+<title>beebeeb-master-key</title>
 <style>
   /* ── Reset + page setup ───────────────────────────── */
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -207,7 +207,7 @@ export function generateRecoveryKitPDF(phrase: string, email: string): void {
 
 <div class="header">
   <div class="logo">beebeeb<span class="dot">.</span>io</div>
-  <div class="kit-title">Recovery Kit</div>
+  <div class="kit-title">Your Beebeeb master key</div>
 </div>
 
 <div class="meta">
@@ -225,7 +225,7 @@ export function generateRecoveryKitPDF(phrase: string, email: string): void {
   </div>
 </div>
 
-<div class="phrase-heading">Recovery Phrase</div>
+<div class="phrase-heading">Master key</div>
 <table class="phrase-table">
   ${wordRows.join('\n  ')}
 </table>
@@ -233,8 +233,8 @@ export function generateRecoveryKitPDF(phrase: string, email: string): void {
 <div class="warning">
   <div class="warning-title">Keep this safe — we cannot recover it for you</div>
   <div class="warning-body">
-    This phrase is the master key to your encrypted files. If you forget your password,
-    this phrase is the only way to recover your account.
+    These 12 words are your master key. Your password only unlocks it on a device. Anyone with
+    these words can open your vault; without them, a forgotten password means the data is gone.
     <br/><br/>
     <strong>Store it offline</strong> — printed, in a safe, with your important documents.
     Never share it. Never photograph it. Never type it into any website other than beebeeb.io.
@@ -262,7 +262,7 @@ export function generateRecoveryKitPDF(phrase: string, email: string): void {
   if (!printWindow) {
     // Pop-up blocked — fall back to a downloadable HTML file the user can
     // open and print themselves.
-    downloadAsHtml(html, `beebeeb-recovery-kit-${Date.now()}.html`)
+    downloadAsHtml(html, 'beebeeb-master-key.html')
     return
   }
 

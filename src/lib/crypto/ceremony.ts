@@ -7,7 +7,7 @@ import { withProxy } from './service'
 
 // ─── Signup ceremony (core onboarding module, task 1745) ────────────────────
 //
-// The ceremony (password policy and breach gate, recovery phrase, OPAQUE start
+// The ceremony (password policy and breach gate, master key, OPAQUE start
 // and finish) is a stateful core struct living in the worker, addressed by an
 // opaque handle exactly like the search index. No policy or crypto is
 // re-implemented here: this is a typed doorway. A failing call throws a
@@ -140,7 +140,7 @@ export class CeremonyProxy {
   }
 
   async emailVerified(): Promise<void> { await this.#call('emailVerified') }
-  /** The user edited a verified email: verification withdrawn, password and confirmed phrase kept. */
+  /** The user edited a verified email: verification withdrawn, password and confirmed master key kept. */
   async emailChanged(): Promise<void> { await this.#call('emailChanged') }
   /** `signup_ticket_invalid` at register-finish: back to the code step, secrets kept. */
   async emailTicketInvalidated(): Promise<void> { await this.#call('emailTicketInvalidated') }
@@ -151,9 +151,9 @@ export class CeremonyProxy {
   }
 
   async beginPhrase(): Promise<void> { await this.#call('beginPhrase') }
-  /** Take an existing recovery phrase (the offline Pass vault's) instead of a new one; counts as confirmed. */
+  /** Take an existing master key (the offline Pass vault's 12 words) instead of a new one; counts as confirmed. */
   async adoptPhrase(phrase: string): Promise<void> { await this.#call('adoptPhrase', phrase) }
-  /** Call only while rendering the phrase; drop the reference afterwards (core cannot wipe a JS copy). */
+  /** Call only while rendering the 12 words; drop the reference afterwards (core cannot wipe a JS copy). */
   async phrase(): Promise<string> { return this.#call('phrase') }
   async acknowledgePhrase(): Promise<void> { await this.#call('acknowledgePhrase') }
   async challengePositions(): Promise<number[]> { return this.#call('challengePositions') }
@@ -165,7 +165,7 @@ export class CeremonyProxy {
   /** The server accepted register-finish. The caller owns (and must wipe) the returned 32-byte master key. */
   async accountCreated(): Promise<Uint8Array> { return this.#call('accountCreated') }
 
-  /** Wipe the password, phrase and key and start over. Call on back, cancel and error exits. */
+  /** Wipe the password, master key words and key and start over. Call on back, cancel and error exits. */
   async abandon(): Promise<void> { await this.#call('abandon') }
 
   /** Wipe and free the worker-side instance. Idempotent; never throws. */
@@ -178,6 +178,18 @@ export class CeremonyProxy {
       console.warn('[crypto] ceremony dispose failed', err)
     }
   }
+}
+
+/**
+ * Core's order of the pre-account ceremony as spec step ids, each once (master key words and their
+ * confirmation both map to `save_recovery_phrase`): `verify_email_code`, `save_recovery_phrase`,
+ * `set_password`, `create_account`. The planner sorts the document's steps by it.
+ */
+export async function getCeremonyStepOrder(): Promise<string[]> {
+  const steps = unwrapCeremony(
+    await withProxy((p) => p.ceremonyStepOrder() as Promise<CeremonyResult<{ step: string; spec_step_id: string }[]>>),
+  )
+  return [...new Set(steps.map((s) => s.spec_step_id))]
 }
 
 export async function createSignupCeremony(config: CeremonyConfig): Promise<CeremonyProxy> {

@@ -1,12 +1,23 @@
-// The recovery-phrase export step: reveal, confirm, and download.
+// The master key export: copy, download the text file, download the PDF.
 import { useState } from 'react'
 import { BBButton, Icon } from '@beebeeb/shared'
 import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'
-import { copyPhraseWithAutoClear, downloadPhraseTxt } from '../lib/recovery-phrase-export'
+import { copyPhraseWithAutoClear, phraseToText } from '../lib/recovery-phrase-export'
+
+/** Text file name of the master key download (the lib's PHRASE_FILENAME is not this component's to rename). */
+export const MASTER_KEY_FILENAME = 'beebeeb-master-key.txt'
+
+function downloadMasterKeyTxt(words: string[]): void {
+  const url = URL.createObjectURL(new Blob([phraseToText(words)], { type: 'text/plain' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = MASTER_KEY_FILENAME
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 /**
- * Copy / Download .txt / Recovery Kit PDF for a freshly generated recovery
- * phrase. The one implementation behind BOTH signup surfaces (legacy
+ * Copy / Download .txt / Master key PDF for a freshly generated master key. The one implementation behind BOTH signup surfaces (legacy
  * pages/onboarding.tsx and the document-driven phrase step), task 1815:
  * the document-driven step shipped without these and nobody noticed because
  * the two copies had diverged. Amber marks only the primary action.
@@ -30,7 +41,7 @@ export function RecoveryPhraseExport({ words, email }: { words: string[]; email:
       <BBButton size="sm" onClick={copy} data-testid="phrase-copy">
         <Icon name="copy" size={14} className="mr-1.5" /> {copied ? 'Copied' : 'Copy'}
       </BBButton>
-      <BBButton size="sm" onClick={() => downloadPhraseTxt(words)} data-testid="phrase-download-txt">
+      <BBButton size="sm" onClick={() => downloadMasterKeyTxt(words)} data-testid="phrase-download-txt">
         <Icon name="download" size={14} className="mr-1.5" /> Download .txt
       </BBButton>
       <BBButton
@@ -40,7 +51,7 @@ export function RecoveryPhraseExport({ words, email }: { words: string[]; email:
         title="Opens a print-ready page. Choose 'Save as PDF' in the print dialog"
         data-testid="phrase-recovery-kit"
       >
-        <Icon name="file-text" size={14} className="mr-1.5" /> Recovery Kit PDF
+        <Icon name="file-text" size={14} className="mr-1.5" /> Master key PDF
       </BBButton>
     </div>
   )

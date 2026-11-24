@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 
-// po-16: sign-up adopts the offline Pass vault's recovery phrase. No React rendering in this harness
+// po-16: sign-up adopts the offline Pass vault's master key. No React rendering in this harness
 // (no jsdom), so the step's logic lives in pure helpers and the unmount rule is checked on the source.
 
 const calls: { handle: number; op: string; args: unknown[] }[] = []
@@ -23,7 +23,7 @@ const { adoptPhraseMessage, adoptTypedPhrase, spreadPastedPhrase } = await impor
   '../src/components/onboarding/signup-flow'
 )
 
-const NOT_VALID = 'Those 12 words are not a valid recovery phrase.'
+const NOT_VALID = 'That is not a valid master key. Check the 12 words and their order.'
 
 describe('adoptPhrase routes to the worker', () => {
   test('CeremonyProxy.adoptPhrase sends the phrase as an adoptPhrase ceremony call', async () => {

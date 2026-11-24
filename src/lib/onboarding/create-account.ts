@@ -80,7 +80,7 @@ export async function runCreateAccount(deps: CreateAccountDeps): Promise<CreateA
     userId = res.userId
   } catch (err) {
     if (err instanceof ActionError && err.code === 'signup_ticket_invalid') {
-      // Spec 5.9: back to the code step, keep the confirmed phrase and the
+      // Spec 5.9: back to the code step, keep the confirmed master key and the
       // typed password (core keeps them across emailTicketInvalidated).
       try {
         await ceremony.emailTicketInvalidated()

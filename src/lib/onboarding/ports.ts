@@ -11,7 +11,7 @@
  *     their request shapes are copied from there and are an assumption until
  *     task 1738 lands (see the task file, "Contract questions").
  *   - `CeremonyPorts`: the core WASM ceremony (password policy, breach gate,
- *     phrase, OPAQUE). Never re-implemented in TypeScript.
+ *     master key, OPAQUE). Never re-implemented in TypeScript.
  *   - `fetchBreachBody`: the one HTTP call core leaves to the host, to our own
  *     API (k-anonymity prefix only), never a third party.
  */
@@ -29,6 +29,7 @@ import {
   type PasswordEvaluation,
   evaluatePasswordCore,
 } from '../crypto'
+import { getCeremonyStepOrder } from '../crypto/ceremony'
 import { sameOriginApiPath } from './parse'
 
 /** Machine-readable failure from a port; the UI branches on `code`, never on text. */
@@ -92,6 +93,8 @@ export interface CeremonyPorts {
   breach(password: string): Promise<BreachCheckProxy>
   /** Advisory live evaluation (meter and hint) from core. Never the gate: `setPassword` is. */
   evaluate(password: string, minLength: number): Promise<PasswordEvaluation>
+  /** Core's order of the pre-account steps (spec ids): the master key before the password. */
+  stepOrder(): Promise<string[]>
 }
 
 export interface AccountCreatedInfo {
@@ -124,6 +127,7 @@ export const coreCeremonyPorts: CeremonyPorts = {
   create: createSignupCeremony,
   breach: createBreachCheck,
   evaluate: evaluatePasswordCore,
+  stepOrder: getCeremonyStepOrder,
 }
 
 const MAX_BREACH_BODY_BYTES = 256 * 1024

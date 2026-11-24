@@ -155,7 +155,7 @@ export function Signup() {
         // Server predates task 1525 (no /signup/email-start route at all —
         // a rolling deploy still mid-rollout, or a rollback). Fall back to
         // the pre-1525 flow exactly as it worked before: no code screen, go
-        // straight to the recovery phrase.
+        // straight to the master key.
         navigate('/onboarding', {
           state: { ...buildOnboardingState(trimmedEmail, pilotKey), emailCodeSupported: false },
         })
@@ -240,7 +240,7 @@ export function Signup() {
           <BBCheckbox
             checked={accepted}
             onChange={setAccepted}
-            label="I understand that Beebeeb cannot recover my account if I lose both my password and recovery phrase. We can't recover this."
+            label="I understand that Beebeeb can't recover my account if I forget my password and lose my master key."
           />
         </div>
 

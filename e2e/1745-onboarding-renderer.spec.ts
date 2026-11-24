@@ -8,7 +8,7 @@ import { join } from 'node:path'
  * Renders golden documents from the vendored contract through the SAME
  * `OnboardingRenderer` the flagged live signup uses, at /dev/onboarding/<name>.
  * No server: every /api call is answered 401 here, and the fixture page stubs
- * the actions. The password policy, breach gate and recovery phrase run on the
+ * the actions. The password policy, breach gate and master key run on the
  * real core WASM, so the signup walk exercises core, not a mock of it.
  *
  * Screenshots go to E2E_EVIDENCE_DIR (default: the workspace task evidence
@@ -108,7 +108,7 @@ test.describe('1745 onboarding renderer', () => {
     await expect(wait).toContainText('1:00')
   })
 
-  test('web new signup: email, code, terms, password (core meter), recovery phrase (core), create_account', async ({ page }) => {
+  test('web new signup: email, code, terms, master key (core: words, confirm), password (core meter), create_account', async ({ page }) => {
     await open(page, 'pre_account.web')
     await expect(screen(page)).toHaveAttribute('data-screen', 'step:enter_email')
     await expect(page.getByTestId('region-line')).toContainText('Stored in the EU.')
@@ -143,22 +143,6 @@ test.describe('1745 onboarding renderer', () => {
     await shot(page, join(EVIDENCE, '03-web-signup-terms.png'))
     await page.getByTestId('accept-terms-continue').click()
 
-    // set_password: the meter and the hint come from core's evaluator
-    await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
-    await page.getByTestId('onboarding-password').fill('abc12')
-    await expect(page.getByTestId('password-strength-message')).toContainText('Needs at least 12 characters, 7 more.')
-    await page.getByTestId('onboarding-password').fill('abcdefghijkl')
-    await expect(page.getByTestId('password-strength-message')).toContainText(/upper|number or symbol/i)
-    await page.getByTestId('onboarding-password').fill(STRONG)
-    await expect(page.getByTestId('password-strength-message')).toHaveText('Strong.')
-    await page.getByTestId('onboarding-password-confirm').fill('Correct-Horse-Battery-8')
-    await expect(page.getByTestId('confirm-mismatch')).toBeVisible()
-    await expect(page.getByTestId('set-password-continue')).toBeDisabled()
-    await page.getByTestId('onboarding-password-confirm').fill(STRONG)
-    await expect(page.getByTestId('confirm-match')).toBeVisible()
-    await shot(page, join(EVIDENCE, '04-web-signup-password.png'))
-    await page.getByTestId('set-password-continue').click()
-
     // save_recovery_phrase: 12 real words from core
     await expect(page.getByTestId('phrase-words')).toBeVisible({ timeout: 30_000 })
     const words: string[] = []
@@ -182,10 +166,26 @@ test.describe('1745 onboarding renderer', () => {
     }
     for (const pos of positions) await page.getByTestId(`phrase-answer-${pos}`).fill('wrongword')
     await page.getByRole('button', { name: /^confirm$/i }).click()
-    await expect(page.getByTestId('onboarding-error')).toContainText('do not match your recovery phrase')
+    await expect(page.getByTestId('onboarding-error')).toContainText('match your master key')
     await shot(page, join(EVIDENCE, '06-web-signup-phrase-wrong.png'))
     for (const pos of positions) await page.getByTestId(`phrase-answer-${pos}`).fill(words[pos - 1])
     await page.getByRole('button', { name: /^confirm$/i }).click()
+
+    // set_password: the meter and the hint come from core's evaluator
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
+    await page.getByTestId('onboarding-password').fill('abc12')
+    await expect(page.getByTestId('password-strength-message')).toContainText('Needs at least 12 characters, 7 more.')
+    await page.getByTestId('onboarding-password').fill('abcdefghijkl')
+    await expect(page.getByTestId('password-strength-message')).toContainText(/upper|number or symbol/i)
+    await page.getByTestId('onboarding-password').fill(STRONG)
+    await expect(page.getByTestId('password-strength-message')).toHaveText('Strong.')
+    await page.getByTestId('onboarding-password-confirm').fill('Correct-Horse-Battery-8')
+    await expect(page.getByTestId('confirm-mismatch')).toBeVisible()
+    await expect(page.getByTestId('set-password-continue')).toBeDisabled()
+    await page.getByTestId('onboarding-password-confirm').fill(STRONG)
+    await expect(page.getByTestId('confirm-match')).toBeVisible()
+    await shot(page, join(EVIDENCE, '04-web-signup-password.png'))
+    await page.getByTestId('set-password-continue').click()
 
     // create_account: there is no server on the fixture page. The flow reaches the step,
     // runs core's startRegistration, and stops at the stubbed register-start.
@@ -209,6 +209,19 @@ test.describe('1745 onboarding renderer', () => {
     await page.getByRole('checkbox').nth(0).click()
     await page.getByRole('checkbox').nth(1).click()
     await page.getByTestId('accept-terms-continue').click()
+    // The master key comes first (core's order): read the 12 words, tick the box, confirm 3.
+    await expect(page.getByTestId('phrase-words')).toBeVisible({ timeout: 30_000 })
+    const words: string[] = []
+    for (let i = 1; i <= 12; i++) words.push((await page.getByTestId(`phrase-word-${i}`).innerText()).trim())
+    await page.getByRole('checkbox').click()
+    await page.getByTestId('phrase-saved').click()
+    const inputs = page.locator('[data-testid^="phrase-answer-"]')
+    await expect(inputs).toHaveCount(3)
+    for (let i = 0; i < 3; i++) {
+      const id = (await inputs.nth(i).getAttribute('data-testid'))!
+      await page.getByTestId(id).fill(words[Number(id.replace('phrase-answer-', '')) - 1])
+    }
+    await page.getByRole('button', { name: /^confirm$/i }).click()
     await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
   }
 

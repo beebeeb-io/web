@@ -10,7 +10,7 @@ import { PILOT_KEY, createAccount, fillSignupForm, reachPasswordStep, retrySignu
  * (both are re-checked server-side, `beebeeb-api/src/routes/opaque_auth.rs`).
  * Before the 1411 fix, `opaqueRegisterFinish` never sent the header, so the
  * final "Create account" call 403'd with `pilot_key_required` AFTER the user
- * had already generated + verified their recovery phrase and set a password.
+ * had already generated + verified their master key and set a password.
  *
  * Task 1520 changed WHEN the key is even collected: prod itself now runs
  * gate-OFF (BB_REQUIRE_PILOT_KEY=0, launched) and /signup shows no pilot-key
@@ -93,7 +93,7 @@ test.describe('Pilot key gate — full registration flow (task 1411)', () => {
     await page.route('**/dev/auto-login', (route) => route.fulfill({ status: 404 }))
   })
 
-  test('correct pilot key: full sign-up (recovery phrase -> verify -> password -> Create account) lands in the vault', async ({
+  test('correct pilot key: full sign-up (master key -> verify -> password -> Create account) lands in the vault', async ({
     page,
   }) => {
     const email = uniqueEmail()
