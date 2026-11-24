@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { signupAndUnlock as sharedSignupAndUnlock } from './helpers/signup'
 
 /**
  * E2E for task 1404 — the login form must show the exact honest copy for a
@@ -22,53 +23,9 @@ const uniqueEmail = () =>
 const TEST_PASSWORD = 'AccountDeleted1234'
 
 /**
- * Full signup flow (email → master key → verify → password), landing on
- * `/` with the vault unlocked. Mirrors refresh-stability.spec.ts's
- * signupAndUnlock — duplicated locally (not imported) to keep this spec
- * self-contained per the existing convention in this e2e suite (auth.spec.ts
- * and refresh-stability.spec.ts each carry their own copy).
- */
+/** Full signup flow (email, master key, confirm, password) via the shared helper, landing on `/` with the vault unlocked. */
 async function signupAndUnlock(page: Page, email: string) {
-  await page.goto('/signup')
-  await expect(page).toHaveURL(/\/signup/)
-  await page.getByLabel(/email/i).fill(email)
-  // No pilot-access-key field on a fresh /signup visit (task 1520) — the
-  // server's gate is OFF at launch and the field only appears after a real
-  // 403 pilot_key_required bounce (src/lib/signup-pilot-gate.ts).
-  await page.getByRole('checkbox', { name: /Beebeeb can.?t recover/i }).click()
-  await page.getByRole('button', { name: /^continue$/i }).click()
-
-  await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
-  const wordEls = page.locator('span.font-mono.text-sm.font-medium')
-  await expect(wordEls).toHaveCount(12, { timeout: 15_000 })
-  const phraseWords = (await wordEls.allInnerTexts()).map((w) => w.trim())
-  expect(phraseWords.length).toBe(12)
-
-  await page
-    .getByRole('checkbox', { name: /I have saved my master key somewhere safe/i })
-    .click()
-  await page.getByRole('button', { name: /I saved it/i }).click()
-
-  const verifyLabels = page.locator('label', { hasText: /^Word #\d+$/ })
-  const labelCount = await verifyLabels.count()
-  expect(labelCount).toBeGreaterThan(0)
-  for (let i = 0; i < labelCount; i++) {
-    const labelText = (await verifyLabels.nth(i).innerText()).trim()
-    const m = labelText.match(/Word #(\d+)/)
-    if (!m) throw new Error(`unexpected verify label: ${labelText}`)
-    const wordIdx = parseInt(m[1], 10) - 1
-    await page.getByLabel(labelText, { exact: true }).fill(phraseWords[wordIdx])
-  }
-  await page.getByRole('button', { name: /^verify$/i }).click()
-
-  const passwordField = page.getByPlaceholder('At least 12 characters')
-  await expect(passwordField).toBeVisible({ timeout: 5_000 })
-  await passwordField.fill(TEST_PASSWORD)
-  await page.getByPlaceholder('Type it again').fill(TEST_PASSWORD)
-  await page.getByRole('button', { name: /create account/i }).click()
-
-  await page.waitForURL(/\/(?:$|\?|#)/, { timeout: 30_000 })
-  await expect(page.getByText(/All files/i).first()).toBeVisible({ timeout: 10_000 })
+  await sharedSignupAndUnlock(page, { email, password: TEST_PASSWORD })
 }
 
 /**

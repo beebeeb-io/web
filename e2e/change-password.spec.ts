@@ -21,6 +21,7 @@
  * this spec doesn't opt into the gate-ON path.)
  */
 import { test, expect, type Page } from '@playwright/test'
+import { signupAndUnlock as sharedSignupAndUnlock } from './helpers/signup'
 
 const uniqueEmail = () =>
   `e2e-changepw-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
@@ -28,52 +29,9 @@ const uniqueEmail = () =>
 const CURRENT_PASSWORD = 'ChangePwCurrent1234'
 const BREACHED_NEW_PASSWORD = 'password123456' // seeded into the fixture corpus
 
-/**
- * Drive the full signup flow (email → master key → verify → password)
- * and land on `/` with the vault unlocked. Mirrors
- * refresh-stability.spec.ts's signupAndUnlock — duplicated here (not shared)
- * to keep this spec self-contained per this suite's existing convention.
- */
-async function signupAndUnlock(page: Page): Promise<void> {
-  await page.goto('/signup')
-  await expect(page).toHaveURL(/\/signup/)
-  await page.getByLabel(/email/i).fill(uniqueEmail())
-  // No pilot-access-key field on a fresh /signup visit (task 1520) — the
-  // harness's gate now defaults OFF, matching prod (src/lib/signup-pilot-gate.ts).
-  await page.getByRole('checkbox', { name: /Beebeeb can.?t recover/i }).click()
-  await page.getByRole('button', { name: /^continue$/i }).click()
-
-  await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
-  const wordEls = page.locator('span.font-mono.text-sm.font-medium')
-  await expect(wordEls).toHaveCount(12, { timeout: 15_000 })
-  const phraseWords = (await wordEls.allInnerTexts()).map((w) => w.trim())
-  expect(phraseWords.length).toBe(12)
-
-  await page
-    .getByRole('checkbox', { name: /I have saved my master key somewhere safe/i })
-    .click()
-  await page.getByRole('button', { name: /I saved it/i }).click()
-
-  const verifyLabels = page.locator('label', { hasText: /^Word #\d+$/ })
-  const labelCount = await verifyLabels.count()
-  expect(labelCount).toBeGreaterThan(0)
-  for (let i = 0; i < labelCount; i++) {
-    const labelText = (await verifyLabels.nth(i).innerText()).trim()
-    const m = labelText.match(/Word #(\d+)/)
-    if (!m) throw new Error(`unexpected verify label: ${labelText}`)
-    const wordIdx = parseInt(m[1], 10) - 1
-    await page.getByLabel(labelText, { exact: true }).fill(phraseWords[wordIdx])
-  }
-  await page.getByRole('button', { name: /^verify$/i }).click()
-
-  const passwordField = page.getByPlaceholder('At least 12 characters')
-  await expect(passwordField).toBeVisible({ timeout: 5_000 })
-  await passwordField.fill(CURRENT_PASSWORD)
-  await page.getByPlaceholder('Type it again').fill(CURRENT_PASSWORD)
-  await page.getByRole('button', { name: /create account/i }).click()
-
-  await page.waitForURL(/\/(?:$|\?|#)/, { timeout: 30_000 })
-  await expect(page.getByText(/All files/i).first()).toBeVisible({ timeout: 10_000 })
+/** Full signup flow (email, master key, confirm, password) via the shared helper, landing on `/` with the vault unlocked. */
+async function signupAndUnlock(page: Page) {
+  await sharedSignupAndUnlock(page, { password: CURRENT_PASSWORD })
 }
 
 test.describe('Change password — breach check via our own API (1367)', () => {
