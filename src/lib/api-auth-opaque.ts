@@ -218,7 +218,7 @@ export {
   type ResetFinalizeResult,
 } from './api-reset-finalize'
 
-// ─── Recovery-phrase auth endpoints (server task 0034) ────────────────────
+// ─── Master-key auth endpoints (server task 0034) ────────────────────
 // These endpoints don't exist yet. Returns null on 404 so the UI can show a
 // "service unavailable" message rather than crashing.
 
@@ -250,12 +250,12 @@ export async function recoverWithPhraseStart(
  * POST /api/v1/auth/verify-recovery-check
  *
  * Authed (Bearer session): validates that a `recovery_check` (HMAC-SHA256 of a
- * master key derived from a recovery phrase) belongs to the CURRENT account,
+ * key derived from a master key) belongs to the CURRENT account,
  * WITHOUT issuing any password-recovery token. The server compares constant-time
  * against the caller's stored `recovery_check` and returns `{valid:true}` on a
  * match, or 400 `invalid_recovery_phrase` on a mismatch / no stored check.
  *
- * Used on device-provision to REJECT a wrong-but-checksum-valid recovery phrase
+ * Used on device-provision to REJECT a wrong-but-checksum-valid master key
  * BEFORE the derived key is persisted to the local IndexedDB vault — without it
  * `recoverFromPhrase` derives *a* key from any valid BIP39 phrase and poisons
  * the device. Returns `true` on match; throws `ApiError` (status 400, code
@@ -274,7 +274,7 @@ export async function verifyRecoveryCheck(recoveryCheck: string): Promise<boolea
  *
  * Authed (Bearer session): sets the CURRENT account's `recovery_check` ONLY if
  * it is currently NULL. A handful of legacy accounts predate the signup-time
- * check; task 0874 made device-provision REJECT a recovery phrase whose
+ * check; task 0874 made device-provision REJECT a master key whose
  * `recovery_check` doesn't match the stored one, so a NULL-stored account is
  * wrongly locked out of recovery-phrase provisioning. We backfill it on a
  * PROVEN-correct-key unlock (the only time the client holds a key it KNOWS is

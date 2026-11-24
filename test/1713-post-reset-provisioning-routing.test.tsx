@@ -13,7 +13,7 @@
  * are unreachable.
  *
  * TASK 1810 SUPERSEDES THE ROUTING BELOW: the locked surface's phrase button opened
- * /recover-with-phrase, i.e. the password RESET, so "unlock with recovery phrase"
+ * /recover-with-phrase, i.e. the password RESET, so "unlock with master key"
  * looped back to a reset. The branch now always shows the phrase screen (the
  * password is already proven) and offers the exits behind "I've lost my recovery
  * phrase". Original 1713 text follows.
@@ -172,7 +172,7 @@ describe('task 1713 FIX B / task 1810: post-login provisioning is the phrase scr
     expect(html).toContain('Recovery word 1')
     expect(html).toContain('Restore vault')
     // The way out for a person who lost the phrase is one click away:
-    expect(html).toContain("I've lost my recovery phrase")
+    expect(html).toContain("I've lost my master key")
     // The exits themselves open on that click, not before:
     expect(html).not.toContain('Delete all data')
     expect(html).not.toContain('Vault locked')
@@ -192,14 +192,14 @@ describe('task 1713 FIX B / task 1810: post-login provisioning is the phrase scr
   test('task 1810 round 2 (Codex P1): a stale vault removed at sign-in offers the lost-phrase exits even WITHOUT the tab marker', async () => {
     // A reset/change made in another tab or on another device leaves no marker here.
     const html = await renderProvisionBranch({ staleVault: true })
-    expect(html).toContain("I've lost my recovery phrase")
+    expect(html).toContain("I've lost my master key")
     expect(html).toContain('sealed under your previous password, so it was removed')
   })
 
   test('no marker → device setup, UNTOUCHED (fresh device on a normal login)', async () => {
     const html = await renderProvisionBranch({})
     expect(html).toContain('Set up this device')
-    expect(html).not.toContain("I've lost my recovery phrase")
+    expect(html).not.toContain("I've lost my master key")
     expect(html).not.toContain('Cancel subscription')
     expect(html).not.toContain('Vault locked')
   })

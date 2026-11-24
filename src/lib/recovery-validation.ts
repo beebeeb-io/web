@@ -23,7 +23,7 @@ export interface RecoveryValidationDeps {
 }
 
 /**
- * Validate that a master key derived from a recovery phrase actually belongs to
+ * Validate that a key derived from a master key actually belongs to
  * the CURRENT authenticated account.
  *
  * `recoverFromPhrase` derives *a* master key from ANY checksum-valid BIP39
@@ -88,7 +88,7 @@ export interface RecoveryCheckBackfillDeps {
  * master key that has ALREADY been proven correct (task 0875).
  *
  * A handful of legacy accounts predate the signup-time `recovery_check`. Task
- * 0874 made device-provision REJECT a recovery phrase whose `recovery_check`
+ * 0874 made device-provision REJECT a master key whose `recovery_check`
  * doesn't match the stored one — but for a NULL-stored account that rejects the
  * CORRECT phrase too, locking it out of recovery-phrase provisioning. The
  * server can never compute the check itself (it never sees the master key), so
@@ -97,7 +97,7 @@ export interface RecoveryCheckBackfillDeps {
  *
  * CRITICAL: the caller MUST pass a key proven to be the account's (local-vault
  * keyCheck, passkey/escrow AEAD-decrypt, fresh signup key, password-change
- * re-wrap, or a 0874-validated recovery phrase). NEVER call this with an
+ * re-wrap, or a 0874-validated master key). NEVER call this with an
  * unvalidated key — that could set a WRONG check into the empty slot.
  *
  * NEVER throws: this is fire-and-forget and must never block or break an

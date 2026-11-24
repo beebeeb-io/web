@@ -590,9 +590,9 @@ export async function decryptFileMetadata(
   }
 }
 
-// ─── Recovery phrase ────────────────────────────────
+// ─── Master key ────────────────────────────────
 
-/** Generate a 12-word BIP39 recovery phrase and the corresponding master key. */
+/** Generate a 12-word BIP39 master key and the corresponding master key. */
 export async function generateRecoveryPhrase(): Promise<{
   phrase: string
   masterKey: Uint8Array
@@ -1007,7 +1007,7 @@ export interface BundleCreateMaterial {
 }
 
 /**
- * Build the per-item wrapped keys + owner-recovery key for a bundle CREATE.
+ * Build the per-item wrapped keys + owner-master key for a bundle CREATE.
  *
  * Generates a fresh K_c, derives each selected file's FileKey from the master
  * key, and wraps it under K_c (60-byte AES-256-GCM frame). Returns the ordered

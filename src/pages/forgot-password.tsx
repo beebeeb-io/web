@@ -11,8 +11,8 @@
  * enumeration-safe endpoint (POST /api/v1/auth/forgot-password) emails a
  * one-time 60-minute set-password link (1704 slice 1). The copy stays honest
  * about what that does and does not do: it replaces the sign-in credential,
- * it does NOT decrypt anything — the vault stays locked until the recovery
- * phrase re-wraps it.
+ * it does NOT decrypt anything — the vault stays locked until the master
+ * key re-wraps it.
  */
 
 import React from 'react'
@@ -90,7 +90,7 @@ export async function submitEmailReset(email: string): Promise<string> {
  * the emailed link is one-time and expires in 60 minutes
  * (SET_PASSWORD_TOKEN_TTL_MINUTES, repos/server/beebeeb-api/src/routes/
  * password.rs:323), it lets the user set a new password — and that does NOT
- * unlock the vault. The vault stays locked until the recovery phrase re-wraps
+ * unlock the vault. The vault stays locked until the master key re-wraps
  * it under the new password (1704 slice 2's locked-state surface handles the
  * aftermath after the next sign-in).
  */
@@ -113,8 +113,8 @@ export function EmailResetSuccess({ message }: { message: string }) {
 
         <p className="text-[12.5px] text-ink-3 leading-relaxed">
           Setting a new password changes how you sign in. It does not unlock
-          your vault: your vault stays locked until you verify your recovery
-          phrase, which re-wraps it under the new password.
+          your vault: your vault stays locked until you verify your master
+          key, which re-wraps it under the new password.
         </p>
 
         <div className="text-center pt-2 border-t border-line mt-1">
@@ -170,7 +170,7 @@ export function ForgotPassword() {
             <Icon name="shield" size={14} className="text-ink-3 shrink-0 mt-0.5" />
             <p className="text-[12.5px] text-ink-2 leading-relaxed">
               Beebeeb is zero-knowledge by architecture. We never see your password
-              or encryption keys. Without your recovery phrase or a logged-in device,
+              or encryption keys. Without your master key or a logged-in device,
               we have no way to restore access to your vault.
             </p>
           </div>
@@ -181,7 +181,7 @@ export function ForgotPassword() {
           </p>
 
           <p className="text-[12.5px] text-ink-3 leading-relaxed">
-            To prevent this in future, save your recovery phrase somewhere safe
+            To prevent this in future, save your master key somewhere safe
             (password manager, printed copy in a fireproof location).
           </p>
 
@@ -202,7 +202,7 @@ export function ForgotPassword() {
             </a>
             <p className="text-[12px] text-ink-4 leading-relaxed">
               Include the email address on the account. Do not send us your
-              recovery phrase — it is useless to us and dangerous to send.
+              master key — it is useless to us and dangerous to send.
             </p>
           </div>
 
@@ -225,7 +225,7 @@ export function ForgotPassword() {
       <div className="space-y-3">
         <OptionCard
           icon="key"
-          title="I have my recovery phrase"
+          title="I have my master key"
           description="The 12-word phrase shown during account setup. Use it to set a new password."
           cta="Recover with phrase →"
           ctaVariant="amber"
@@ -240,7 +240,7 @@ export function ForgotPassword() {
             <div>
               <div className="text-[13px] font-semibold text-ink mb-0.5">I know my email address</div>
               <div className="text-[12px] text-ink-3 leading-relaxed">
-                We email a one-time link to set a new password. It does not decrypt your files — your vault stays locked until your recovery phrase re-wraps it.
+                We email a one-time link to set a new password. It does not decrypt your files — your vault stays locked until your master key re-wraps it.
               </div>
             </div>
           </div>
@@ -276,7 +276,7 @@ export function ForgotPassword() {
           badge="Soon"
         />
         <p className="text-[11.5px] text-ink-3 leading-relaxed -mt-1.5 px-1">
-          For now, use your recovery phrase on the other device to export your files, then re-register.
+          For now, use your master key on the other device to export your files, then re-register.
         </p>
 
         <OptionCard

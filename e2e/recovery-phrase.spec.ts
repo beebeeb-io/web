@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { signupAndUnlock, uniqueEmail } from './helpers/signup'
 
 /**
- * E2E test for the recovery phrase password reset flow.
+ * E2E test for the master key password reset flow.
  *
  * Verifies the fix for the "Session expired" bug where the client
  * expected `opaque_server_message` from the start endpoint but the
@@ -12,13 +12,13 @@ import { signupAndUnlock, uniqueEmail } from './helpers/signup'
  * e2e/recovery-phrase.spec.ts` — no manual env overrides needed.
  *
  * Task 1799: the account is created through the real signup UI (OPAQUE
- * register, recovery phrase + `recovery_check`), not the retired legacy
+ * register, master key + `recovery_check`), not the retired legacy
  * password signup route. Because the account is real, the wrong phrase is
  * now rejected by the recovery_check comparison — the same user-facing error
  * the legacy account (which had no recovery_check) produced.
  */
 
-test.describe('Recovery phrase password reset', () => {
+test.describe('Master key password reset', () => {
   test.beforeEach(async ({ page, context }) => {
     // Block the dev auto-login endpoint so we see the real auth pages
     await page.route('**/dev/auto-login', (route) => route.abort())
@@ -78,7 +78,7 @@ test.describe('Recovery phrase password reset', () => {
 
     // We should see a proper error about the phrase being wrong (the account's
     // recovery_check does not match the phrase submitted). Current copy is
-    // "The recovery phrase doesn't match this account." — match the contraction
+    // "The master key doesn't match this account." — match the contraction
     // ("doesn't") as well as the older "does not" wording (task 0763).
     const hasProperError = /does ?n.t match|doesn't match|invalid|incorrect|wrong|failed|try again/i.test(bodyText)
     expect(hasProperError).toBe(true)

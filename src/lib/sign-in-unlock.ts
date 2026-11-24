@@ -10,7 +10,7 @@
  *
  * Because the password is server-proven here, a `wrong_password` outcome cannot
  * be a typo — it means the local copy is stale. It is discarded (never opened
- * again) and the person re-enters the recovery phrase, which re-seals the key
+ * again) and the person re-enters the master key, which re-seals the key
  * under the new password. Pure so the decision is unit-testable; the callers
  * (login.tsx) do the clearing.
  *
@@ -41,4 +41,4 @@ export function resolveSignInUnlock(outcome: SignInUnlockOutcome): SignInUnlockS
 /** Shown on the phrase screen when the sign-in found a stale local vault. */
 export const STALE_VAULT_NOTICE =
   'This device still held your vault sealed under your previous password, so it was removed. ' +
-  'Enter your recovery phrase to unlock it and seal it under your new password.'
+  'Enter your master key to unlock it and seal it under your new password.'

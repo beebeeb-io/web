@@ -9,7 +9,7 @@ import { installFakeIndexedDB } from './helpers/fake-indexeddb'
  *
  * Proven here, at the unit level (the browser walk is e2e/1810-after-password-change.spec.ts):
  *  - the sign-in decision: a server-proven password that cannot open the local
- *    vault means the vault is stale -> discard it, then the recovery phrase;
+ *    vault means the vault is stale -> discard it, then the master key;
  *  - clearPasswordVault removes ONLY the password-sealed key, never a passkey vault;
  *  - after it, the old password opens nothing and the phrase screen can re-seal
  *    the key under the new password;
@@ -40,7 +40,7 @@ describe('task 1810: what a sign-in does with the local vault once the password 
 
   test('the stale notice names the cause and the next step', () => {
     expect(STALE_VAULT_NOTICE).toContain('previous password')
-    expect(STALE_VAULT_NOTICE).toContain('recovery phrase')
+    expect(STALE_VAULT_NOTICE).toContain('master key')
   })
 })
 

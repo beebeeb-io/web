@@ -45,7 +45,7 @@ const BODY = 'written before the password change — must decrypt after it'
 
 test.describe.configure({ retries: 0 })
 
-test('2FA account, email reset in the browser that holds the vault: recovery phrase opens the vault, never the password reset; fresh sign-in works', async ({ page }) => {
+test('2FA account, email reset in the browser that holds the vault: master key opens the vault, never the password reset; fresh sign-in works', async ({ page }) => {
   test.setTimeout(300_000)
   const { email, recoveryPhrase, secret } = await makeAccount(page, '1810-t1', true)
   const codes = new TotpSteps(secret)
@@ -80,7 +80,7 @@ test('2FA account, email reset in the browser that holds the vault: recovery phr
   await shot(page, 't1-02-signed-in-again.png')
 })
 
-test('"Unlock with recovery phrase" on the locked-vault screen: no password reset, no sign-out, a passkey vault survives', async ({ page }) => {
+test('"Unlock with master key" on the locked-vault screen: no password reset, no sign-out, a passkey vault survives', async ({ page }) => {
   test.setTimeout(300_000)
   const { email, recoveryPhrase } = await makeAccount(page, '1810-t1b', false)
   await uploadAndSettle(page, FILE, BODY)
@@ -96,7 +96,7 @@ test('"Unlock with recovery phrase" on the locked-vault screen: no password rese
 
   // Land on the locked-vault screen the way a reload does (marker kept, tab session alive).
   await page.goto('/')
-  const unlock = page.getByRole('button', { name: /unlock with recovery phrase/i }).first()
+  const unlock = page.getByRole('button', { name: /unlock with master key/i }).first()
   await expect(unlock).toBeVisible({ timeout: 30_000 })
   await shot(page, 't1b-01-vault-locked.png')
   await unlock.click()

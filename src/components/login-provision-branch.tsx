@@ -8,17 +8,17 @@ import type { ProvisionAuthMethod } from '../lib/device-provision-logic'
 
 /**
  * The "this device has no usable vault key" step that follows a server-proven
- * password: the 12-word recovery phrase, which re-seals the key under that
+ * password: the master key (12 words), which re-seals the key under that
  * password. Used by the sign-in page (src/pages/login.tsx) and by the end of the
  * /set-password reset (src/pages/set-password.tsx).
  *
  * Task 1810 (P0): this used to render the "Vault locked" surface whenever the
  * post-reset marker was set, and that surface's phrase button opened
  * /recover-with-phrase — the PASSWORD RECOVERY ceremony (email + phrase + a
- * second new password) — so "unlock with recovery phrase" looped back to a
+ * second new password) — so "unlock with master key" looped back to a
  * password reset. The phrase screen is now ALWAYS the first thing shown: the
  * password is already proven, so the phrase is the only thing missing. For a
- * person who has lost the phrase, "I've lost my recovery phrase" opens the
+ * person who has lost the phrase, "I've lost my master key" opens the
  * self-service exits (1704 slice 2: cancel billing, erase all files (task
  * 1918: a 72 h server-side request), delete account) and its phrase button
  * returns here.

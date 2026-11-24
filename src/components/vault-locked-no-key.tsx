@@ -56,7 +56,7 @@ import { clearPostResetLock } from '../lib/post-reset-lock'
  * account, so — per the ruling's harm-reduction goal ("no more invoicing
  * locked-out users with no exit") — the surface offers:
  *
- *   1. Primary re-entry: the 12-word recovery phrase via the canonical
+ *   1. Primary re-entry: the master key (12 words) via the canonical
  *      /recover-with-phrase route (which re-wraps the vault under the new
  *      password and makes this device normal again).
  *   2. Self-service exits, each behind an explicit inline confirmation gate:
@@ -430,7 +430,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
       <DeviceProvision
         password=""
         authMethod="passkey"
-        notice="Your new password is set. Enter your recovery phrase to open your vault for this session. To keep it on this device, sign in again with your new password afterwards."
+        notice="Your new password is set. Enter your master key to open your vault for this session. To keep it on this device, sign in again with your new password afterwards."
         onProvisioned={() => navigate('/', { replace: true })}
       />
     )
@@ -452,7 +452,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
           </p>
         </div>
         <p>
-          We can't restore access to your vault without your recovery phrase —
+          We can't restore access to your vault without your master key —
           by design. No one can: not support, not the server. There is no
           backdoor.
         </p>
@@ -461,16 +461,16 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
       {/* Primary re-entry — the canonical route; amber = the encryption CTA. */}
       <div className="mt-5">
         <BBButton variant="amber" size="lg" className="w-full" onClick={() => void handleUnlockWithPhrase()}>
-          Unlock with recovery phrase
+          Unlock with master key
         </BBButton>
         <p className="text-[12px] text-ink-3 leading-relaxed mt-2.5">
-          Your 12-word recovery phrase is the vault key.{' '}
+          Your master key (12 words) is the vault key.{' '}
           {onUnlockWithPhrase
             ? 'Entering it unlocks this device and re-secures the vault under your new password.'
             : 'Entering it opens the vault for this session only; sign in again with your new password to keep it on this device.'}
         </p>
         <p className="text-[11px] text-ink-4 leading-relaxed mt-1.5">
-          Only ever enter the phrase on <span className="font-mono">beebeeb.io</span> —
+          Only ever enter your master key on <span className="font-mono">beebeeb.io</span> —
           never in an email, never on another site.
         </p>
       </div>
@@ -489,7 +489,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
       {/* ── Self-service exits ──────────────────────────────────────────── */}
       <div className="mt-6 pt-5 border-t border-line">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
-          If you've lost your recovery phrase
+          If you've lost your master key
         </div>
         <p className="text-[12.5px] text-ink-3 leading-relaxed mb-2">
           Without the vault key, the files can never be opened again — by

@@ -233,7 +233,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   // Task 1531/1534 (P0): which account's session the resident master key
   // (masterKeyRef below) has actually been established/proven for. Every
   // setter that legitimately establishes a key (password unlock, passkey
-  // escrow, signup, recovery phrase, …) is REQUIRED to pass the account's
+  // escrow, signup, master key, …) is REQUIRED to pass the account's
   // server `user_id`, obtained from the SAME auth response that proved
   // identity — never inferred from a possibly-stale `useAuth().user` render
   // snapshot. `null` = no key resident, or its owner is no longer trusted
@@ -435,7 +435,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
 
   // Backfill the account's server-stored `recovery_check` on a PROVEN-correct-key
   // unlock (task 0875). A handful of legacy accounts predate the signup-time
-  // check; task 0874 made device-provision REJECT a recovery phrase whose
+  // check; task 0874 made device-provision REJECT a master key whose
   // recovery_check doesn't match the stored one, so a NULL-stored account would
   // be wrongly locked out of recovery-phrase provisioning. The server sets it
   // ONLY if currently NULL (never overwrites), so this is safe + idempotent.

@@ -273,9 +273,9 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
     expect(text).toContain('Vault locked')
     // Honest zero-knowledge reality (the required copy):
     expect(text).toContain("can't open")
-    expect(text).toContain('recovery phrase')
+    expect(text).toContain('master key')
     // Primary re-entry:
-    expect(text).toContain('Unlock with recovery phrase')
+    expect(text).toContain('Unlock with master key')
     // All three self-service exits are present:
     expect(text).toContain('Cancel subscription')
     expect(text).toContain('Erase all files')
@@ -303,10 +303,10 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
   })
 
   test('task 1810: the re-entry CTA never leads to the password-reset page (/recover-with-phrase)', async () => {
-    // It used to link there: "Unlock with recovery phrase" opened the full
+    // It used to link there: "Unlock with master key" opened the full
     // password RECOVERY ceremony (email + phrase + a second new password).
     const { text } = await renderProtectedRoute({ marker: true })
-    expect(text).toContain('Unlock with recovery phrase')
+    expect(text).toContain('Unlock with master key')
     expect(text).not.toContain('/recover-with-phrase')
     // Task 1810 round 2 (P2-3): no sign-out any more; the phrase opens in place.
     expect(text).toContain('this session only')
@@ -318,7 +318,7 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
     expect(text).toContain('Vault locked')
     expect(text).toContain('Enter your password to unlock your encrypted files.')
     expect(text).toContain('Unlock vault')
-    expect(text).not.toContain('Unlock with recovery phrase')
+    expect(text).not.toContain('Unlock with master key')
     expect(text).not.toContain('Cancel subscription')
     expect(text).not.toContain('Erase all files')
     expect(text).not.toContain('CONTENT-SHOULD-NOT-RENDER')
@@ -330,7 +330,7 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
     expect(text).toContain('Vault locked')
     expect(text).toContain('This support session cannot access vault contents')
     expect(text).not.toContain('Enter your password to unlock your encrypted files.')
-    expect(text).not.toContain('Unlock with recovery phrase')
+    expect(text).not.toContain('Unlock with master key')
     expect(text).not.toContain('Cancel subscription')
     expect(text).not.toContain('CONTENT-SHOULD-NOT-RENDER')
     expect(spies.cancelSubscription).not.toHaveBeenCalled()
@@ -400,7 +400,7 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
       .filter((c) => typeof c.textContent === 'string')
       .map((c) => c.textContent as string)
       .join('\n')
-    expect(before).toContain('Unlock with recovery phrase')
+    expect(before).toContain('Unlock with master key')
 
     // The escape hatch's effect: marker cleared → next render is the form.
     clearPostResetLock()
@@ -469,14 +469,14 @@ describe('task 1704 SLICE 2: VaultLockedNoKey copy + explicit confirmation gates
     const html = await renderSurface()
     expect(html).toContain('Vault locked')
     expect(html).toContain("can't open")
-    expect(html).toContain("We can't restore access to your vault without your recovery phrase")
+    expect(html).toContain("We can't restore access to your vault without your master key")
     expect(html).toContain('by design')
     expect(html).toContain('no backdoor')
   })
 
   test('task 1810: primary re-entry is a button (not a link to the password reset) + the only-enter-it-here warning', async () => {
     const html = await renderSurface()
-    expect(html).toContain('Unlock with recovery phrase')
+    expect(html).toContain('Unlock with master key')
     expect(html).not.toContain('href="/recover-with-phrase"')
     expect(html).not.toContain('recover-with-phrase')
     expect(html).toContain('never in an email, never on another site')
@@ -519,7 +519,7 @@ describe('task 1704 SLICE 2: VaultLockedNoKey copy + explicit confirmation gates
 
   test('task 1810: with onUnlockWithPhrase the explanatory line does not promise a second sign-in', async () => {
     const html = await renderSurface({ onUnlockWithPhrase: () => {} })
-    expect(html).toContain('Unlock with recovery phrase')
+    expect(html).toContain('Unlock with master key')
     expect(html).not.toContain('sign in with your new password first')
   })
 })

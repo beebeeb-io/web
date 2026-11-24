@@ -2,7 +2,7 @@
  * /recover-with-phrase — password recovery using the 12-word BIP39 phrase.
  *
  * Flow:
- *  Step 1 (phrase):  enter email + recovery phrase → derive master key →
+ *  Step 1 (phrase):  enter email + master key → derive master key →
  *                    compute recovery_check → POST recover-with-phrase-start
  *  Step 2 (password): set new password → OPAQUE registration →
  *                    POST recover-with-phrase-finalize
@@ -57,7 +57,7 @@ function normalisePhrase(raw: string): string {
 
 function validatePhrase(phrase: string): string | null {
   const words = phrase.split(' ')
-  if (words.length !== WORD_COUNT) return `Recovery phrase must be exactly ${WORD_COUNT} words (you entered ${words.length}).`
+  if (words.length !== WORD_COUNT) return `Master key must be exactly ${WORD_COUNT} words (you entered ${words.length}).`
   if (words.some((w) => !/^[a-z]+$/.test(w))) return 'Each word must contain only lowercase letters.'
   return null
 }
@@ -190,7 +190,7 @@ export function RecoverWithPhrase() {
         err instanceof ApiError &&
         (err.status === 400 || err.status === 401 || err.code === 'invalid_recovery_phrase')
       ) {
-        setPhraseError("The recovery phrase doesn't match this account. Double-check all 12 words.")
+        setPhraseError("The master key doesn't match this account. Double-check all 12 words.")
       } else if (err instanceof ApiError && err.status === 404) {
         setStep('unavailable')
       } else {
@@ -329,7 +329,7 @@ export function RecoverWithPhrase() {
         <div className="flex items-start gap-2.5 p-3 rounded-md bg-paper-2 border border-line mb-5">
           <Icon name="shield" size={14} className="text-amber-deep shrink-0 mt-0.5" />
           <p className="text-[12.5px] text-ink-2 leading-relaxed">
-            Your recovery phrase remains valid — save it somewhere safe for the future.
+            Your master key remains valid — save it somewhere safe for the future.
           </p>
         </div>
         <BBButton
@@ -348,7 +348,7 @@ export function RecoverWithPhrase() {
     return (
       <AuthShell
         title="Set a new password"
-        subtitle="Your phrase was verified. Choose a strong password for your account."
+        subtitle="Your master key was verified. Choose a strong password for your account."
         step={2}
         totalSteps={2}
       >
@@ -406,7 +406,7 @@ export function RecoverWithPhrase() {
   return (
     <AuthShell
       title="Recover with phrase"
-      subtitle="Enter your email and the 12-word recovery phrase from your account setup."
+      subtitle="Enter your email and the master key (12 words) from your account setup."
       step={1}
       totalSteps={2}
     >
@@ -425,7 +425,7 @@ export function RecoverWithPhrase() {
 
           <div>
             <label className="block text-xs font-medium text-ink-2 mb-1.5">
-              Recovery phrase
+              Master key
             </label>
             <textarea
               required
