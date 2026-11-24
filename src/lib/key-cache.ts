@@ -30,7 +30,7 @@ export async function cacheKeyPersistent(key: Uint8Array, userId: string): Promi
  * Cache the master key for this tab ONLY — never touches the persistent
  * session store. A page refresh discards it (the tab's non-extractable
  * session key lives only in session-vault-cache.ts's module memory), and
- * the user re-authenticates via passkey PRF or the recovery phrase next
+ * the user re-authenticates via passkey PRF or the master key next
  * time.
  *
  * Task 1529 (Guus ruling, 2026-09-25): "after a passkey sign-in, keep the

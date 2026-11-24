@@ -125,7 +125,7 @@ export function Login() {
    * the only key used after this sign-in is the one this password opens. If it
    * cannot open the local vault, that vault was sealed under a password the
    * account no longer has (a reset or change made elsewhere): it is deleted and
-   * the person re-enters the recovery phrase instead of hitting a dead end.
+   * the person re-enters the master key instead of hitting a dead end.
    */
   async function unlockProvenVault(
     proven: string,
@@ -396,7 +396,7 @@ export function Login() {
         if (ksfVersion === 0) void autoUpgradeToV1(passkeyFallbackPassword, getMasterKey(fallbackLoginResult.user_id))
         navigateAfterLogin()
       } else {
-        // No local vault — hand off to device provisioning (recovery phrase).
+        // No local vault — hand off to device provisioning (master key).
         // OPAQUE just proved `passkeyFallbackPassword` correct, above.
         setPassword(passkeyFallbackPassword)
         setProvisionAuthMethod('opaque')
@@ -688,7 +688,7 @@ export function Login() {
           <Icon name="shield" size={14} className="text-amber-deep shrink-0 mt-px" />
           <p className="text-xs text-ink-2 leading-relaxed">
             Your account uses an older authentication format. Please verify
-            your identity by entering your recovery phrase to migrate. Your
+            your identity by entering your master key to migrate. Your
             files stay safe — this only re-enrols how we verify your password.
           </p>
         </div>
@@ -702,7 +702,7 @@ export function Login() {
           >
             <span className="flex items-center gap-2">
               <Icon name="key" size={14} />
-              Continue with recovery phrase
+              Continue with master key
             </span>
           </BBButton>
         </Link>

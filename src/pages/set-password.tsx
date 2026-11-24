@@ -23,7 +23,7 @@
  *
  * HONEST COPY (the governing amendment, decisions/2026-10-02-…-policy.md):
  * setting a new password restores ACCOUNT access; the VAULT stays locked
- * until the user re-enters their recovery phrase. Task 1810: that phrase step
+ * until the user re-enters their master key. Task 1810: that phrase step
  * is the next screen of THIS page (LoginProvisionBranch), not a detour through
  * /recover-with-phrase (a password reset). The new password is already proven
  * (the server just replaced the OPAQUE record and opened a session), so the
@@ -32,7 +32,7 @@
  * cannot open it (src/lib/sign-in-unlock.ts), or overwritten by the phrase step.
  * The page stamps the post-reset marker (src/lib/post-reset-lock.ts) so a
  * person who lost the phrase can reach the self-service exits ("I've lost my
- * recovery phrase") and so a reload lands on the honest locked-state surface.
+ * master key") and so a reload lands on the honest locked-state surface.
  */
 
 import { type FormEvent, useCallback, useState } from 'react'
@@ -231,14 +231,14 @@ export function SetPassword() {
   if (step === 'success') {
     // Task 1810: the password is set and the session is open. The key on this
     // device (if any) is sealed under the PREVIOUS password, so the next step is
-    // the recovery phrase right here — the new password is already proven, so it
+    // the master key right here — the new password is already proven, so it
     // seals the vault. This used to be a "Continue" button into a "Vault locked"
     // screen whose phrase button opened the password-reset page again.
     return (
       <LoginProvisionBranch
         password={newPassword}
         authMethod="opaque"
-        notice="Your new password is set. Enter your recovery phrase to unlock your vault on this device and seal it under the new password."
+        notice="Your new password is set. Enter your master key to unlock your vault on this device and seal it under the new password."
         onProvisioned={() => navigate('/', { replace: true })}
       />
     )
@@ -254,7 +254,7 @@ export function SetPassword() {
         <Icon name="shield" size={14} className="text-amber-deep shrink-0 mt-0.5" />
         <p className="text-xs text-ink-2 leading-relaxed">
           Set a new password. Your vault stays locked until you re-enter your
-          recovery phrase or vault key.
+          master key or vault key.
         </p>
       </div>
 

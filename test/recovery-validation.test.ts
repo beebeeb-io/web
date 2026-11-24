@@ -10,7 +10,7 @@ import {
 import { ApiError } from '@beebeeb/shared'
 import { recoveredKeyMatchesAccount } from '../src/lib/recovery-validation'
 
-// device-provision's gate (task 0874): a WRONG recovery phrase used to "unlock"
+// device-provision's gate (task 0874): a WRONG master key used to "unlock"
 // the vault because `recoverFromPhrase` derives *a* valid key from any
 // checksum-valid BIP39 phrase and the result was persisted with no validation.
 //
@@ -72,7 +72,7 @@ async function runGate(masterKey: Uint8Array, deps: ReturnType<typeof depsForAcc
   let error = ''
   const matches = await recoveredKeyMatchesAccount(masterKey, deps)
   if (!matches) {
-    error = 'Incorrect recovery phrase. Check your words and try again.'
+    error = 'Incorrect master key. Check your words and try again.'
     return { persisted, unlocked, error }
   }
   // setMasterKey (vault.ts wrapAndStore → IndexedDB) + onProvisioned
@@ -108,7 +108,7 @@ describe('recovery-phrase unlock validation (task 0874)', () => {
     const result = await runGate(wrongKey, depsForAccount(accountKey))
     expect(result.persisted).toBe(false)
     expect(result.unlocked).toBe(false)
-    expect(result.error).toBe('Incorrect recovery phrase. Check your words and try again.')
+    expect(result.error).toBe('Incorrect master key. Check your words and try again.')
   }, CRYPTO_TIMEOUT_MS)
 
   test('the CORRECT phrase still unlocks and persists the key', async () => {

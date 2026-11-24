@@ -10,7 +10,7 @@ import { NEW_PW, totp, wrongCode, makeAccount, guestPage, requestResetLink, setN
  *  - TOTP account, email link: forgot-password -> /set-password/<token> -> new
  *    password -> the 2FA code step (no session yet) -> signed in.
  *  - A wrong code is said, not swallowed, and keeps the step.
- *  - TOTP account, recovery phrase: the same code step before the vault re-wrap.
+ *  - TOTP account, master key: the same code step before the vault re-wrap.
  *  - Account without TOTP: signed in directly, no code step.
  *  - A reset by a client that does NOT declare the capability (header stripped
  *    here) lands on "Your new password is set. Sign in to continue." with a link

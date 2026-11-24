@@ -24,7 +24,7 @@ test('the recovery-failure state offers a working support path and no dead docs 
   await expect(support).toContainText('support@beebeeb.io')
 
   await expect(page.getByText('What we can still do')).toBeVisible()
-  await expect(page.getByText('Do not send us your recovery phrase')).toBeVisible()
+  await expect(page.getByText('Do not send us your master key')).toBeVisible()
 
   // The impossible instruction belongs on the chooser, not on this screen.
   await expect(page.getByText('sign in on a device that still has access')).toHaveCount(0)

@@ -18,7 +18,7 @@ import { WORD_COUNT, distributeWords, shouldWrapWithPassword, type ProvisionAuth
 // Scan QR tab (unverified; QR generation on the settings side and the
 // underlying src/lib/qr-crypto.ts module are left in place, just with no
 // entry point into this screen for now). The only path is the 12-word
-// recovery phrase, modeled on repos/desktop/src/Onboarding.tsx's UnlockStep.
+// master key, modeled on repos/desktop/src/Onboarding.tsx's UnlockStep.
 
 interface DeviceProvisionProps {
   /**
@@ -42,7 +42,7 @@ interface DeviceProvisionProps {
   /** Task 1810: why the phrase is being asked for, when it is not the plain
    *  "new device" case (e.g. the vault here was sealed under a previous password). */
   notice?: string
-  /** Task 1810: offers "I've lost my recovery phrase" (opens the self-service exits). */
+  /** Task 1810: offers "I've lost my master key" (opens the self-service exits). */
   onLostPhrase?: () => void
 }
 
@@ -50,7 +50,7 @@ export function DeviceProvision({ password, authMethod, onProvisioned, notice, o
   const { setMasterKey, setMasterKeyDirect } = useKeys()
   // This screen only renders after OPAQUE or passkey auth already succeeded
   // server-side (the session cookie is set before login.tsx ever routes
-  // here), so `user` is reliably the account whose recovery phrase is being
+  // here), so `user` is reliably the account whose master key is being
   // validated just below — task 1531/1534 (P0) binds the recovered key to
   // it explicitly rather than trusting whatever key was already resident.
   const { user } = useAuth()
@@ -137,7 +137,7 @@ export function DeviceProvision({ password, authMethod, onProvisioned, notice, o
         verifyRecoveryCheck,
       })
       if (!matches) {
-        setError('Incorrect recovery phrase. Check your words and try again.')
+        setError('Incorrect master key. Check your words and try again.')
         return
       }
 
@@ -168,7 +168,7 @@ export function DeviceProvision({ password, authMethod, onProvisioned, notice, o
       setError(
         err instanceof Error
           ? err.message
-          : 'Invalid recovery phrase. Check your words and try again.',
+          : 'Invalid master key. Check your words and try again.',
       )
     } finally {
       if (masterKey) zeroize(masterKey)
@@ -189,7 +189,7 @@ export function DeviceProvision({ password, authMethod, onProvisioned, notice, o
       )}
       <form onSubmit={handleRestore}>
         <label className="block text-xs font-medium text-ink-2 mb-2">
-          Recovery phrase
+          Master key
         </label>
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
           {words.map((word, index) => (
@@ -252,7 +252,7 @@ export function DeviceProvision({ password, authMethod, onProvisioned, notice, o
           disabled={submitting}
           className="w-full mt-3 text-xs text-ink-3 hover:text-ink-2 transition-colors cursor-pointer"
         >
-          I've lost my recovery phrase
+          I've lost my master key
         </button>
       )}
     </AuthShell>

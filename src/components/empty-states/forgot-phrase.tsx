@@ -1,4 +1,4 @@
-// The empty state shown when the recovery phrase is unavailable.
+// The empty state shown when the master key is unavailable.
 import type { ReactNode } from 'react'
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
@@ -35,7 +35,7 @@ const defaultRecoveryOptions: RecoveryOption[] = [
     icon: 'cloud',
     title: 'Check other devices',
     description:
-      'If another device is still signed in, open Beebeeb there and re-export the phrase from Settings > Security.',
+      'If another device is still signed in, open Beebeeb there and re-export your master key from Settings > Security.',
     cta: 'Show me how',
   },
   {
@@ -82,7 +82,7 @@ export function ForgotPhrase({
                 We can&apos;t recover this for you.
               </h1>
               <p className="text-[13.5px] text-ink-2 leading-relaxed">
-                Your recovery phrase is the only key to the vault. We never
+                Your master key is the only key to the vault. We never
                 stored a copy. Not a backup, not a reset link, not a support
                 override. That&apos;s the tradeoff you chose when you signed
                 up for zero-knowledge encryption — and it&apos;s what keeps

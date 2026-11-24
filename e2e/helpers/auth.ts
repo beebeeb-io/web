@@ -23,7 +23,7 @@ export interface LoginAndProvisionOptions {
   email: string
   password: string
   /**
-   * 12-word BIP39 recovery phrase for the account. Used only if the test
+   * 12-word BIP39 master key for the account. Used only if the test
    * browser context has no IndexedDB vault yet (fresh profile, first run on
    * this machine, or after `clearVault()`). Existing vaults are unlocked with
    * the password without ever prompting for the phrase.
@@ -40,7 +40,7 @@ export interface LoginAndProvisionOptions {
  * step that appears on a fresh browser context (no IndexedDB vault yet).
  *
  * Production parity: this exercises the same code paths as a real user — no
- * test-only auth bypass. The recovery phrase is required only the first time
+ * test-only auth bypass. The master key is required only the first time
  * a given browser context logs in; subsequent runs use the wrapped vault key
  * already stored in IndexedDB.
  *
@@ -50,7 +50,7 @@ export interface LoginAndProvisionOptions {
  *     via the UI signup flow, not a legacy password POST)
  *
  * Resolves once the browser is on `/` (drive). Throws if the form errors,
- * the WASM worker fails to load, or the recovery phrase is rejected.
+ * the WASM worker fails to load, or the master key is rejected.
  */
 export async function loginAndProvision(
   page: Page,
@@ -73,12 +73,12 @@ export async function loginAndProvision(
 
   // Two possible terminal states after submit:
   //   (a) vaultExists  → unlockVault → navigate('/') → on the drive
-  //   (b) !vaultExists → render <DeviceProvision> → 12-box recovery phrase
+  //   (b) !vaultExists → render <DeviceProvision> → 12-box master key
   // Race the two so we don't hang on whichever doesn't apply.
   //
   // Task 1528: DeviceProvision is now 12 individually-labeled word boxes
   // ("Recovery word 1".."Recovery word 12"), not one textarea labeled
-  // "Recovery phrase" — that label has no associated control anymore (it's
+  // "Master key" — that label has no associated control anymore (it's
   // a heading over the grid). Box 1 accepts a full space-separated paste
   // and splits it across all 12 boxes (see device-provision.tsx applyWords).
   const provisionLocator = page.getByLabel('Recovery word 1', { exact: true })

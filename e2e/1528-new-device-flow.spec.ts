@@ -215,7 +215,7 @@ test.describe('task 1528: new-device flow — auth then phrase, no passkey/QR ta
 
     // Wrong-account phrase (checksum-valid, but not this account's) → rejected.
     await page.getByRole('button', { name: /restore vault/i }).click()
-    await expect(page.getByText('Incorrect recovery phrase. Check your words and try again.')).toBeVisible({
+    await expect(page.getByText('Incorrect master key. Check your words and try again.')).toBeVisible({
       timeout: 15_000,
     })
     expect(await vaultEntryIds(page)).toEqual([])

@@ -152,7 +152,7 @@ describe('task 1713 FIX A: the /forgot-password chooser exposes the email reset 
     expect(html).toContain('60 minutes')
     expect(html).toContain('set a new password')
     // Honest reality: the reset does NOT unlock the vault — the phrase does.
-    expect(html).toContain('recovery phrase')
+    expect(html).toContain('master key')
     expect(html).toContain('does not unlock your vault')
     // A way back to sign in:
     expect(html).toContain('href="/login"')
@@ -160,7 +160,7 @@ describe('task 1713 FIX A: the /forgot-password chooser exposes the email reset 
 
   test('regression pin: the three existing chooser cards are untouched', async () => {
     const html = await renderChooser()
-    expect(html).toContain('I have my recovery phrase')
+    expect(html).toContain('I have my master key')
     expect(html).toContain('Recover with phrase')
     expect(html).toContain('Coming soon')
     expect(html).toContain('I have neither')
