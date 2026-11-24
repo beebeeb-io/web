@@ -23,13 +23,12 @@ export const FEATURE_OFFICE_EDITOR = import.meta.env.VITE_FEATURE_OFFICE_EDITOR 
 /**
  * FEATURE_ONBOARDING_DOCUMENT — render signup and the account-state screens from
  * the server's onboarding document (`GET /api/v1/onboarding`, contract v1, task
- * 1745, epic 1725). OFF by default: the endpoint is task 1739 and is not built
- * yet, so with the flag off `/signup` is the legacy page, byte for byte. Flip on
- * with VITE_FEATURE_ONBOARDING_DOCUMENT=true once 1739 is on server main and the
- * ticket flow (1738) is live; with it on, a 404 / network failure / malformed
+ * 1745, epic 1725). ON by default (master-key-naming 05): `/signup` goes through
+ * the document flow; set VITE_FEATURE_ONBOARDING_DOCUMENT=false to get the legacy
+ * page back, byte for byte. With it on, a 404 / network failure / malformed
  * document still falls back to the legacy page (spec 5.8 rule 6).
  */
-export const FEATURE_ONBOARDING_DOCUMENT = import.meta.env.VITE_FEATURE_ONBOARDING_DOCUMENT === 'true';
+export const FEATURE_ONBOARDING_DOCUMENT = import.meta.env.VITE_FEATURE_ONBOARDING_DOCUMENT !== 'false';
 
 /**
  * SHARED_FOLDERS_FLAG — the *name* of a runtime flag, not a build-time value.

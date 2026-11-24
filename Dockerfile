@@ -54,9 +54,9 @@ ENV VITE_FEATURE_OFFICE_EDITOR=$VITE_FEATURE_OFFICE_EDITOR
 
 # Document-rendered onboarding flag (task 1745, src/lib/flags.ts's
 # FEATURE_ONBOARDING_DOCUMENT) — build-time inlined like the flags above, so an
-# undeclared --build-arg is silently ignored. Default off (the flag-off build
-# carries no onboarding-document route); set by `make prod-build-web ONBOARDING=1`.
-ARG VITE_FEATURE_ONBOARDING_DOCUMENT=false
+# undeclared --build-arg is silently ignored. Default on (master-key-naming 05);
+# pass --build-arg VITE_FEATURE_ONBOARDING_DOCUMENT=false for the legacy page.
+ARG VITE_FEATURE_ONBOARDING_DOCUMENT=true
 ENV VITE_FEATURE_ONBOARDING_DOCUMENT=$VITE_FEATURE_ONBOARDING_DOCUMENT
 
 # Error-reporting DSN (task 1369) — same "inlined at build time" story as
