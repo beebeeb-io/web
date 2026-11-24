@@ -122,10 +122,6 @@ export async function signUpAllowanceAccount(page: Page, email: string): Promise
   await page.getByRole('checkbox').nth(0).click()
   await page.getByRole('checkbox').nth(1).click()
   await page.getByTestId('accept-terms-continue').click()
-  await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
-  await page.getByTestId('onboarding-password').fill(PASSWORD)
-  await page.getByTestId('onboarding-password-confirm').fill(PASSWORD)
-  await page.getByTestId('set-password-continue').click()
   await expect(page.getByTestId('phrase-words')).toBeVisible({ timeout: 30_000 })
   const words: string[] = []
   for (let i = 1; i <= 12; i++) words.push((await page.getByTestId(`phrase-word-${i}`).innerText()).trim())
@@ -138,6 +134,10 @@ export async function signUpAllowanceAccount(page: Page, email: string): Promise
     await page.getByTestId(id).fill(words[Number(id.replace('phrase-answer-', '')) - 1])
   }
   await page.getByRole('button', { name: /^confirm$/i }).click()
+  await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
+  await page.getByTestId('onboarding-password').fill(PASSWORD)
+  await page.getByTestId('onboarding-password-confirm').fill(PASSWORD)
+  await page.getByTestId('set-password-continue').click()
   await page.waitForURL((u) => u.pathname === '/' || u.pathname === '/choose-plan', { timeout: 90_000 })
   await skipTours(page)
 }

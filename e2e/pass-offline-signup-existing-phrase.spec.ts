@@ -5,7 +5,7 @@ import { PASSWORD, codeFromMailpit, missingPrerequisites, screen, skipTours } fr
 import { uniqueEmail } from './helpers/signup'
 
 /**
- * po-16: sign up on the web with "I already have a recovery phrase" using a phrase from core's
+ * po-16: sign up on the web with "I already have a master key" using a phrase from core's
  * `generate_recovery_phrase` (what the offline Pass vault would hold), then sign in to Pass web
  * (PASS_WEB_URL, default http://localhost:5175) with that account and phrase: the vault opens.
  *
@@ -42,24 +42,23 @@ test('sign up with an existing phrase, then open the vault in Pass web', async (
   await page.getByRole('checkbox').nth(0).click()
   await page.getByRole('checkbox').nth(1).click()
   await page.getByTestId('accept-terms-continue').click()
-  await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
-  await page.getByTestId('onboarding-password').fill(PASSWORD)
-  await page.getByTestId('onboarding-password-confirm').fill(PASSWORD)
-  await page.getByTestId('set-password-continue').click()
-
-  // The phrase step: a bad phrase first, then the real one pasted into the first field.
+  // The master key step comes first: a bad key first, then the real one pasted into the first field.
   await expect(page.getByTestId('adopt-link')).toBeVisible({ timeout: 30_000 })
   await page.getByTestId('adopt-link').click()
   await expect(page.getByText('Your offline Pass vault will open with this account.')).toBeVisible()
   await page.getByTestId('adopt-word-1').fill(Array.from({ length: 12 }, () => 'abandon').join(' '))
   await page.getByTestId('adopt-continue').click()
-  await expect(page.getByText('Those 12 words are not a valid recovery phrase.')).toBeVisible()
+  await expect(page.getByText('That is not a valid master key. Check the 12 words and their order.')).toBeVisible()
   await page.getByTestId('adopt-word-1').fill(phrase)
   for (let i = 0; i < 12; i++) await expect(page.getByTestId(`adopt-word-${i + 1}`)).toHaveValue(words[i])
   await page.getByTestId('adopt-continue').click()
 
-  // No confirm sub-step: straight on to account creation.
+  // No confirm sub-step: straight on to the password step, then account creation.
   await expect(page.locator('[data-phase="confirm"]')).toHaveCount(0)
+  await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
+  await page.getByTestId('onboarding-password').fill(PASSWORD)
+  await page.getByTestId('onboarding-password-confirm').fill(PASSWORD)
+  await page.getByTestId('set-password-continue').click()
   await page.waitForURL((u) => u.pathname === '/' || u.pathname === '/choose-plan', { timeout: 90_000 })
   await skipTours(page)
 

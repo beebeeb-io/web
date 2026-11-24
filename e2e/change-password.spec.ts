@@ -40,7 +40,7 @@ async function signupAndUnlock(page: Page): Promise<void> {
   await page.getByLabel(/email/i).fill(uniqueEmail())
   // No pilot-access-key field on a fresh /signup visit (task 1520) — the
   // harness's gate now defaults OFF, matching prod (src/lib/signup-pilot-gate.ts).
-  await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
+  await page.getByRole('checkbox', { name: /Beebeeb can.?t recover/i }).click()
   await page.getByRole('button', { name: /^continue$/i }).click()
 
   await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })

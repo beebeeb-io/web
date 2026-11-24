@@ -108,7 +108,7 @@ test.describe.serial('Production smoke — one throwaway account, real UI (task 
     await context.close()
   })
 
-  test('1. signup — recovery phrase shown + confirmed — password set (retries with the pilot key if the gate bounces back)', async () => {
+  test('1. signup — master key shown + confirmed — password set (retries with the pilot key if the gate bounces back)', async () => {
     // task 1520 made /signup keyless by default (matching prod,
     // BB_REQUIRE_PILOT_KEY=0 since the phase-2 launch): fillSignupForm no
     // longer takes a pilotKey at all. The gate can still be exercised

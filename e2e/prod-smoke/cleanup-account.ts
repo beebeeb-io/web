@@ -88,7 +88,7 @@ async function main(): Promise<number> {
 
     // We only need an authenticated SESSION (the cookie is set the instant
     // OPAQUE login-finish succeeds) — not an unlocked vault, so we don't fill
-    // a recovery phrase even if DeviceProvision shows. Race a third outcome,
+    // a master key even if DeviceProvision shows. Race a third outcome,
     // an inline login error, so a genuinely wrong/rotated password fails
     // loudly instead of hanging for the full timeout.
     // Task 1528: DeviceProvision is now 12 individually-labeled word boxes,

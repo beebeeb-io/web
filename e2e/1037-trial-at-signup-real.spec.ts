@@ -53,7 +53,7 @@ async function signUpWithPlan(page: Page, email: string, shot?: string) {
   await page.getByTestId('trial-plan-basic').click()
   await expect(page.getByTestId('trial-plan-basic')).toHaveAttribute('aria-checked', 'true')
   await page.getByLabel(/email/i).fill(email)
-  await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
+  await page.getByRole('checkbox', { name: /Beebeeb can.?t recover/i }).click()
   if (shot) await page.screenshot({ path: shot, fullPage: true })
   await page.getByRole('button', { name: /^continue$/i }).click()
   await reachPasswordStep(page)

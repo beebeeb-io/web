@@ -102,12 +102,8 @@ async function acceptTerms(page: Page) {
   await page.getByTestId('accept-terms-continue').click()
 }
 
-/** set_password → phrase → confirm; stops when create_account starts. */
-async function passwordAndPhrase(page: Page) {
-  await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
-  await page.getByTestId('onboarding-password').fill(PASSWORD)
-  await page.getByTestId('onboarding-password-confirm').fill(PASSWORD)
-  await page.getByTestId('set-password-continue').click()
+/** master key (words, confirm) → set_password; stops when create_account starts. */
+async function phraseAndPassword(page: Page) {
   await expect(page.getByTestId('phrase-words')).toBeVisible({ timeout: 30_000 })
   const words: string[] = []
   for (let i = 1; i <= 12; i++) words.push((await page.getByTestId(`phrase-word-${i}`).innerText()).trim())
@@ -120,6 +116,10 @@ async function passwordAndPhrase(page: Page) {
     await page.getByTestId(id).fill(words[Number(id.replace('phrase-answer-', '')) - 1])
   }
   await page.getByRole('button', { name: /^confirm$/i }).click()
+  await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
+  await page.getByTestId('onboarding-password').fill(PASSWORD)
+  await page.getByTestId('onboarding-password-confirm').fill(PASSWORD)
+  await page.getByTestId('set-password-continue').click()
 }
 
 
@@ -147,7 +147,7 @@ test('ALLOWANCE — a verified never-paid account lands on the drive, uploads wi
   await openSignup(page)
   await enterEmailAndCode(page, email)
   await acceptTerms(page)
-  await passwordAndPhrase(page)
+  await phraseAndPassword(page)
 
   // create_account runs. Server PR #166 (task 1818): a ticketed signup is already
   // email-verified, so the account is a usable allowance account straight away —

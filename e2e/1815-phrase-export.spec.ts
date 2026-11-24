@@ -1,6 +1,6 @@
 /**
  * 1815 — the document-driven signup phrase step offers Copy / Download .txt /
- * Recovery Kit PDF (regression: they were missing on prod after the 1745 flag flip).
+ * Master key PDF (regression: they were missing on prod after the 1745 flag flip).
  * Real stack, no mocks. Needs VITE_FEATURE_ONBOARDING_DOCUMENT=true,
  * BB_SIGNUP_EMAIL_CODE=1, SMTP -> Mailpit (SMTP_HOST=localhost SMTP_PORT=1025
  * SMTP_TLS_MODE=none; E2E_MAILPIT_URL). Runs at desktop and iPhone width.
@@ -47,10 +47,6 @@ async function toPhraseStep(page: Page, email: string) {
   await page.getByRole('checkbox').nth(0).click()
   await page.getByRole('checkbox').nth(1).click()
   await page.getByTestId('accept-terms-continue').click()
-  await expect(screen).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
-  await page.getByTestId('onboarding-password').fill(PASSWORD)
-  await page.getByTestId('onboarding-password-confirm').fill(PASSWORD)
-  await page.getByTestId('set-password-continue').click()
   await expect(page.getByTestId('phrase-words')).toBeVisible({ timeout: 30_000 })
 }
 
@@ -79,7 +75,7 @@ for (const vp of [
 
     // Download .txt: 12 numbered lines matching the shown words.
     const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('phrase-download-txt').click()])
-    expect(download.suggestedFilename()).toBe('beebeeb-recovery-phrase.txt')
+    expect(download.suggestedFilename()).toBe('beebeeb-master-key.txt')
     const lines = readFileSync((await download.path())!, 'utf8').split('\n')
     expect(lines).toHaveLength(12)
     lines.forEach((l, i) => expect(l).toBe(`${String(i + 1).padStart(2, '0')}  ${words[i]}`))
@@ -88,7 +84,7 @@ for (const vp of [
     await page.getByTestId('phrase-copy').click()
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(words.join(' '))
 
-    // Recovery Kit PDF opens the print-ready page with the words and the email.
+    // Master key PDF opens the print-ready page with the words and the email.
     const [popup] = await Promise.all([page.waitForEvent('popup'), page.getByTestId('phrase-recovery-kit').click()])
     await popup.waitForLoadState('domcontentloaded')
     const html = await popup.content()

@@ -88,7 +88,7 @@ async function startMandatedTrial(page: Page, email: string) {
   await page.getByTestId('trial-cycle-yearly').click()
   await page.getByTestId('trial-plan-basic').click()
   await page.getByLabel(/email/i).fill(email)
-  await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
+  await page.getByRole('checkbox', { name: /Beebeeb can.?t recover/i }).click()
   await page.getByRole('button', { name: /^continue$/i }).click()
   await reachPasswordStep(page)
   await createAccount(page, 'trial-2106-correct-horse-battery')

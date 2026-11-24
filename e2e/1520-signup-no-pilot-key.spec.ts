@@ -158,7 +158,7 @@ test.describe('1520 — /signup no longer hard-requires a pilot access key', () 
     await page.getByRole('checkbox', { name: /Beebeeb can.?t recover/i }).click()
     await page.getByRole('button', { name: /^continue$/i }).click()
 
-    // Recovery phrase step.
+    // Master key step.
     await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
     const wordEls = page.locator('span.font-mono.text-sm.font-medium')
     await expect(wordEls).toHaveCount(12, { timeout: 15_000 })

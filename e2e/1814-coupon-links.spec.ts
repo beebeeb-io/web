@@ -131,11 +131,7 @@ async function acceptTerms(page: Page) {
   await page.getByTestId('accept-terms-continue').click()
 }
 
-async function passwordAndPhrase(page: Page) {
-  await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
-  await page.getByTestId('onboarding-password').fill(PASSWORD)
-  await page.getByTestId('onboarding-password-confirm').fill(PASSWORD)
-  await page.getByTestId('set-password-continue').click()
+async function phraseAndPassword(page: Page) {
   await expect(page.getByTestId('phrase-words')).toBeVisible({ timeout: 30_000 })
   const words: string[] = []
   for (let i = 1; i <= 12; i++) words.push((await page.getByTestId(`phrase-word-${i}`).innerText()).trim())
@@ -148,13 +144,17 @@ async function passwordAndPhrase(page: Page) {
     await page.getByTestId(id).fill(words[Number(id.replace('phrase-answer-', '')) - 1])
   }
   await page.getByRole('button', { name: /^confirm$/i }).click()
+  await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
+  await page.getByTestId('onboarding-password').fill(PASSWORD)
+  await page.getByTestId('onboarding-password-confirm').fill(PASSWORD)
+  await page.getByTestId('set-password-continue').click()
 }
 
 /** The whole document-driven signup, from the email step to account creation. */
 async function signUpThroughTheDocument(page: Page, email: string) {
   await enterEmailAndCode(page, email)
   await acceptTerms(page)
-  await passwordAndPhrase(page)
+  await phraseAndPassword(page)
 }
 
 async function subscription(page: Page) {

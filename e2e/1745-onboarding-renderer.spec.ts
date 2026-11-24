@@ -238,14 +238,14 @@ test.describe('1745 onboarding renderer', () => {
     await page.getByTestId('onboarding-password').fill(STRONG)
     await page.getByTestId('onboarding-password-confirm').fill(STRONG)
     await page.getByTestId('set-password-continue').click()
-    await expect(page.getByTestId('phrase-words')).toBeVisible({ timeout: 30_000 })
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:create_account', { timeout: 30_000 })
 
     // Outage: the endpoint fails, the document says fail_open=true, core lets the breached password pass.
     await walkToPassword(page, '?breach=down')
     await page.getByTestId('onboarding-password').fill('Breached-Password-1')
     await page.getByTestId('onboarding-password-confirm').fill('Breached-Password-1')
     await page.getByTestId('set-password-continue').click()
-    await expect(page.getByTestId('phrase-words')).toBeVisible({ timeout: 30_000 })
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:create_account', { timeout: 30_000 })
 
     // Same outage, but the document says fail_open=false: core blocks, the page stays on the step.
     await walkToPassword(page, '?breach=down&failopen=0')

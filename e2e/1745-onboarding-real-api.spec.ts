@@ -122,12 +122,8 @@ async function acceptTerms(page: Page) {
   await page.getByTestId('accept-terms-continue').click()
 }
 
-/** set_password → phrase → confirm; stops when create_account starts. */
-async function passwordAndPhrase(page: Page) {
-  await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
-  await page.getByTestId('onboarding-password').fill(PASSWORD)
-  await page.getByTestId('onboarding-password-confirm').fill(PASSWORD)
-  await page.getByTestId('set-password-continue').click()
+/** master key (words, confirm) → set_password; stops when create_account starts. */
+async function phraseAndPassword(page: Page) {
   await expect(page.getByTestId('phrase-words')).toBeVisible({ timeout: 30_000 })
   const words: string[] = []
   for (let i = 1; i <= 12; i++) words.push((await page.getByTestId(`phrase-word-${i}`).innerText()).trim())
@@ -140,6 +136,10 @@ async function passwordAndPhrase(page: Page) {
     await page.getByTestId(id).fill(words[Number(id.replace('phrase-answer-', '')) - 1])
   }
   await page.getByRole('button', { name: /^confirm$/i }).click()
+  await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
+  await page.getByTestId('onboarding-password').fill(PASSWORD)
+  await page.getByTestId('onboarding-password-confirm').fill(PASSWORD)
+  await page.getByTestId('set-password-continue').click()
 }
 
 async function startTrialCheckout(page: Page, method: 'ideal' | 'creditcard') {
@@ -175,7 +175,7 @@ test('PAID — document signup → needs_plan → mock Mollie mandate → triali
   await enterEmailAndCode(page, email)
   await shot(page, '02-after-real-code')
   await acceptTerms(page)
-  await passwordAndPhrase(page)
+  await phraseAndPassword(page)
 
   // create_account runs, then the app sends a needs_plan account to the chooser.
   await page.waitForURL(/\/choose-plan/, { timeout: 90_000 })
@@ -251,7 +251,7 @@ test('EXPIRY — the ticket expires before register: back to the code step, a ne
   await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
   // The ticket lapses while the person is choosing a password.
   sql(`UPDATE signup_tickets SET expires_at = NOW() - INTERVAL '1 minute' WHERE email = '${email}';`)
-  await passwordAndPhrase(page)
+  await phraseAndPassword(page)
 
   await expect(screen(page)).toHaveAttribute('data-screen', 'step:verify_email_code', { timeout: 60_000 })
   await shot(page, '10-ticket-expired-back-to-code-step')

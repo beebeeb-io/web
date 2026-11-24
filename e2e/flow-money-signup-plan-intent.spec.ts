@@ -53,7 +53,7 @@ test('site CTA /signup?plan=basic&cycle=yearly → plans first → /choose-plan 
   expect((await picker.boundingBox())!.y).toBeLessThan((await page.getByLabel(/email/i).boundingBox())!.y)
 
   await page.getByLabel(/email/i).fill(email)
-  await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
+  await page.getByRole('checkbox', { name: /Beebeeb can.?t recover/i }).click()
   await page.getByRole('button', { name: /^continue$/i }).click()
   await reachPasswordStep(page)
   await createAccount(page, 'flow-money-correct-horse-battery')

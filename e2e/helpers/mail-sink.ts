@@ -165,6 +165,19 @@ export function extractSignupExistsEmail(log: string, email: string): SignupExis
   return null
 }
 
+/** E2E_MAILPIT_URL set: render Mailpit's inbox (oldest first) in the console-mode block format the extractors read. */
+async function mailpitAsLog(base: string): Promise<string> {
+  const list = (await (await fetch(`${base}/api/v1/messages?limit=200`)).json()) as {
+    messages?: Array<{ ID: string; To: Array<{ Address: string }> }>
+  }
+  const out: string[] = []
+  for (const msg of [...(list.messages ?? [])].reverse()) {
+    const full = (await (await fetch(`${base}/api/v1/message/${msg.ID}`)).json()) as { Text?: string; Subject?: string }
+    out.push(`\n--- EMAIL (console mode) ---\nTo: ${msg.To[0]?.Address ?? ''}\nSubject: ${full.Subject ?? ''}\n\n${full.Text ?? ''}\n--- END EMAIL ---\n`)
+  }
+  return out.join('')
+}
+
 async function pollLog<T>(
   extract: (log: string) => T | null,
   opts: { timeoutMs: number; intervalMs: number },
@@ -175,7 +188,7 @@ async function pollLog<T>(
   for (;;) {
     let log = ''
     try {
-      log = readFileSync(logPath, 'utf8')
+      log = process.env.E2E_MAILPIT_URL ? await mailpitAsLog(process.env.E2E_MAILPIT_URL) : readFileSync(logPath, 'utf8')
     } catch {
       // Log file not created yet (backend still booting) — keep polling.
     }
