@@ -10,7 +10,6 @@ import {
   createContentOps,
   type ContentOps,
   type ContentPin,
-  type ContentVersion,
   type DecryptSummary,
   type PinnedMetadata,
 } from '../lib/content-crypto'
@@ -348,8 +347,8 @@ const cryptoWorker = {
   },
 
   /** A streaming content decryptor for one file; returns an opaque handle. */
-  async createDecryptor(fileKey: Uint8Array, fileId: string, pin: ContentPin, version?: ContentVersion | null): Promise<number> {
-    return (await content()).createDecryptor(fileKey, fileId, pin, version)
+  async createDecryptor(fileKey: Uint8Array, fileId: string, pin: ContentPin): Promise<number> {
+    return (await content()).createDecryptor(fileKey, fileId, pin)
   },
 
   /** Open the next frame in order; the plaintext buffer is transferred back (zero-copy). */
@@ -919,10 +918,22 @@ const cryptoWorker = {
     return ceremonyResult(() => wasm.evaluate_password(password, minLength))
   },
 
-  /** Core's canonical pre-account order (master key first, then the password): `[{ step, spec_step_id }]`. */
-  async ceremonyStepOrder(): Promise<CeremonyResult<{ step: string; spec_step_id: string }[]>> {
+  /**
+   * Core's canonical pre-account order (master key first, then the password) as `[{ step, spec_step_id }]`,
+   * or null when the vendored wasm predates the export (the caller then uses its mirrored constant).
+   */
+  async ceremonyStepOrder(): Promise<CeremonyResult<{ step: string; spec_step_id: string }[] | null>> {
     const wasm = await ensureWasm()
-    return ceremonyResult(() => wasm.WasmSignupCeremony.ceremonyStepOrder() as { step: string; spec_step_id: string }[])
+    return ceremonyResult(() => {
+      const w = wasm as unknown as {
+        ceremonyStepOrder?: () => unknown
+        WasmSignupCeremony?: { ceremonyStepOrder?: () => unknown }
+      }
+      if (typeof w.ceremonyStepOrder === 'function') return w.ceremonyStepOrder() as { step: string; spec_step_id: string }[]
+      const cls = w.WasmSignupCeremony
+      if (cls && typeof cls.ceremonyStepOrder === 'function') return cls.ceremonyStepOrder() as { step: string; spec_step_id: string }[]
+      return null
+    })
   },
 
   async ceremonyNew(

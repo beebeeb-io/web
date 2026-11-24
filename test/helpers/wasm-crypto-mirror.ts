@@ -21,7 +21,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import * as wasm from 'beebeeb-wasm'
-import { createContentOps, type ContentOps, type ContentPin, type ContentVersion } from '../../src/lib/content-crypto'
+import { createContentOps, type ContentOps, type ContentPin } from '../../src/lib/content-crypto'
 import type { DecryptorPort, ResolveOwnedItemArgs, StreamingDecryptor } from '../../src/lib/crypto'
 import { decodeEnvelope, encodeEnvelope } from '../../src/lib/metadata-envelope'
 import { mockModuleScoped } from './scoped-module-mock'
@@ -85,9 +85,9 @@ export async function installWasmCryptoMirror(
       },
       readNameMetadata: async (fileKey: Uint8Array, nameEncrypted: string) =>
         ops.readNameMetadata(fileKey, nameEncrypted),
-      startDecryptStream: async (fileKey: Uint8Array, fileId: string, pin: ContentPin, version?: ContentVersion | null) => {
+      startDecryptStream: async (fileKey: Uint8Array, fileId: string, pin: ContentPin) => {
         mirror.decryptStreams.push({ fileId, pin })
-        return new RealDecryptor(ops.createDecryptor(fileKey, fileId, pin, version), inProcessPort(ops, opts.transferFrames))
+        return new RealDecryptor(ops.createDecryptor(fileKey, fileId, pin), inProcessPort(ops, opts.transferFrames))
       },
       // The envelope writer/reader are worker crossings (W-P3-2); run core's
       // codec in-process so a rename that re-seals a name does not hang.

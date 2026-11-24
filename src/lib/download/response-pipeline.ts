@@ -47,7 +47,7 @@ async function openRepairingStream(
   content: FileContentRef,
   masterKey: Uint8Array | undefined,
 ): Promise<FrameOpener> {
-  let inner = await startDecryptStream(fileKey, content.fileId, content.pin, content.version)
+  let inner = await startDecryptStream(fileKey, content.fileId, content.pin)
   let headPending = true
   return {
     async pushFrame(frame: Uint8Array) {

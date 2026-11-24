@@ -19,105 +19,6 @@ export type DirectPoll =
 
 
 
-export class AccountFlow {
-    free(): void;
-    [Symbol.dispose](): void;
-    abandon(): void;
-    changeEmail(new_email: string, password: string, recovery_check_b64: string, x25519_public_b64: string): any;
-    /**
-     * `onboardingStatus` / `onboardingBody`: the server's `GET /api/v1/onboarding` answer (its
-     * password policy). `breachCheck`: a `WasmBreachCheck` made for `newPassword` and answered,
-     * required when that policy declares a breach check (sign-up's gate).
-     */
-    changePassword(current: string, new_password: string, recovery_check_b64: string, x25519_public_b64: string, onboarding_status: number, onboarding_body: string, breach_check?: WasmBreachCheck | null): any;
-    deleteAccount(password: string, code?: string | null): any;
-    deleteCancel(link_token: string): any;
-    deleteConfirm(link_token: string): any;
-    constructor();
-    regenerateBackupCodes(code: string): any;
-    resume(status: number, body_text: string): any;
-    revokeOtherSessions(): any;
-    revokeSession(session_id: string): any;
-    /**
-     * Turning it off takes the password (a step-up inside); turning it on ignores it.
-     */
-    setActivityLogging(on: boolean, password?: string | null): any;
-    setDisplayName(name: string): any;
-    totpConfirm(code: string): any;
-    totpDisable(code: string): any;
-    totpSetup(password?: string | null, current_code?: string | null): any;
-    verifyEmail(code: string): any;
-    verifyPassword(password: string): any;
-}
-
-/**
- * The approving side: `new AuthApproval(code)`, `start()`, `onLookupResponse(...)` (the facts),
- * `codeMatches(typed)`, `approve(typed, password, masterKey)`, then `onResponse(...)` until
- * `{kind: "approved"}`.
- */
-export class AuthApproval {
-    free(): void;
-    [Symbol.dispose](): void;
-    approve(typed_code: string, password: string, master_key: Uint8Array): any;
-    codeMatches(typed: string): boolean;
-    /**
-     * Deny the request shown for review (DW-A09); send the request, then `onDenyResponse`.
-     */
-    deny(): any;
-    constructor(code: string);
-    onDenyResponse(status: number, body: string, retry_after_secs?: number | null): void;
-    onLookupResponse(status: number, body: string, retry_after_secs?: number | null): any;
-    onResponse(status: number, body: string, retry_after_secs?: number | null): any;
-    start(): any;
-}
-
-/**
- * The requesting side of sign in with another device: `initFrame(...)` is the first socket
- * frame, `onFrame(text)` reads each server frame.
- */
-export class AuthDeviceRequest {
-    free(): void;
-    [Symbol.dispose](): void;
-    initFrame(device_name: string | null | undefined, client: string, client_version: string, os: string): string;
-    constructor();
-    /**
-     * `{kind: "waiting", userCode, verificationUri, expiresIn}` or
-     * `{kind: "approved", sessionToken, masterKey: Uint8Array}`.
-     */
-    onFrame(text: string): any;
-}
-
-/**
- * `new AuthSignIn(email, password)`; `start()` then `onResponse(...)` until
- * `{kind: "signed_in", sessionToken}` or `{kind: "second_factor"}`, then `verifyRequest(code)` /
- * `onVerifyResponse(...)`.
- */
-export class AuthSignIn {
-    free(): void;
-    [Symbol.dispose](): void;
-    constructor(email: string, password: string);
-    onResponse(status: number, body: string, retry_after_secs?: number | null): any;
-    /**
-     * The session token; throws `wrong_code` and stays ready for the next code.
-     */
-    onVerifyResponse(status: number, body: string, retry_after_secs?: number | null): string;
-    start(): any;
-    verifyRequest(code: string): any;
-}
-
-/**
- * `new AuthStepUp(password, purpose?, cliCode?)`; `start()`, `onResponse(...)` until
- * `{kind: "confirmed"}`, then `attachConfirmToken(path, body)` gives the consuming request.
- */
-export class AuthStepUp {
-    free(): void;
-    [Symbol.dispose](): void;
-    attachConfirmToken(path: string, body: any): any;
-    constructor(password: string, purpose?: string | null, cli_code?: string | null);
-    onResponse(status: number, body: string, retry_after_secs?: number | null): any;
-    start(): any;
-}
-
 /**
  * Opaque handle holding ONLY the derived client-metadata key (task 1922).
  *
@@ -150,277 +51,6 @@ export class ClientMetaKey {
      * Seal one field. `device_key` must be `null` for field 1 and set for 2-4.
      */
     seal(record_key: string, device_key: string | null | undefined, field: number, plaintext: string): string;
-}
-
-/**
- * `new PhraseRecovery(policyStatus, policyBody, email, phrase)`; `start()` then
- * `onStartResponse`, `evaluate`, `breachRequest` / `onBreachResponse`, `setPassword` (a request),
- * `onRegisterResponse` (a request), `onFinalizeResponse` (`{kind: "signed_in", sessionToken,
- * masterKey}` or `{kind: "sign_in_required"}`).
- */
-export class PhraseRecovery {
-    free(): void;
-    [Symbol.dispose](): void;
-    breachRequest(password: string): any;
-    evaluate(password: string): any;
-    constructor(policy_status: number, policy_body: string, email: string, phrase: string);
-    onBreachResponse(status: number | null | undefined, body: string): any;
-    /**
-     * The last step; the object is spent afterwards.
-     */
-    onFinalizeResponse(status: number, body: string, retry_after_secs?: number | null): any;
-    onRegisterResponse(status: number, body: string, retry_after_secs?: number | null): any;
-    onStartResponse(status: number, body: string, retry_after_secs?: number | null): void;
-    setPassword(password: string, confirmation: string): any;
-    start(): any;
-}
-
-/**
- * `new ShareCreateLink(appUrl, fileId, masterKey, fileKey, expiresInHours?, maxOpens?, passphrase?)`;
- * `start()`, then `onResponse(...)` until `{kind: "created", shareId, link, display}`.
- */
-export class ShareCreateLink {
-    free(): void;
-    [Symbol.dispose](): void;
-    constructor(app_url: string, file_id: string, master_key: Uint8Array, file_key: Uint8Array, expires_in_hours?: number | null, max_opens?: number | null, passphrase?: string | null);
-    onResponse(status: number, body: string, retry_after_secs?: number | null): any;
-    start(): any;
-}
-
-/**
- * `new ShareCreateRequest(appUrl, title, description?, targetFolderId?, maxFiles?, maxTotalBytes?,
- * expiresInSecs?, masterKey)`; `start()`, then `onResponse(...)` → `{id, link, display}`.
- */
-export class ShareCreateRequest {
-    free(): void;
-    [Symbol.dispose](): void;
-    constructor(app_url: string, title: string, description: string | null | undefined, target_folder_id: string | null | undefined, max_files: number | null | undefined, max_total_bytes: number | null | undefined, expires_in_secs: number | null | undefined, master_key: Uint8Array);
-    onResponse(status: number, body: string, retry_after_secs?: number | null): any;
-    start(): any;
-}
-
-/**
- * `new ShareFolderInvite(folderId, email, expectedPeerFingerprint, sharedFoldersWrite, custodySeen,
- * custodyUnreadable, masterKey)` (`expectedPeerFingerprint` REQUIRED: 32 bytes, or empty = not compared)
- * or `ShareFolderInvite.link(folderId, appUrl, accessLevel, label?, expiresInHours?, capBytes?,
- * maxOpens?, passphrase?, custodySeen, custodyUnreadable, masterKey)`; `start()`, then
- * `onResponse(...)` until `{kind: "shared" | "invited" | "awaiting_approval" | "link_created"}`. A
- * `{kind: "send", markCustodySeen}` with an id: persist the id BEFORE sending the request.
- */
-export class ShareFolderInvite {
-    free(): void;
-    [Symbol.dispose](): void;
-    /**
-     * A live folder link (web `createFolderLinkWithKeys`).
-     */
-    static link(folder_id: string, app_url: string, access_level: string, label: string | null | undefined, expires_in_hours: number | null | undefined, cap_bytes: number | null | undefined, max_opens: number | null | undefined, passphrase: string | null | undefined, custody_seen: string[], custody_unreadable: boolean, master_key: Uint8Array): ShareFolderInvite;
-    constructor(folder_id: string, email: string, expected_peer_fingerprint: Uint8Array, shared_folders_write: boolean, custody_seen: string[], custody_unreadable: boolean, master_key: Uint8Array);
-    onResponse(status: number, body: string, retry_after_secs?: number | null): any;
-    start(): any;
-}
-
-/**
- * `new ShareMemberInvite(itemId, isFolder, email, expectedPeerFingerprint, masterKey, fileKey)`;
- * `start()`, then `onResponse(...)` until
- * `{kind: "shared" | "invited" | "awaiting_approval" | "peer_key_changed", inviteId}`.
- * `expectedPeerFingerprint` is REQUIRED: 32 bytes (the compared mark's fingerprint) or an empty
- * `Uint8Array` (not compared). `peer_key_changed`: nothing was sealed.
- */
-export class ShareMemberInvite {
-    free(): void;
-    [Symbol.dispose](): void;
-    constructor(item_id: string, is_folder: boolean, email: string, expected_peer_fingerprint: Uint8Array, master_key: Uint8Array, file_key: Uint8Array);
-    onResponse(status: number, body: string, retry_after_secs?: number | null): any;
-    start(): any;
-}
-
-/**
- * `new SignupFlow(policyStatus, policyBody)`; then the steps in order: `sendCode` /
- * `onCodeSent`, `verifyCode` / `onCodeVerified`, `evaluate`, `breachRequest` / `onBreachResponse`,
- * `setPassword`, `phraseWords`, `acknowledgePhrase`, `challengePositions`, `confirmPhrase`,
- * `registerStart` / `onRegisterStart` / `onRegisterFinish` (`{sessionToken, userId, masterKey}`),
- * `termsRequest`.
- */
-export class SignupFlow {
-    free(): void;
-    [Symbol.dispose](): void;
-    acknowledgePhrase(): void;
-    /**
-     * Take an existing master key instead of a new one; counts as confirmed.
-     */
-    adoptPhrase(phrase: string): void;
-    /**
-     * The breach request for this password, or `null` when the policy declares no check.
-     */
-    breachRequest(password: string): any;
-    /**
-     * 1-based word positions to ask for.
-     */
-    challengePositions(): Uint32Array;
-    confirmPhrase(answers: string[]): void;
-    evaluate(password: string): any;
-    constructor(policy_status: number, policy_body: string);
-    /**
-     * `status` is `undefined` when the endpoint gave no answer. `{kind, count}` or `null`.
-     */
-    onBreachResponse(status: number | null | undefined, body: string): any;
-    onCodeSent(status: number, body: string, retry_after_secs?: number | null): void;
-    onCodeVerified(status: number, body: string, retry_after_secs?: number | null): void;
-    /**
-     * `{sessionToken, userId, masterKey: Uint8Array}`: store, then drop.
-     */
-    onRegisterFinish(status: number, body: string, retry_after_secs?: number | null): any;
-    onRegisterStart(status: number, body: string, retry_after_secs?: number | null): any;
-    /**
-     * The 12 words, for the one-time display.
-     */
-    phraseWords(): string[];
-    registerStart(): any;
-    sendCode(email: string): any;
-    setPassword(password: string, confirmation: string): any;
-    termsRequest(): any;
-    verifyCode(code: string): any;
-    wipe(): void;
-}
-
-/**
- * Account key material stays opaque after device approval. It can answer a
- * proof but has no byte getter.
- */
-export class WasmAccountKeyMaterial {
-    private constructor();
-    free(): void;
-    [Symbol.dispose](): void;
-    answerRecoveryKeyProof(nonce: Uint8Array, server_public: Uint8Array, canonical_email: Uint8Array): Uint8Array;
-    answerSessionKeyProof(nonce: Uint8Array, server_public: Uint8Array, session_id: Uint8Array, account_id: Uint8Array): Uint8Array;
-}
-
-/**
- * One extraction run. The driver acts on each step (create the folder,
- * stage and upload the file, supply bytes, ask for the password) and
- * reports back.
- */
-export class WasmArchiveExtraction {
-    private constructor();
-    free(): void;
-    [Symbol.dispose](): void;
-    cancel(): void;
-    /**
-     * The folder for `create_folder`'s `node` exists, with this id.
-     */
-    folderCreated(node: number, id: string): void;
-    /**
-     * The server answered 409 for `node`'s name: core numbers it again.
-     */
-    folderNameTaken(node: number): void;
-    /**
-     * The archive as the server lists it now (`{file_id,
-     * object_version_id}`): another version stops the run.
-     */
-    identitySeen(identity_js: any): void;
-    /**
-     * The preview model while the run goes and after it ends; `input` as
-     * for the session.
-     */
-    preview(input: any): any;
-    releaseBefore(offset: bigint): void;
-    /**
-     * The run cannot go on: `"storage_full"`, `"network"`, `"damaged"`,
-     * `"changed"` or `"account_blocked"`.
-     */
-    runFailed(reason: string): void;
-    /**
-     * The next step: `{kind}` is `need_bytes`, `need_password`,
-     * `create_folder`, `file_begin`, `file_data` (`bytes` a `Uint8Array`,
-     * not yet verified), `file_end`, `file_skipped`, `progress`, `waiting`
-     * or `finished`.
-     */
-    step(): any;
-    /**
-     * The bytes at `offset`, as for the session.
-     */
-    supply(offset: bigint, bytes: Uint8Array): void;
-    /**
-     * The password the person entered for `need_password`. Supplied at
-     * any other time it is dropped.
-     */
-    supplyPassword(password: string): void;
-    /**
-     * `node`'s upload finished (`ok`) or failed.
-     */
-    uploadFinished(node: number, ok: boolean): void;
-}
-
-/**
- * One archive being listed, previewed and opened. The driver answers each
- * `need_bytes` with `supply` and asks again.
- */
-export class WasmArchiveSession {
-    free(): void;
-    [Symbol.dispose](): void;
-    /**
-     * Whether `password` opens entry `index`: `{kind: "need_bytes", start,
-     * end}`, `"accepted"`, `"wrong"`, `"damaged"` (the entry's headers
-     * are damaged: the password cannot be judged), `"not_needed"` or
-     * `{kind: "io", message}`.
-     */
-    checkPassword(index: number, password: string): any;
-    /**
-     * The listing (`{format, entries, totals, protection, uses_zipcrypto,
-     * complete}`), or `null` before `listed`.
-     */
-    listing(): any;
-    /**
-     * A session for an archive of `len` bytes on `platform` (`"native"`,
-     * `"browser"` or `"mobile_app"`).
-     */
-    constructor(len: bigint, platform: string);
-    /**
-     * Read entry `index` whole, to open it: `{kind: "need_bytes", start,
-     * end}` (supply, then call again with the same index), `{kind:
-     * "bytes", bytes}` once its check passed, `"corrupt"`, `"wrong"`,
-     * `{kind: "skipped", reason}`, `"too_large"` (over the platform's
-     * open budget) or `{kind: "io", message}`. `password` is used when a
-     * read starts.
-     */
-    openEntry(index: number, password?: string | null): any;
-    /**
-     * Plan an extraction of the listed archive: a `WasmExtractionPlan`, or
-     * `{kind: "refused", refusal, text}`. `request`: `{archive_name,
-     * selection: "all" | [path], destination: {siblings, backup_position,
-     * writable}, server_free_bytes, device_free_bytes}`.
-     */
-    plan(request: any): any;
-    /**
-     * The preview model. `input`: `{archive_name, folder, selection,
-     * destination: "next_to" | "choose_folder", password: null | boolean}`.
-     */
-    preview(input: any): any;
-    /**
-     * The preview model with a plan's notes (renamed entries, the browser's
-     * size limit).
-     */
-    previewWithPlan(input: any, plan: WasmExtractionPlan): any;
-    /**
-     * Bytes before `offset` are no longer needed.
-     */
-    releaseBefore(offset: bigint): void;
-    /**
-     * Start extracting `plan`, bound to `identity` (`{file_id,
-     * object_version_id}`); a password from the preview is passed on. The
-     * session moves into the extraction: every later call on it throws.
-     */
-    startExtraction(identity_js: any, plan: WasmExtractionPlan, password?: string | null): WasmArchiveExtraction;
-    /**
-     * `{kind: "need_bytes", start, end}`, `{kind: "listed"}`,
-     * `{kind: "refused", refusal, format, text}` or `{kind: "io", message}`.
-     */
-    step(): any;
-    /**
-     * The bytes at `offset`. Throws when they fall outside the archive or
-     * differ from bytes already supplied there.
-     */
-    supply(offset: bigint, bytes: Uint8Array): void;
 }
 
 /**
@@ -472,17 +102,15 @@ export class WasmBreachCheck {
  * Stateful, single-file streaming decryptor for the web client — the ONE way
  * web should decrypt file content (downloads, previews, shared links).
  *
- * Reads v2 (position-bound) and v1 (legacy) files. Both constructors take the
- * object `decrypt_file_metadata(...)` returned for the version being read
- * (crypto review P2-4): its `chunk_format` (0 = unrecorded, 2 = v2) and,
- * when the record carries one, its version commitment, which frame 0 must
- * match, so the server cannot serve another upload in its place. A missing
- * object, or one with only half a commitment, is refused; a legacy record
- * with no commitment opens v1 content only (the ruling of 2026-11-07). In v2 every frame must
- * be the next chunk in order and from the same upload as chunk 0, and nothing
- * may follow the last one; [`finish`] fails if the file ended before its last
- * chunk (truncation). JS must treat any thrown error — from `pushFrame` or
- * `finish` — as a failed download and discard the plaintext it has buffered.
+ * Reads v2 (position-bound) and v1 (legacy) files. Both constructors take
+ * `expectedChunkFormat` from the file's encrypted metadata
+ * (`decrypt_file_metadata(...).chunk_format`; 0 = unrecorded, 2 = v2): with
+ * 2 only v2 frames open; with 0 (legacy metadata) chunk 0 decides. In v2 every
+ * frame must be the next chunk in order and from the same upload as chunk 0,
+ * and nothing may follow the last one; [`finish`] fails if the file ended
+ * before its last chunk (truncation). JS must treat any thrown error — from
+ * `pushFrame` or `finish` — as a failed download and discard the plaintext it
+ * has buffered.
  *
  * Replaces the per-chunk `decrypt_chunk(fileKey, nonce, ciphertext)` loop for
  * file content: that generic function has no position and can only open v1
@@ -500,22 +128,15 @@ export class WasmChunkDecryptor {
      */
     finish(): any;
     /**
-     * Protected current or historical read. Supply the fields from that
-     * version's own decrypted metadata record.
-     */
-    static forVersion(master_key: Uint8Array, file_id: string, expected_chunk_format: number, version_id: Uint8Array, version_counter: number): WasmChunkDecryptor;
-    /**
      * Decryptor from an already-unwrapped 32-byte file key (share / shared-link
-     * recipients). `file_id` must be the id the file was uploaded under;
-     * `metadata` is what `decrypt_file_metadata_with_key` returned.
+     * recipients). `file_id` must be the id the file was uploaded under.
      */
-    static fromFileKey(file_key: Uint8Array, file_id: string, metadata: any): WasmChunkDecryptor;
+    static fromFileKey(file_key: Uint8Array, file_id: string, expected_chunk_format: number): WasmChunkDecryptor;
     /**
      * Decryptor for the owner: the file key is derived in core from the
-     * 32-byte master key and `file_id`. `metadata` is what
-     * `decrypt_file_metadata` returned for this version.
+     * 32-byte master key and `file_id`.
      */
-    constructor(master_key: Uint8Array, file_id: string, metadata: any);
+    constructor(master_key: Uint8Array, file_id: string, expected_chunk_format: number);
     /**
      * Decrypt the next wire frame (`nonce(12) || ciphertext || tag(16)`),
      * returning its plaintext. Frames must be pushed in order from chunk 0.
@@ -610,11 +231,6 @@ export class WasmChunkEncryptor {
      */
     resumePolicy(stored_format?: number | null): string;
     /**
-     * Protected metadata values after frame 0 has been emitted. The previous
-     * counter is omitted for a new file and supplied for a replacement.
-     */
-    versionCommitment(previous_counter?: number | null): any;
-    /**
      * Create a push-form encryptor with an explicit, server-dictated chunk
      * size. Use this when the v2 upload-init response overrode `chunk_size`
      * so the client plan can't diverge from what the server expects.
@@ -625,9 +241,16 @@ export class WasmChunkEncryptor {
      * returns this encryptor writing in the format the file's recorded pin
      * requires. `recordedPin` = the `chunk_format` from
      * `decrypt_file_metadata` (0 = unrecorded, 2 = v2), never a server field.
-     * Both supported pins produce v2 output; 0 preserves compatibility with
-     * legacy history. Before the first `pushChunk` only; other codes throw. Consumes
+     * A v2 pin forces v2 frames even during the read-only phase; 0 keeps the
+     * default. Before the first `pushChunk` only; other codes throw. Consumes
      * the old JS object — use the returned one.
+     *
+     * **New-file rule (lead ruling 2026-10-17):** pass 2 ONLY when it was
+     * read from an EXISTING file's authenticated metadata. A brand-new file
+     * makes NO call (the default write format applies) and records `format`
+     * in its name; passing 2 for a new file would create a v2 file before the
+     * switch. Core cannot enforce this; the web client keeps a test that its
+     * new-file path never calls this with 2.
      */
     withRecordedPin(recorded_pin: number): WasmChunkEncryptor;
     /**
@@ -650,7 +273,8 @@ export class WasmChunkEncryptor {
      */
     readonly expectedTotalCiphertext: number;
     /**
-     * The chunk format this encryptor writes: 2 = v2. Record it at upload via
+     * The chunk format this encryptor writes: 1 = v1, 2 = v2 (task 1908).
+     * Still 1 during the read-only rollout phase. Record it at upload via
      * `encrypt_name_with_chunk_format` (2 if this is 2, else 0) so readers
      * can pin it.
      */
@@ -827,48 +451,6 @@ export class WasmDownloadPlanner {
 }
 
 /**
- * A plan from `WasmArchiveSession.plan`, for `startExtraction` and the
- * preview.
- */
-export class WasmExtractionPlan {
-    private constructor();
-    free(): void;
-    [Symbol.dispose](): void;
-    /**
-     * The plan as data: `{target, nodes, skipped, renamed, totals, notices}`.
-     */
-    view(): any;
-    /**
-     * `"planned"`, to tell it from a refusal.
-     */
-    readonly kind: string;
-}
-
-/**
- * The new device's side of a link. Send `publicFields().session_id`,
- * `public_key` and `device_name` (the canonical form) to `start_device_link`;
- * render `qr_payload` as the QR and show `typedCode()` next to it.
- */
-export class WasmNewDeviceLink {
-    free(): void;
-    [Symbol.dispose](): void;
-    /**
-     * Typed-code path: answer the approver's message (relayed under role
-     * `approver`). Relay the receiver's `message` under role `new_device`,
-     * then open the approval with it. The attempt consumes this link.
-     */
-    answerTypedCode(approver_message: Uint8Array): WasmTypedReceiver;
-    constructor(session_id: Uint8Array, device_name: string);
-    /**
-     * QR path: open the approval relayed for this link. The link supplies its
-     * own session id and public key; the attempt consumes it.
-     */
-    open(approver_public: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array): WasmAccountKeyMaterial;
-    publicFields(): any;
-    typedCode(): string;
-}
-
-/**
  * An opaque new-item id minted by core for one master key (task 2275, L13).
  *
  * There is no constructor from text and no export that turns arbitrary id text
@@ -1029,7 +611,7 @@ export class WasmSignedUrl {
 /**
  * The signup ceremony state machine, one per signup attempt.
  *
- * Holds the password, the master key (12 words) and the key derived from it inside WASM
+ * Holds the password, the recovery phrase and the master key inside WASM
  * memory in zeroizing buffers. Call `abandon()` when the flow is left (back,
  * cancel, error): freeing the object or waiting for garbage collection wipes
  * it too, but on the finalizer's schedule, which can be much later. See `beebeeb_core::onboarding::ceremony` for the rules.
@@ -1057,20 +639,15 @@ export class WasmSignupCeremony {
      */
     acknowledgePhrase(): void;
     /**
-     * Take an existing master key instead of generating one; counts as confirmed.
+     * Take an existing recovery phrase instead of generating one; counts as confirmed.
      * Throws `crypto` for an invalid phrase, `invalid_state` once confirmed or registering.
      */
     adoptPhrase(phrase: string): void;
     /**
-     * Generate the master key (12 words) and the key derived from it (Argon2id, about a second).
+     * Generate the recovery phrase and master key (Argon2id, about a second).
      * Idempotent.
      */
     beginPhrase(): void;
-    /**
-     * The canonical order of the pre-account ceremony (master key first, then the password), as
-     * `[{ step, spec_step_id }]`. Same as the order `pendingSteps` lists in.
-     */
-    static ceremonyStepOrder(): any;
     /**
      * 1-based word positions to ask for, ascending, stable for this phrase.
      */
@@ -1182,56 +759,6 @@ export class WasmStorageBody {
 }
 
 /**
- * The approver's side of a typed-code attempt, for a browser without a camera.
- * Construct it with the code the person typed and the link detail's
- * `session_id` and `device_name`; relay `message` under role `approver`; pass
- * the new device's answer to `confirm`, and only then `seal`. Show
- * `deviceName` while the person types: `confirm` proves the new device
- * reported it.
- */
-export class WasmTypedApproval {
-    free(): void;
-    [Symbol.dispose](): void;
-    /**
-     * Check the new device's answer (relayed under role `new_device`). Throws
-     * `confirmation_failed` for a wrong code or a changed device name, and
-     * `malformed_answer` for anything that is not an answer; the attempt is
-     * spent either way, so deny the link and start again.
-     */
-    confirm(new_device_message: Uint8Array): void;
-    constructor(typed_code: string, session_id: Uint8Array, device_name: string);
-    /**
-     * Seal the account key for the confirmed new device: `{ nonce, ciphertext }`
-     * for `approve_device_link` (with no `approver_public`). Throws before
-     * `confirm` succeeded.
-     */
-    seal(master_key: Uint8Array): any;
-    readonly deviceName: string;
-    /**
-     * The message to relay under role `approver`.
-     */
-    readonly message: Uint8Array;
-}
-
-/**
- * The new device after it answered a typed-code attempt.
- */
-export class WasmTypedReceiver {
-    private constructor();
-    free(): void;
-    [Symbol.dispose](): void;
-    /**
-     * Open the relayed typed-code approval (`nonce`, `ciphertext` from the
-     * link result). The approver's tag is checked first; one attempt.
-     */
-    open(nonce: Uint8Array, ciphertext: Uint8Array): WasmAccountKeyMaterial;
-    /**
-     * The message to relay under role `new_device`.
-     */
-    readonly message: Uint8Array;
-}
-
-/**
  * An opaque write target issued by `resolveOwnedKey` (task 2275, L13).
  *
  * A replacement is sealed through this handle only: the id, the key and the
@@ -1250,18 +777,7 @@ export class WasmWriteTarget {
      * The chunk-format pin the write must keep (0 = unrecorded, 2 = v2).
      */
     readonly pin: number;
-    readonly versionCounter: number | undefined;
-    readonly versionId: Uint8Array | undefined;
 }
-
-export function answerSessionKeyProof(master_key: Uint8Array, nonce: Uint8Array, server_public: Uint8Array, session_id: Uint8Array, account_id: Uint8Array): Uint8Array;
-
-export function apiDescriptor(name: string, id?: string | null): any;
-
-/**
- * A count as the archive words show it (`1,234`).
- */
-export function archiveCountLabel(n: bigint): string;
 
 /**
  * The archive/extract rule: [`path_safety::archive_component`], the portable
@@ -1269,182 +785,6 @@ export function archiveCountLabel(n: bigint): string;
  * on the call site; it never drops a name silently.
  */
 export function archiveEntryName(name: string): string;
-
-/**
- * A size as the archive words show it (`3.4 MB`).
- */
-export function archiveSizeLabel(bytes: bigint): string;
-
-/**
- * Core's words for `key` with `args` (`{name: value}`, values already
- * formatted): `{key, text, args}`. An unknown key throws.
- */
-export function archiveText(key: string, args: any): any;
-
-/**
- * The action every stopped backup offers: `"Back up again"`.
- */
-export function backupAgainAction(): string;
-
-/**
- * The app rule (spec Amendment 8): the words to show when `mutation` of a row
- * at `position` (`"root" | "device_folder" | "manifest" | "category_folder" |
- * "inside" | "outside"`, from `backupPositionAtDepth`; for `"create"`, the
- * folder the new item goes into) is refused, or `undefined`. A move checks
- * the row with `"move"` and the destination folder with `"create"`.
- */
-export function backupCheckAppMutation(position: string, mutation: string): string | undefined;
-
-/**
- * The drive rule (Explorer, Finder, the iOS Files app), with the same words:
- * nothing at or under the root is changed in a drive surface. `undefined`
- * when allowed. `ownActiveSource`: the original's path when the row is this
- * device's own backup of a folder still being backed up.
- */
-export function backupCheckDriveMutation(position: string, own_active_source: string | null | undefined, mutation: string): string | undefined;
-
-/**
- * The words when the notices could not be read: "Couldn't check — will
- * retry."
- */
-export function backupCheckFailedWords(): string;
-
-/**
- * The server's root rule: the words to show when `mutation` (`"trash" |
- * "delete" | "rename" | "move" | "create" | "write"`) of a row with `role` is
- * refused, or `undefined` when it is allowed. Only the root's trash, delete,
- * rename and move are refused; the web's own views use
- * `backupCheckAppMutation`.
- */
-export function backupCheckRootMutation(role: string | null | undefined, mutation: string): string | undefined;
-
-/**
- * The `lastPassAtMs` of a device with none under this engine yet (spec
- * Amendment 12c): `setupAtMs`, the moment backups were set up on this device,
- * or `legacyLastBackupMs`, an upgraded device's last successful backup under
- * the old engine; with both, the earlier; with neither, 0 (any removal notice
- * stops the backup). Both on the server's clock; a value that is not a whole
- * number of milliseconds throws.
- */
-export function backupFirstPassBaseline(setup_at_ms?: number | null, legacy_last_backup_ms?: number | null): number;
-
-/**
- * `true` for a row no listing ever shows (a device folder's `.device.json`);
- * `depth` and `name` as for `backupPositionAtDepth`.
- */
-export function backupIsHiddenItem(depth: number | null | undefined, name: string): boolean;
-
-/**
- * How far before `lastPassAtMs` a notice still counts, in milliseconds:
- * 600000 (10 minutes). A notice's `created_at` is the start of the server
- * transaction that wrote it, not its commit.
- */
-export function backupNoticeOverlapMs(): number;
-
-/**
- * The reason a `notifications` row (`type`, `data`) gives, or `undefined` for
- * a row that is not a backup notice: to show the notification with
- * `backupStopWords`. A removal whose reason this build does not know is
- * `"unknown_removal"` (its own words, never the "deleted" ones).
- */
-export function backupNoticeReason(kind: string, data: any): string | undefined;
-
-/**
- * The `since` to send to `GET /api/v1/notifications` (integer milliseconds,
- * inclusive): `lastPassAtMs` minus the overlap, never below 0. A value that
- * is not a whole number of milliseconds throws.
- */
-export function backupNoticesSince(last_pass_at_ms: number): number;
-
-/**
- * Parse a decrypted `.device.json` into a plain object: the known fields and
- * every unknown one, as core keeps them.
- */
-export function backupParseManifest(json: string): any;
-
-/**
- * What one pass does before it uploads anything (spec Amendments 12, 12c):
- * `{outcome: "run", stopped: [{category, reason}]}` when the notices were
- * read (as `backupStop`), or `{outcome: "check_failed"}` when
- * `noticesFetchOk` is false (a server or network error, or a page missing):
- * upload nothing, turn nothing off, show `backupCheckFailedWords()`, retry at
- * the next scheduled pass, and keep `lastPassAtMs` where it was. `notices`
- * is not read when the fetch failed.
- *
- * Superseded by `backupPassGateV2` (spec Amendment 12d), for the reason
- * given on `backupStop`. Kept unchanged for v0.2.3 callers.
- */
-export function backupPassGate(notices_fetch_ok: boolean, notices: any, last_pass_at_ms: number, listing: any): any;
-
-/**
- * What one pass does before it uploads anything (spec Amendments 12, 12c,
- * 12d): `{outcome: "run", stopped, acknowledged}` when the notices were read
- * (as `backupStopV2`), or `{outcome: "check_failed"}` when `noticesFetchOk`
- * is false: upload nothing, turn nothing off, show `backupCheckFailedWords()`,
- * retry at the next scheduled pass, and keep both `lastPassAtMs` and the
- * acknowledged set. `notices` is not read when the fetch failed.
- */
-export function backupPassGateV2(notices_fetch_ok: boolean, notices: any, last_pass_at_ms: number, acknowledged: any, listing: any): any;
-
-/**
- * The position of the row `name`, `depth` folders below the flagged root
- * (`null` or `undefined`: not under it): `"outside"`, `"root"` (0),
- * `"device_folder"` (1), `"manifest"` (2, a device folder's `.device.json`),
- * `"category_folder"` (2) or `"inside"` (3 or more).
- */
-export function backupPositionAtDepth(depth: number | null | undefined, name: string): string;
-
-/**
- * One byte per row of a listing (its `system_role`, `""` for none): 1 when
- * the row is the protected root (no trash, delete, rename or move), else 0. A role this
- * build does not know is protected (1), never an error: it fails safe, and the
- * rest of the listing still renders.
- */
-export function backupProtectionMany(roles: string[]): Uint8Array;
-
-/**
- * The badge every client shows on the Backups root (`"Read-only"`).
- */
-export function backupRootBadge(): string;
-
-/**
- * Which backups turn off on this pass, and why (spec Amendment 12, steps
- * 1-4): `[{category, reason}]` in category key order, empty when nothing
- * changes. `notices`: the `notifications` rows (`{type, data,
- * created_at_ms}`); a row that is not a backup notice is skipped whatever its
- * shape, and a backup notice without a whole `created_at_ms` throws. `lastPassAtMs`: on the
- * server's clock, when this device's previous pass started, or when the
- * person last turned a backup on or chose "Back up again" since. `listing`:
- * `{device_folder_id, device_folder_live, folders: [{category,
- * category_folder_id, category_folder_live}]}`. An unknown category key or an
- * id that is not a UUID throws.
- *
- * Superseded by `backupStopV2` (spec Amendment 12d): this strict filter
- * misses a notice whose server transaction was still open when the previous
- * pass read the notices. Kept unchanged for v0.2.3 callers.
- */
-export function backupStop(notices: any, last_pass_at_ms: number, listing: any): any;
-
-/**
- * Which backups turn off on this pass, and why (spec Amendments 12 and
- * 12d): `{stopped: [{category, reason}], acknowledged: [id]}`. A notice
- * counts when its `created_at_ms` is after `lastPassAtMs` minus the overlap
- * and its `id` is not in `acknowledged` (the ids the previous pass returned;
- * empty on a first pass). `acknowledged` in the answer replaces the stored
- * set: store it with the stops and the new `lastPassAtMs`, and keep it when
- * the person chooses "Back up again". `notices`: the rows (`{id, type, data,
- * created_at_ms}`) from `backupNoticesSince(lastPassAtMs)` on, read as for
- * `backupStop`; `listing` as for `backupStop`.
- */
-export function backupStopV2(notices: any, last_pass_at_ms: number, acknowledged: any, listing: any): any;
-
-/**
- * The words a stopped backup shows (spec Amendment 12), followed by the
- * action `backupAgainAction()`. `device` is the device's name and `folder`
- * the folder's display name; the four account-wide reasons name neither. An
- * unknown reason throws.
- */
-export function backupStopWords(reason: string, device: string, folder: string): string;
 
 /**
  * Build `{app_url}/{s|f}/{token}#key={key}`. `route` is `"s"` (the default
@@ -1540,6 +880,11 @@ export function compute_recovery_check(master_key: Uint8Array): Uint8Array;
 export function decodeMetadataEnvelope(payload: string): any;
 
 /**
+ * Decompress gzip-compressed data. Returns `Uint8Array`.
+ */
+export function decompress_gzip(data: Uint8Array): Uint8Array;
+
+/**
  * Decrypt a ciphertext chunk that was produced by `encrypt_chunk`.
  * `key`, `nonce`, and `ciphertext` are raw byte slices.
  *
@@ -1553,13 +898,13 @@ export function decrypt_chunk(key: Uint8Array, nonce: Uint8Array, ciphertext: Ui
  * Random-access open of ONE file-content frame at a known position (seeking
  * readers: video, range previews). `index` is the chunk requested and
  * `is_last = index == chunk_count - 1`; a server that serves another chunk or
- * lies about the count fails the tag. `metadata` is what
- * `decrypt_file_metadata` returned for this version, never a server field:
- * with a version commitment only that upload's v2 frames open; a record
- * without one opens v1 frames only, and a `chunk_format: 2` record without
- * one is refused (the ruling of 2026-11-07).
+ * lies about the count fails the tag. `format` (1 = v1, 2 = v2) must come from
+ * authenticated data (2 when the encrypted metadata records v2, else a
+ * `WasmChunkDecryptor.format` after chunk 0), never from a server field.
+ * `version_id` (12 bytes, v2 only; ignored for v1) is `WasmChunkDecryptor.versionId`
+ * after chunk 0 (or chunk 0's first 12 bytes): another upload's frames fail.
  */
-export function decrypt_chunk_frame(file_key: Uint8Array, file_id: string, metadata: any, index: number, is_last: boolean, frame: Uint8Array): Uint8Array;
+export function decrypt_chunk_frame(file_key: Uint8Array, file_id: string, version_id: Uint8Array, index: number, is_last: boolean, format: number, frame: Uint8Array): Uint8Array;
 
 /**
  * Decrypt a sequence of encrypted chunks and return the concatenated plaintext.
@@ -1707,8 +1052,11 @@ export function directTransferConstants(): any;
  * value sealed for one field as if it were another. The fields are kept
  * apart by PURPOSE SUBKEY: one per-file HKDF subkey per purpose
  * (`beebeeb/name/v1`, `beebeeb/thumb/v1`, `beebeeb/note/v1` in core's
- * `encrypt`). New names, thumbnails and notes are subkey-sealed. Raw-key
- * envelopes remain readable only as unprotected legacy metadata.
+ * `encrypt`). Subkeys apply to a file whose metadata records a v2 pin —
+ * every name, thumbnail and note write for that file is subkey-sealed — and
+ * to every write once the gated core `WRITE_FORMAT` switch flips. Until then
+ * core's `METADATA_SEAL_WRITE` is `Legacy`, so a non-v2 file's names,
+ * thumbnails and notes are sealed under the raw file key.
  *
  * Use `encryptNameForNewItem` / `encryptNameForTarget` for a name,
  * `encryptThumbnailForNewItem` / `encryptThumbnailForTarget` for a
@@ -1731,20 +1079,10 @@ export function encodeMetadataEnvelope(nonce: Uint8Array, ciphertext: Uint8Array
 export function encryptNameForNewItem(item_id: WasmNewItemId, filename: string, mime_type: string | null | undefined, pin: number): string;
 
 /**
- * Protected name metadata for a NEW row after frame 0 was emitted.
- */
-export function encryptNameForNewItemVersion(item_id: WasmNewItemId, filename: string, mime_type: string | null | undefined, pin: number, version_id: Uint8Array, version_counter: number): string;
-
-/**
  * Seal a replacement name through the resolved row's write target. The key and
  * the pin come from the target, so a caller cannot substitute either.
  */
 export function encryptNameForTarget(target: WasmWriteTarget, filename: string, mime_type?: string | null): string;
-
-/**
- * Protected metadata for a replacement version through the resolved target.
- */
-export function encryptNameForTargetVersion(target: WasmWriteTarget, filename: string, mime_type: string | null | undefined, version_id: Uint8Array, version_counter: number): string;
 
 /**
  * Seal a note for a NEW row minted by `newOwnerItemId`/`newForeignItemId`.
@@ -1806,11 +1144,6 @@ export function encrypt_name_for(file_key: Uint8Array, filename: string, mime_ty
 export function encrypt_name_with_chunk_format(master_key: Uint8Array, file_id: string, filename: string, mime_type: string | null | undefined, chunk_format: number): string;
 
 /**
- * Seal protected metadata for a newly written version.
- */
-export function encrypt_name_with_version(master_key: Uint8Array, file_id: string, filename: string, mime_type: string | null | undefined, chunk_format: number, version_id: Uint8Array, version_counter: number): string;
-
-/**
  * Seal a file note for a file with no recorded pin yet (task 1908 round 5):
  * returns the canonical `EncryptedBlob` JSON to store in `note_encrypted` (the
  * shape `serializeEncryptedBlob` writes). Follows the gated seal switch, like
@@ -1856,11 +1189,6 @@ export function encrypt_thumbnail_for(file_key: Uint8Array, plaintext: Uint8Arra
 export function evaluate_password(password: string, min_length: number): any;
 
 /**
- * Web `handleCopyExisting` in core: the request's link, or `undefined`.
- */
-export function fileRequestRebuildLink(app_url: string, master_key: Uint8Array, token?: string | null, wrapped_private_key?: string | null, wrap_nonce?: string | null): string | undefined;
-
-/**
  * Shorten a client-metadata string for sealing: over 1024 UTF-8 bytes, keep
  * the last 1021 bytes on a char boundary behind a leading `…`.
  */
@@ -1890,7 +1218,7 @@ export function formatBinary(bytes: bigint): string;
 export function formatCompact(bytes: bigint, decimals: number): string;
 
 /**
- * Generate a recovery kit PDF with a title, master key words, and metadata.
+ * Generate a recovery kit PDF with a title, recovery words, and metadata.
  *
  * `metadata_keys` and `metadata_values` are parallel arrays of key-value pairs.
  * Returns the raw PDF bytes as `Uint8Array`.
@@ -1898,7 +1226,7 @@ export function formatCompact(bytes: bigint, decimals: number): string;
 export function generate_recovery_pdf(title: string, words: any, metadata_keys: any, metadata_values: any): Uint8Array;
 
 /**
- * Generate a new master key (12 BIP39 words) and the corresponding derived
+ * Generate a new 12-word BIP39 recovery phrase and the corresponding master
  * key. Returns `{ phrase: string, master_key: Uint8Array }`.
  */
 export function generate_recovery_phrase(): any;
@@ -1928,6 +1256,19 @@ export function is_previewable(mime_type?: string | null): boolean;
 export function is_previewable_by_extension(filename: string): boolean;
 
 /**
+ * List entries in an archive, detecting format from the filename extension.
+ * Supports `.tar`, `.gz`, `.tgz`, `.tar.gz`.
+ * Returns a JS array of `{ name: string, size: number, is_directory: boolean }`.
+ */
+export function list_archive(data: Uint8Array, filename: string): any;
+
+/**
+ * List entries in a TAR archive from raw bytes.
+ * Returns a JS array of `{ name: string, size: number, is_directory: boolean }`.
+ */
+export function list_tar_entries(data: Uint8Array): any;
+
+/**
  * The ciphertext bytes a process of `class` (`"native"`, `"browser"`, `"mobile_app"`,
  * `"mobile_extension"`) may hold at once. Throws `class_invalid` for any other string.
  */
@@ -1952,17 +1293,12 @@ export function newForeignItemId(master_key: Uint8Array): WasmNewItemId;
 export function newOwnerItemId(master_key: Uint8Array): WasmNewItemId;
 
 /**
- * An account email in the server's stored form (Rust `str::trim`, then
- * Unicode lower case). Use it for every email that names a contact or a pin.
- */
-export function normalizeEmail(raw: string): string;
-
-/**
  * Finish OPAQUE client login. Returns `{ message: Uint8Array, session_key: Uint8Array, export_key: Uint8Array }`.
  *
- * Normal login accepts only the current KSF version (1). A server-supplied
- * legacy or unknown version is rejected; legacy accounts require the explicit
- * migration path in core.
+ * `ksf_version` selects the KSF the account's password file was registered
+ * under (0 = legacy Identity KSF, anything else = current Argon2id). The web
+ * client reads it from the login-start response (`server_state` JSON) and
+ * passes it through verbatim. The KSF must match or finish fails.
  */
 export function opaque_login_finish(client_state: Uint8Array, password: Uint8Array, server_response: Uint8Array, ksf_version: number): any;
 
@@ -2100,38 +1436,6 @@ export function parseRetryAfter(value: string): any;
 export function parseShareLink(url: string): any;
 
 /**
- * The `vault-key-escrow` body for a credential id and a blob.
- */
-export function passkeyEscrowBody(credential_id: Uint8Array, blob: Uint8Array): string;
-
-/**
- * `login-start`'s answer → `AssertionStart` JSON. The server's `rpId` must equal `expectedRpId`
- * (`passkey_rp_mismatch` otherwise); `allowLocalhost` is the explicit development flag.
- */
-export function passkeyParseAssertionStart(answer_json: string, expected_rp_id: string, allow_localhost: boolean): string;
-
-/**
- * `register-start`'s answer → `RegistrationStart` JSON. The server's `rp.id` must equal `expectedRpId`
- * (`passkey_rp_mismatch` otherwise); `allowLocalhost` is the explicit development flag.
- */
-export function passkeyParseRegistrationStart(answer_json: string, expected_rp_id: string, allow_localhost: boolean): string;
-
-/**
- * The PRF eval input web passes as `prf.eval.first`.
- */
-export function passkeyPrfEvalInput(): Uint8Array;
-
-/**
- * Open an escrow blob with a PRF output. Returns the 32-byte vault key (the WASM boundary's raw-key convention).
- */
-export function passkeyUnwrapVaultKey(prf_output: Uint8Array, blob: Uint8Array): Uint8Array;
-
-/**
- * Wrap the vault key under a PRF output: the escrow blob (`nonce || ct || tag`).
- */
-export function passkeyWrapVaultKey(prf_output: Uint8Array, master_key: Uint8Array): Uint8Array;
-
-/**
  * The shared retry policy of the pinned per-chunk route (4 attempts, 150 s of waiting in all, a
  * stated `Retry-After` kept, otherwise 1 s doubling). `outcome` is what `classifyDirectAnswer`
  * returned for `call: "pinned_chunk"`; `attempt` is the 1-based number of the attempt that just
@@ -2187,15 +1491,10 @@ export function plan_monthly_cost_cents(plan_slug: string, extra_tb: bigint, ext
 export function previewableBatchFor(names: string[], platform: string): Uint8Array;
 
 /**
- * Recover the derived key from the 12 words of a master key.
+ * Recover a master key from a 12-word BIP39 recovery phrase.
  * Returns the 32-byte master key as `Uint8Array`.
  */
 export function recover_from_phrase(phrase: string): Uint8Array;
-
-/**
- * 0-based positions of words that are not BIP39 words (DW-A47's per-word hint).
- */
-export function recoveryUnknownWordPositions(words: string[]): Uint32Array;
 
 /**
  * A URL for a log line: scheme and host only.
@@ -2295,27 +1594,9 @@ export function retryPolicy(): any;
 export function sanitizePathComponent(name: string): string;
 
 /**
- * QR path, approver side: the new device's name as its scanned QR carries
- * it. Show this name while the person confirms, never the relay's
- * `device_name`. Throws for text that is not a Beebeeb device-link QR.
- */
-export function scannedDeviceLinkName(scanned_qr: string): string;
-
-/**
  * Text that may contain URLs, made safe to print.
  */
 export function scrubText(text: string): string;
-
-/**
- * QR path, approver side. `scanned_qr` is the raw text the camera read from
- * the new device's screen; core parses it, so no fingerprint or name bytes
- * come from JavaScript. Never build that text from server data: the typed
- * code gives no protection against a substituted key on this path. Without a
- * camera, use `WasmTypedApproval`. `relayed_device_name` is the name the
- * relay reports for the link: a name that differs from the scanned one
- * throws `device_name_changed` before anything is sealed; deny the link.
- */
-export function sealDeviceLink(master_key: Uint8Array, scanned_qr: string, relayed_public: Uint8Array, relayed_device_name: string, typed_code: string): any;
 
 /**
  * Seal a guest's display name under the folder key, bound to the shared root.
@@ -2348,11 +1629,6 @@ export function sealFolderActorName(folder_key: Uint8Array, shared_folder_id: st
 export function sealRequestRename(master_key: Uint8Array, item_id: string, pin: number, filename: string, mime_type?: string | null): string;
 
 /**
- * Protected request-row rename preserving the resolver's version fields.
- */
-export function sealRequestRenameWithVersion(master_key: Uint8Array, item_id: string, pin: number, version_id: Uint8Array, version_counter: number, filename: string, mime_type?: string | null): string;
-
-/**
  * Seal a content key to a request's public key (anonymous uploader path).
  * `r_pub` and `content_key` are 32 bytes; `file_id` is arbitrary bytes.
  * Returns `{ e_pub: Uint8Array, wrapped_key: Uint8Array }`.
@@ -2369,67 +1645,10 @@ export function seal_to_request(r_pub: Uint8Array, file_id: Uint8Array, content_
 export function searchIndexSyncPlan(local: any, remote: any, local_is_authoritative: boolean): any;
 
 /**
- * Approve a claimed file invite later: `shareApproveFileInviteRequest(inviteId, fileId,
- * recipientPublicKeyB64, masterKey, fileKey, expectedPeerFingerprint)` returns
- * `{request, recipientPublicKey}` (hex: the exact key sealed to). `expectedPeerFingerprint` is
- * REQUIRED (32 bytes, or empty = not compared). After `peer_key_changed` and "share anyway", pass
- * the key the refusal carried and the fingerprint of those bytes, never a re-fetched key.
- */
-export function shareApproveFileInviteRequest(invite_id: string, file_id: string, recipient_public_key_b64: string, master_key: Uint8Array, file_key: Uint8Array, expected_peer_fingerprint: Uint8Array): any;
-
-/**
- * `shareCreateBundle(appUrl, fileIds, positions, fileKeys, masterKey, expiresInHours?, maxOpens?, passphrase?)`:
- * a `ShareCreateLink` over an ordered set of files (web's bundle branch). `fileKeys` is the
- * concatenation of each item's 32-byte key, in the order of `fileIds`.
- */
-export function shareCreateBundle(app_url: string, file_ids: string[], positions: Uint32Array, file_keys: Uint8Array, master_key: Uint8Array, expires_in_hours?: number | null, max_opens?: number | null, passphrase?: string | null): ShareCreateLink;
-
-/**
  * Decode a `#key=` value as bytes, accepting standard base64 (legacy links) and
  * base64url (current links), padded or unpadded; `null` when it is neither.
  */
 export function shareKeyBytes(key: string): any;
-
-/**
- * The recipient side of a person share.
- */
-export function shareOpenMemberFileKey(master_key: Uint8Array, owner_public_key: Uint8Array, file_id: string, sealed: Uint8Array): Uint8Array;
-
-/**
- * [`share_rebuild_link`] for a bundle (no single wrapped file key).
- */
-export function shareRebuildBundleLink(app_url: string, master_key: Uint8Array, owner_wrapped_key?: string | null, owner_wrapped_token?: string | null): string | undefined;
-
-/**
- * Web `rebuildFolderLinkUrl` in core: the owner's folder link, or `undefined`.
- */
-export function shareRebuildFolderLink(app_url: string, master_key: Uint8Array, share_id: string, owner_wrapped_key: string | null | undefined, owner_wrapped_token: string | null | undefined, wrapped_folder_key: string | null | undefined, passphrase_protected: boolean): string | undefined;
-
-/**
- * The owner's working link from a share's owner blobs; `undefined` when it can't be rebuilt.
- * `wrappedFileKey` (the link's stored `wrapped_file_key`, required) must open under the rebuilt link
- * key. A bundle uses `shareRebuildBundleLink`.
- */
-export function shareRebuildLink(app_url: string, master_key: Uint8Array, owner_wrapped_key: string | null | undefined, owner_wrapped_token: string | null | undefined, wrapped_file_key: string): string | undefined;
-
-/**
- * `shareSafetyNumber(masterKey, ownUserId, peerUserId, peerPublicKey)` →
- * `{ digits: "60 digits", peerFingerprint: "<SHA-256 of the peer key, hex>" }`. The own sharing
- * key is derived from the master key in core; `peerPublicKey` is the key the share was sealed to.
- */
-export function shareSafetyNumber(master_key: Uint8Array, own_user_id: string, peer_user_id: string, peer_public_key: Uint8Array): any;
-
-export function shareUnwrapKey(wrap_key: Uint8Array, wrapped: Uint8Array): Uint8Array;
-
-/**
- * Web's `wrapKeyForShare` in core: `nonce(12) || ciphertext`, no AAD.
- */
-export function shareWrapKey(wrap_key: Uint8Array, plaintext: Uint8Array): Uint8Array;
-
-/**
- * The request for the server's sign-up policy (`GET /api/v1/onboarding`).
- */
-export function signupPolicyRequest(): any;
 
 /**
  * The most a storage GET of `len` ciphertext bytes may take, in milliseconds (the same formula as a PUT).
@@ -2617,101 +1836,21 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly __wbg_accountflow_free: (a: number, b: number) => void;
-    readonly __wbg_authapproval_free: (a: number, b: number) => void;
-    readonly __wbg_authdevicerequest_free: (a: number, b: number) => void;
-    readonly __wbg_authsignin_free: (a: number, b: number) => void;
-    readonly __wbg_authstepup_free: (a: number, b: number) => void;
     readonly __wbg_clientmetakey_free: (a: number, b: number) => void;
-    readonly __wbg_phraserecovery_free: (a: number, b: number) => void;
-    readonly __wbg_sharecreatelink_free: (a: number, b: number) => void;
-    readonly __wbg_sharecreaterequest_free: (a: number, b: number) => void;
-    readonly __wbg_sharefolderinvite_free: (a: number, b: number) => void;
-    readonly __wbg_sharememberinvite_free: (a: number, b: number) => void;
-    readonly __wbg_signupflow_free: (a: number, b: number) => void;
-    readonly __wbg_wasmaccountkeymaterial_free: (a: number, b: number) => void;
-    readonly __wbg_wasmarchiveextraction_free: (a: number, b: number) => void;
-    readonly __wbg_wasmarchivesession_free: (a: number, b: number) => void;
     readonly __wbg_wasmbreachcheck_free: (a: number, b: number) => void;
     readonly __wbg_wasmchunkdecryptor_free: (a: number, b: number) => void;
     readonly __wbg_wasmchunkencryptor_free: (a: number, b: number) => void;
     readonly __wbg_wasmdirectdiscoverycache_free: (a: number, b: number) => void;
     readonly __wbg_wasmdirecthealth_free: (a: number, b: number) => void;
     readonly __wbg_wasmdownloadplanner_free: (a: number, b: number) => void;
-    readonly __wbg_wasmextractionplan_free: (a: number, b: number) => void;
-    readonly __wbg_wasmnewdevicelink_free: (a: number, b: number) => void;
     readonly __wbg_wasmnewitemid_free: (a: number, b: number) => void;
     readonly __wbg_wasmrequestcontentreader_free: (a: number, b: number) => void;
     readonly __wbg_wasmsearchindex_free: (a: number, b: number) => void;
     readonly __wbg_wasmsignedurl_free: (a: number, b: number) => void;
     readonly __wbg_wasmsignupceremony_free: (a: number, b: number) => void;
     readonly __wbg_wasmstoragebody_free: (a: number, b: number) => void;
-    readonly __wbg_wasmtypedapproval_free: (a: number, b: number) => void;
-    readonly __wbg_wasmtypedreceiver_free: (a: number, b: number) => void;
     readonly __wbg_wasmwritetarget_free: (a: number, b: number) => void;
-    readonly accountflow_abandon: (a: number) => void;
-    readonly accountflow_changeEmail: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
-    readonly accountflow_changePassword: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
-    readonly accountflow_deleteAccount: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly accountflow_deleteCancel: (a: number, b: number, c: number, d: number) => void;
-    readonly accountflow_deleteConfirm: (a: number, b: number, c: number, d: number) => void;
-    readonly accountflow_new: () => number;
-    readonly accountflow_regenerateBackupCodes: (a: number, b: number, c: number, d: number) => void;
-    readonly accountflow_resume: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly accountflow_revokeOtherSessions: (a: number, b: number) => void;
-    readonly accountflow_revokeSession: (a: number, b: number, c: number, d: number) => void;
-    readonly accountflow_setActivityLogging: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly accountflow_setDisplayName: (a: number, b: number, c: number, d: number) => void;
-    readonly accountflow_totpConfirm: (a: number, b: number, c: number, d: number) => void;
-    readonly accountflow_totpDisable: (a: number, b: number, c: number, d: number) => void;
-    readonly accountflow_totpSetup: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly accountflow_verifyEmail: (a: number, b: number, c: number, d: number) => void;
-    readonly accountflow_verifyPassword: (a: number, b: number, c: number, d: number) => void;
-    readonly answerSessionKeyProof: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
-    readonly apiDescriptor: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly archiveCountLabel: (a: number, b: bigint) => void;
     readonly archiveEntryName: (a: number, b: number, c: number) => void;
-    readonly archiveSizeLabel: (a: number, b: bigint) => void;
-    readonly archiveText: (a: number, b: number, c: number, d: number) => void;
-    readonly authapproval_approve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
-    readonly authapproval_codeMatches: (a: number, b: number, c: number) => number;
-    readonly authapproval_deny: (a: number, b: number) => void;
-    readonly authapproval_new: (a: number, b: number, c: number) => void;
-    readonly authapproval_onDenyResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly authapproval_onLookupResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly authapproval_onResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly authapproval_start: (a: number, b: number) => void;
-    readonly authdevicerequest_initFrame: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
-    readonly authdevicerequest_new: () => number;
-    readonly authdevicerequest_onFrame: (a: number, b: number, c: number, d: number) => void;
-    readonly authsignin_new: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly authsignin_onResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly authsignin_onVerifyResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly authsignin_start: (a: number, b: number) => void;
-    readonly authsignin_verifyRequest: (a: number, b: number, c: number, d: number) => void;
-    readonly authstepup_attachConfirmToken: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly authstepup_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly authstepup_onResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly authstepup_start: (a: number, b: number) => void;
-    readonly backupAgainAction: (a: number) => void;
-    readonly backupCheckAppMutation: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly backupCheckDriveMutation: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly backupCheckFailedWords: (a: number) => void;
-    readonly backupCheckRootMutation: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly backupFirstPassBaseline: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly backupIsHiddenItem: (a: number, b: number, c: number) => number;
-    readonly backupNoticeOverlapMs: () => number;
-    readonly backupNoticeReason: (a: number, b: number, c: number, d: number) => void;
-    readonly backupNoticesSince: (a: number, b: number) => void;
-    readonly backupParseManifest: (a: number, b: number, c: number) => void;
-    readonly backupPassGate: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly backupPassGateV2: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly backupPositionAtDepth: (a: number, b: number, c: number, d: number) => void;
-    readonly backupProtectionMany: (a: number, b: number, c: number) => void;
-    readonly backupRootBadge: (a: number) => void;
-    readonly backupStop: (a: number, b: number, c: number, d: number) => void;
-    readonly backupStopV2: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly backupStopWords: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly buildShareLink: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly checkPathComponent: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly checkStorageBody: (a: number, b: number, c: number) => void;
@@ -2726,8 +1865,9 @@ export interface InitOutput {
     readonly combineFolderLinkKey: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly compute_recovery_check: (a: number, b: number, c: number) => void;
     readonly decodeMetadataEnvelope: (a: number, b: number, c: number) => void;
+    readonly decompress_gzip: (a: number, b: number, c: number) => void;
     readonly decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly decrypt_chunk_frame: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+    readonly decrypt_chunk_frame: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
     readonly decrypt_chunks: (a: number, b: number, c: number, d: number) => void;
     readonly decrypt_file_metadata: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly decrypt_file_metadata_with_key: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -2749,9 +1889,7 @@ export interface InitOutput {
     readonly directTransferConstants: (a: number) => void;
     readonly encodeMetadataEnvelope: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encryptNameForNewItem: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly encryptNameForNewItemVersion: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly encryptNameForTarget: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly encryptNameForTargetVersion: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly encryptNoteForNewItem: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encryptNoteForTarget: (a: number, b: number, c: number, d: number) => void;
     readonly encryptThumbnailForNewItem: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -2760,13 +1898,11 @@ export interface InitOutput {
     readonly encrypt_metadata: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_name_for: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly encrypt_name_with_chunk_format: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
-    readonly encrypt_name_with_version: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => void;
     readonly encrypt_note: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_note_for: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly encrypt_thumbnail: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_thumbnail_for: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly evaluate_password: (a: number, b: number, c: number, d: number) => void;
-    readonly fileRequestRebuildLink: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
     readonly fitForSeal: (a: number, b: number, c: number) => void;
     readonly folder_key_id: (a: number, b: number, c: number) => void;
     readonly formatBinary: (a: number, b: bigint) => void;
@@ -2777,11 +1913,12 @@ export interface InitOutput {
     readonly isForeignItemId: (a: number, b: number, c: number) => void;
     readonly is_previewable: (a: number, b: number) => number;
     readonly is_previewable_by_extension: (a: number, b: number) => number;
+    readonly list_archive: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly list_tar_entries: (a: number, b: number, c: number) => void;
     readonly maxInFlightBytes: (a: number, b: number, c: number) => void;
     readonly mintGuestItemId: (a: number) => void;
     readonly newForeignItemId: (a: number, b: number, c: number) => void;
     readonly newOwnerItemId: (a: number, b: number, c: number) => void;
-    readonly normalizeEmail: (a: number, b: number, c: number) => void;
     readonly opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly opaque_login_start: (a: number, b: number, c: number) => void;
     readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
@@ -2797,21 +1934,6 @@ export interface InitOutput {
     readonly parseDirectDiscovery: (a: number, b: number, c: number) => void;
     readonly parseRetryAfter: (a: number, b: number) => number;
     readonly parseShareLink: (a: number, b: number, c: number) => void;
-    readonly passkeyEscrowBody: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly passkeyParseAssertionStart: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly passkeyParseRegistrationStart: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly passkeyPrfEvalInput: (a: number) => void;
-    readonly passkeyUnwrapVaultKey: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly passkeyWrapVaultKey: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly phraserecovery_breachRequest: (a: number, b: number, c: number, d: number) => void;
-    readonly phraserecovery_evaluate: (a: number, b: number, c: number, d: number) => void;
-    readonly phraserecovery_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
-    readonly phraserecovery_onBreachResponse: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly phraserecovery_onFinalizeResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly phraserecovery_onRegisterResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly phraserecovery_onStartResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly phraserecovery_setPassword: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly phraserecovery_start: (a: number, b: number) => void;
     readonly pinnedRetryDecision: (a: number, b: number, c: number, d: number) => void;
     readonly plan_base_storage_bytes: (a: number, b: number) => bigint;
     readonly plan_can_add_storage: (a: number, b: number) => number;
@@ -2821,7 +1943,6 @@ export interface InitOutput {
     readonly plan_monthly_cost_cents: (a: number, b: number, c: bigint, d: bigint) => bigint;
     readonly previewableBatchFor: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly recover_from_phrase: (a: number, b: number, c: number) => void;
-    readonly recoveryUnknownWordPositions: (a: number, b: number, c: number) => void;
     readonly redactUrl: (a: number, b: number, c: number) => void;
     readonly resolveOwnedKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number) => void;
     readonly resolveRequestRow: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number) => void;
@@ -2832,57 +1953,12 @@ export interface InitOutput {
     readonly retryJitteredDelayMs: (a: number, b: number, c: number, d: number) => void;
     readonly retryPolicy: (a: number) => void;
     readonly sanitizePathComponent: (a: number, b: number, c: number) => void;
-    readonly scannedDeviceLinkName: (a: number, b: number, c: number) => void;
     readonly scrubText: (a: number, b: number, c: number) => void;
-    readonly sealDeviceLink: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
     readonly sealFolderActorName: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly sealRequestRename: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
-    readonly sealRequestRenameWithVersion: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => void;
     readonly seal_to_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly searchIndexSyncPlan: (a: number, b: number, c: number, d: number) => void;
-    readonly shareApproveFileInviteRequest: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => void;
-    readonly shareCreateBundle: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => void;
     readonly shareKeyBytes: (a: number, b: number) => number;
-    readonly shareOpenMemberFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-    readonly shareRebuildBundleLink: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-    readonly shareRebuildFolderLink: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
-    readonly shareRebuildLink: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
-    readonly shareSafetyNumber: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-    readonly shareUnwrapKey: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly shareWrapKey: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly sharecreatelink_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => void;
-    readonly sharecreatelink_onResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly sharecreatelink_start: (a: number, b: number) => void;
-    readonly sharecreaterequest_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => void;
-    readonly sharecreaterequest_onResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly sharecreaterequest_start: (a: number, b: number) => void;
-    readonly sharefolderinvite_link: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number) => void;
-    readonly sharefolderinvite_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => void;
-    readonly sharefolderinvite_onResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly sharefolderinvite_start: (a: number, b: number) => void;
-    readonly sharememberinvite_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
-    readonly sharememberinvite_onResponse: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly sharememberinvite_start: (a: number, b: number) => void;
-    readonly signupPolicyRequest: (a: number) => void;
-    readonly signupflow_acknowledgePhrase: (a: number, b: number) => void;
-    readonly signupflow_adoptPhrase: (a: number, b: number, c: number, d: number) => void;
-    readonly signupflow_breachRequest: (a: number, b: number, c: number, d: number) => void;
-    readonly signupflow_challengePositions: (a: number, b: number) => void;
-    readonly signupflow_confirmPhrase: (a: number, b: number, c: number, d: number) => void;
-    readonly signupflow_evaluate: (a: number, b: number, c: number, d: number) => void;
-    readonly signupflow_new: (a: number, b: number, c: number, d: number) => void;
-    readonly signupflow_onBreachResponse: (a: number, b: number, c: number, d: number) => number;
-    readonly signupflow_onCodeSent: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly signupflow_onCodeVerified: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly signupflow_onRegisterFinish: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly signupflow_onRegisterStart: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly signupflow_phraseWords: (a: number, b: number) => void;
-    readonly signupflow_registerStart: (a: number, b: number) => void;
-    readonly signupflow_sendCode: (a: number, b: number, c: number, d: number) => void;
-    readonly signupflow_setPassword: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly signupflow_termsRequest: (a: number, b: number) => void;
-    readonly signupflow_verifyCode: (a: number, b: number, c: number, d: number) => void;
-    readonly signupflow_wipe: (a: number) => void;
     readonly storageGetTotalMs: (a: number, b: number) => void;
     readonly storagePutTotalMs: (a: number, b: number) => void;
     readonly storage_format_si: (a: number, b: bigint) => void;
@@ -2903,36 +1979,11 @@ export interface InitOutput {
     readonly unwrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-    readonly wasmaccountkeymaterial_answerRecoveryKeyProof: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
-    readonly wasmaccountkeymaterial_answerSessionKeyProof: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
-    readonly wasmarchiveextraction_cancel: (a: number) => void;
-    readonly wasmarchiveextraction_folderCreated: (a: number, b: number, c: number, d: number) => void;
-    readonly wasmarchiveextraction_folderNameTaken: (a: number, b: number) => void;
-    readonly wasmarchiveextraction_identitySeen: (a: number, b: number, c: number) => void;
-    readonly wasmarchiveextraction_preview: (a: number, b: number, c: number) => void;
-    readonly wasmarchiveextraction_releaseBefore: (a: number, b: bigint) => void;
-    readonly wasmarchiveextraction_runFailed: (a: number, b: number, c: number, d: number) => void;
-    readonly wasmarchiveextraction_step: (a: number, b: number) => void;
-    readonly wasmarchiveextraction_supply: (a: number, b: number, c: bigint, d: number, e: number) => void;
-    readonly wasmarchiveextraction_supplyPassword: (a: number, b: number, c: number) => void;
-    readonly wasmarchiveextraction_uploadFinished: (a: number, b: number, c: number) => void;
-    readonly wasmarchivesession_checkPassword: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmarchivesession_listing: (a: number, b: number) => void;
-    readonly wasmarchivesession_new: (a: number, b: bigint, c: number, d: number) => void;
-    readonly wasmarchivesession_openEntry: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmarchivesession_plan: (a: number, b: number, c: number) => void;
-    readonly wasmarchivesession_preview: (a: number, b: number, c: number) => void;
-    readonly wasmarchivesession_previewWithPlan: (a: number, b: number, c: number, d: number) => void;
-    readonly wasmarchivesession_releaseBefore: (a: number, b: number, c: bigint) => void;
-    readonly wasmarchivesession_startExtraction: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly wasmarchivesession_step: (a: number, b: number) => void;
-    readonly wasmarchivesession_supply: (a: number, b: number, c: bigint, d: number, e: number) => void;
     readonly wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wasmbreachcheck_new: (a: number, b: number) => number;
     readonly wasmbreachcheck_prefix: (a: number, b: number) => void;
     readonly wasmchunkdecryptor_chunksDecrypted: (a: number) => number;
     readonly wasmchunkdecryptor_finish: (a: number, b: number) => void;
-    readonly wasmchunkdecryptor_forVersion: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly wasmchunkdecryptor_format: (a: number) => number;
     readonly wasmchunkdecryptor_fromFileKey: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmchunkdecryptor_new: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
@@ -2949,7 +2000,6 @@ export interface InitOutput {
     readonly wasmchunkencryptor_new: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: number, h: number) => void;
     readonly wasmchunkencryptor_pushChunk: (a: number, b: number, c: number, d: number) => void;
     readonly wasmchunkencryptor_resumePolicy: (a: number, b: number, c: number) => void;
-    readonly wasmchunkencryptor_versionCommitment: (a: number, b: number, c: number, d: number) => void;
     readonly wasmchunkencryptor_withChunkSize: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: bigint) => void;
     readonly wasmchunkencryptor_withRecordedPin: (a: number, b: number, c: number) => void;
     readonly wasmdirectdiscoverycache_lookup: (a: number, b: number, c: number) => void;
@@ -2978,13 +2028,6 @@ export interface InitOutput {
     readonly wasmdownloadplanner_windowAnswered: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wasmdownloadplanner_windowFailed: (a: number, b: number, c: number, d: number) => void;
     readonly wasmdownloadplanner_windowMalformed: (a: number) => void;
-    readonly wasmextractionplan_kind: (a: number, b: number) => void;
-    readonly wasmextractionplan_view: (a: number, b: number) => void;
-    readonly wasmnewdevicelink_answerTypedCode: (a: number, b: number, c: number, d: number) => void;
-    readonly wasmnewdevicelink_new: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmnewdevicelink_open: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
-    readonly wasmnewdevicelink_publicFields: (a: number, b: number) => void;
-    readonly wasmnewdevicelink_typedCode: (a: number, b: number) => void;
     readonly wasmnewitemid_idText: (a: number, b: number) => void;
     readonly wasmnewitemid_tag: (a: number, b: number) => void;
     readonly wasmrequestcontentreader_chunkFormat: (a: number) => number;
@@ -3011,7 +2054,6 @@ export interface InitOutput {
     readonly wasmsignupceremony_acknowledgePhrase: (a: number, b: number) => void;
     readonly wasmsignupceremony_adoptPhrase: (a: number, b: number, c: number, d: number) => void;
     readonly wasmsignupceremony_beginPhrase: (a: number, b: number) => void;
-    readonly wasmsignupceremony_ceremonyStepOrder: (a: number) => void;
     readonly wasmsignupceremony_challengePositions: (a: number, b: number) => void;
     readonly wasmsignupceremony_confirmPhrase: (a: number, b: number, c: number) => void;
     readonly wasmsignupceremony_emailChanged: (a: number) => void;
@@ -3029,17 +2071,8 @@ export interface InitOutput {
     readonly wasmstoragebody_finish: (a: number, b: number) => void;
     readonly wasmstoragebody_fromHead: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wasmstoragebody_push: (a: number, b: number, c: number) => void;
-    readonly wasmtypedapproval_confirm: (a: number, b: number, c: number, d: number) => void;
-    readonly wasmtypedapproval_deviceName: (a: number, b: number) => void;
-    readonly wasmtypedapproval_message: (a: number, b: number) => void;
-    readonly wasmtypedapproval_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly wasmtypedapproval_seal: (a: number, b: number, c: number, d: number) => void;
-    readonly wasmtypedreceiver_message: (a: number, b: number) => void;
-    readonly wasmtypedreceiver_open: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmwritetarget_itemId: (a: number, b: number) => void;
     readonly wasmwritetarget_pin: (a: number) => number;
-    readonly wasmwritetarget_versionCounter: (a: number, b: number) => void;
-    readonly wasmwritetarget_versionId: (a: number, b: number) => void;
     readonly wrapFolderChild: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly wrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;

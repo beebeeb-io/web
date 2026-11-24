@@ -1,6 +1,6 @@
 // The crypto facade: named re-exports of the key, chunk, and folder-link primitives.
 import * as Comlink from 'comlink'
-import type { ContentPin, ContentVersion, DecryptSummary, PinnedMetadata } from './content-crypto'
+import type { ContentPin, DecryptSummary, PinnedMetadata } from './content-crypto'
 import type { ContentKey } from './request-row'
 import { withProxy } from './crypto/service'
 import { fromBase64, toBase64, x25519SharedSecret, zeroize } from './crypto/helpers'
@@ -110,7 +110,6 @@ export {
   type ContentPin,
   type DecryptSummary,
   type PinnedMetadata,
-  type ContentVersion,
 } from './content-crypto'
 
 /**
@@ -424,12 +423,11 @@ export async function startDecryptStream(
   fileKey: ContentKey,
   fileId: string,
   pin: ContentPin,
-  version?: ContentVersion | null,
 ): Promise<StreamDecryptor> {
   if (!(fileKey instanceof Uint8Array)) {
     return await fileKey.startStream()
   }
-  const handle = await withProxy((p) => p.createDecryptor(fileKey, fileId, pin, version))
+  const handle = await withProxy((p) => p.createDecryptor(fileKey, fileId, pin))
   return new StreamingDecryptor(handle)
 }
 
