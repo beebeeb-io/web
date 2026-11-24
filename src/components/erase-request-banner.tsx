@@ -12,7 +12,7 @@ import { createBannerController, type BannerCard, type BannerController } from '
  * web app with a Cancel button.
  *
  * The request is made on the locked screen. A person who confirms it and then finds their
- * recovery phrase (or signs in on a device that holds the key) no longer sees that screen; without
+ * master key (or signs in on a device that holds the key) no longer sees that screen; without
  * this banner the drive showed nothing at all while every file was about to move to the trash.
  * With it, the copy elsewhere can say truthfully where cancelling works: on the locked screen,
  * with the email link, or in Beebeeb on the web while signed in.

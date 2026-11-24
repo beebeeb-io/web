@@ -21,7 +21,7 @@ Modules 92–134, sorted by path.
 | `line-diff.ts` | Minimal line-level diff for the editor's conflict dialog (task 1563). | — |
 | `link-label.ts` | L16 (2275 T5.7) — link labels. | — |
 | `link-passphrase.ts` | Task 2237b — the one form of a folder-link passphrase (crypto review). | — |
-| `locked-phrase-unlock.ts` | Task 1810 round 2 (security review P2-3) — what the "Unlock with recovery phrase" button on the signed-in locked surface (VaultLockedNoKey, | — |
+| `locked-phrase-unlock.ts` | Task 1810 round 2 (security review P2-3) — what the "Unlock with master key" button on the signed-in locked surface (VaultLockedNoKey, | — |
 | `markdown-link.ts` | Shared markdown-link safety helper (task 1563 PR #103 review thread). | — |
 | `member-write.ts` | Task 2237b — member writes inside a shared folder. | — |
 | `metadata-envelope.ts` | The JSON metadata envelope (a name, note or metadata blob's stored form), both directions, from core's `metadata_wire` module. | — |

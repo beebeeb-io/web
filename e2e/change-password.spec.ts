@@ -29,7 +29,7 @@ const CURRENT_PASSWORD = 'ChangePwCurrent1234'
 const BREACHED_NEW_PASSWORD = 'password123456' // seeded into the fixture corpus
 
 /**
- * Drive the full signup flow (email → recovery phrase → verify → password)
+ * Drive the full signup flow (email → master key → verify → password)
  * and land on `/` with the vault unlocked. Mirrors
  * refresh-stability.spec.ts's signupAndUnlock — duplicated here (not shared)
  * to keep this spec self-contained per this suite's existing convention.
@@ -50,7 +50,7 @@ async function signupAndUnlock(page: Page): Promise<void> {
   expect(phraseWords.length).toBe(12)
 
   await page
-    .getByRole('checkbox', { name: /I've saved my recovery phrase offline/i })
+    .getByRole('checkbox', { name: /I have saved my master key somewhere safe/i })
     .click()
   await page.getByRole('button', { name: /I saved it/i }).click()
 

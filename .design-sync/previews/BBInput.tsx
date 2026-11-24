@@ -28,7 +28,7 @@ export const WithError = () => (
 export const WithTrailing = () => (
   <div className="w-80 bg-paper p-4">
     <BBInput
-      label="Recovery phrase"
+      label="Master key"
       type="password"
       icon="key"
       defaultValue="amber orbit lantern"

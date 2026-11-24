@@ -39,7 +39,7 @@ const uniqueEmail = () =>
 const TEST_PASSWORD = 'DeleteAccountClears1234'
 
 /**
- * Full signup flow (email → recovery phrase → verify → password), landing on
+ * Full signup flow (email → master key → verify → password), landing on
  * `/` with the vault unlocked and the auto-created welcome file visible.
  * Duplicated locally rather than imported — matches the existing convention
  * in this e2e suite (auth.spec.ts, refresh-stability.spec.ts,
@@ -62,7 +62,7 @@ async function signupAndUnlock(page: Page, email: string) {
   expect(phraseWords.length).toBe(12)
 
   await page
-    .getByRole('checkbox', { name: /I've saved my recovery phrase offline/i })
+    .getByRole('checkbox', { name: /I have saved my master key somewhere safe/i })
     .click()
   await page.getByRole('button', { name: /I saved it/i }).click()
 

@@ -91,7 +91,7 @@ export async function forgotPassword(
  * material on the wire: unlike recoverWithPhraseFinalize, the client does NOT
  * send recovery_check / x25519_public_key — those bindings are set-once
  * (1554/1556) and an email-only reset keeps them untouched server-side. The
- * vault stays locked until the user re-enters their recovery phrase / vault
+ * vault stays locked until the user re-enters their master key / vault
  * key (the /recover-with-phrase re-wrap ceremony).
  */
 

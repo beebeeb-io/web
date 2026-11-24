@@ -10,7 +10,7 @@ import { test, expect, type Page } from '@playwright/test'
  *   - plan expiring             -> send_trial_will_end / send_card_expiring (always sent, billing)
  *   - new-device sign-in        -> push only (push_delivery::notify_new_login), NO email
  *   - 2FA enabled/disabled      -> no sender at all
- *   - recovery phrase used      -> no sender at all
+ *   - master key used      -> no sender at all
  *   - every other event         -> no email sender
  * and no per-type email preference is read server-side (push_delivery.rs reads
  * flat booleans from users.push_preferences; the {email} field is never read).
@@ -37,7 +37,7 @@ test('security section does not promise emails the server never sends', async ({
   await expect(page.getByText(/always sent via email/i)).toHaveCount(0)
 
   // Not emailed today: switch reads OFF and cannot be turned on.
-  for (const label of ['New device sign-in', '2FA changes', 'Recovery phrase used']) {
+  for (const label of ['New device sign-in', '2FA changes', 'Master key used']) {
     const sw = emailSwitch(page, label)
     await expect(sw, `${label} email switch`).toHaveAttribute('aria-checked', 'false')
     await expect(sw, `${label} email switch`).toBeDisabled()

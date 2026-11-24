@@ -106,8 +106,8 @@ const SECTIONS: NotificationSection[] = [
       },
       {
         key: 'recovery_phrase_used',
-        label: 'Recovery phrase used',
-        description: 'Your recovery phrase was used to access your account.',
+        label: 'Master key used',
+        description: 'Your master key was used to access your account.',
       },
     ],
   },

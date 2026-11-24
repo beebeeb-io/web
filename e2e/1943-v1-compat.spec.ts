@@ -10,7 +10,7 @@
  *
  *   1. BASE: sign up, upload a 3-chunk binary and a small text file (v1 frames,
  *      raw-key names), write a note on the binary (raw-key note).
- *   2. BRANCH (new device: log in + recovery phrase): the binary downloads
+ *   2. BRANCH (new device: log in + master key): the binary downloads
  *      byte-identical through the STREAMING path (service worker) and, in a
  *      second context with service workers blocked, through the BUFFERED path;
  *      the text file previews; the note written by BASE opens; a share link
@@ -93,7 +93,7 @@ async function newOrigin(browser: Browser, baseURL: string, opts: { blockService
 
 /**
  * Sign in on a NEW device (a fresh origin = no local vault): password, then the
- * recovery phrase restores the vault. (helpers/auth.ts loginAndProvision looks
+ * master key restores the vault. (helpers/auth.ts loginAndProvision looks
  * the password up by label, which the current sign-in page no longer
  * associates with its input, so this drives it by placeholder.)
  */

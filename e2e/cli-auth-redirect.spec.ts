@@ -140,7 +140,7 @@ test.describe('CLI auth — redirect preservation (0551)', () => {
     await expect(page).toHaveURL(new RegExp(`/login\\?next=.*cli-auth.*${code}`), { timeout: 15_000 })
     await page.waitForSelector('body[data-crypto-ready="true"]', { timeout: 20_000 })
 
-    // Sign in. No vault on this device → device-provision (recovery phrase).
+    // Sign in. No vault on this device → device-provision (master key).
     // The login password field is a bare input (standalone <label>, not
     // associated) — target it by placeholder, as the email field carries the
     // only real <label> association.

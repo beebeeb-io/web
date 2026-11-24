@@ -67,7 +67,7 @@
     "changePassword": "Change password",
     "twoFactor": "Two-factor authentication",
     "passkey": "Passkey",
-    "recoveryPhrase": "Recovery phrase"
+    "recoveryPhrase": "Master key"
   },
   "billing": {
     "currentPlan": "Current plan",
