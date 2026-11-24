@@ -16,7 +16,7 @@ function load(name: string, mutate?: (d: Record<string, any>) => void): Onboardi
   return r.doc
 }
 
-const PRE = ['enter_email', 'verify_email_code', 'accept_terms', 'set_password', 'save_recovery_phrase']
+const PRE = ['enter_email', 'verify_email_code', 'accept_terms', 'save_recovery_phrase', 'set_password']
 
 describe('pre_account order and progress', () => {
   test('the first screen is enter_email, position 1 of 6', () => {
