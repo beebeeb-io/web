@@ -25,9 +25,9 @@ import {
 
 const FACTOR_LABELS: Record<string, string> = {
   email_verified: 'Email verified',
-  phrase_saved: 'Recovery phrase saved',
+  phrase_saved: 'Master key saved',
   two_factor_enabled: 'Two-factor authentication',
-  phrase_recently_tested: 'Recovery phrase tested (90 days)',
+  phrase_recently_tested: 'Master key tested (90 days)',
   all_devices_recognized: 'All devices recognized',
 }
 

@@ -168,7 +168,7 @@ const EVENT_MAP: Record<string, EventMeta> = {
   'password.changed':         { icon: 'key',      dot: 'var(--color-amber)',   label: 'Password changed' },
   'totp.enabled':             { icon: 'shield',   dot: 'var(--color-green)',   label: '2FA enabled' },
   'totp.disabled':            { icon: 'shield',   dot: 'var(--color-red)',     label: '2FA disabled' },
-  'recovery.used':            { icon: 'key',      dot: 'var(--color-red)',     label: 'Recovery phrase used' },
+  'recovery.used':            { icon: 'key',      dot: 'var(--color-red)',     label: 'Master key used' },
   'export.requested':         { icon: 'download', dot: 'var(--color-amber)',   label: 'Data export requested' },
   'export.downloaded':        { icon: 'download', dot: 'var(--color-ink-3)',   label: 'Data export downloaded' },
   'account.delete_requested': { icon: 'trash',    dot: 'var(--color-red)',     label: 'Account deletion requested' },
@@ -193,7 +193,7 @@ function actionText(event: ActivityEvent): string {
     case 'password.changed':         return 'Password changed'
     case 'totp.enabled':             return 'Two-factor authentication enabled'
     case 'totp.disabled':            return 'Two-factor authentication disabled'
-    case 'recovery.used':            return 'Recovery phrase used to access account'
+    case 'recovery.used':            return 'Master key used to access account'
     case 'export.requested':         return 'Data export requested'
     case 'export.downloaded':        return 'Data export downloaded'
     case 'account.delete_requested': return 'Account deletion requested'

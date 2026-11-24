@@ -14,7 +14,7 @@ export const Consent = () => {
   const [saved, setSaved] = useState(false)
   return (
     <div className="flex w-80 flex-col gap-3 bg-paper p-4">
-      <BBCheckbox checked={saved} onChange={setSaved} label="I have saved my recovery phrase offline." />
+      <BBCheckbox checked={saved} onChange={setSaved} label="I have saved my master key somewhere safe, outside Beebeeb." />
     </div>
   )
 }

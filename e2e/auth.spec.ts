@@ -56,7 +56,7 @@ test.describe('Authentication', () => {
     // launch; fillSignupForm asserts the field is absent).
     await fillSignupForm(page, { email })
 
-    // Should redirect to onboarding (recovery phrase screen)
+    // Should redirect to onboarding (master key screen)
     await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
   })
 

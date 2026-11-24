@@ -50,7 +50,7 @@ Modules 57–105, sorted by path.
 | `upload-zone.tsx` | The drag-and-drop upload zone and browse-file/folder hooks. | — |
 | `vault-locked-impersonated.tsx` | The vault-locked screen shown to an impersonating admin. | — |
 | `vault-locked-no-key.tsx` | The vault-locked screen for an account with no local key. | — |
-| `vault-unlock.tsx` | The vault-unlock screen: password or recovery phrase. | — |
+| `vault-unlock.tsx` | The vault-unlock screen: password or master key. | — |
 | `version-delete.tsx` | The version-delete hook and confirmation dialog. | — |
 | `version-history.tsx` | The file version-history panel. | — |
 | `wasm-guard.tsx` | The guard that blocks crypto UI until the wasm bundle is verified. | — |

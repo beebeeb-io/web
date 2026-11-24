@@ -13,7 +13,7 @@ test.describe('Settings restructure (028)', () => {
     await page.waitForTimeout(5000)
     const content = await page.locator('body').textContent() ?? ''
     expect(content).toMatch(/security|recovery|password|passkey/i)
-    expect(content).not.toMatch(/test recovery phrase/i)
+    expect(content).not.toMatch(/test master key/i)
   })
 
   test('billing page renders (plan was renamed to billing)', async ({ page }) => {

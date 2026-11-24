@@ -320,11 +320,11 @@ test.describe('task 1531 P0 continuation (web #85): an untagged legacy vault ent
     // local vault entry is A's, untagged, and the server-side
     // verifyRecoveryCheck proof (computed from the key that entry actually
     // unwraps to) can only match A's stored recovery_check, never B's. B
-    // must be routed to device provisioning (recovery phrase) — the
+    // must be routed to device provisioning (master key) — the
     // 'needs_provisioning' outcome — NEVER silently land on the drive
     // holding A's key just because the password happened to match.
     await expect(page.getByText('Set up this device')).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByText('Recovery phrase')).toBeVisible()
+    await expect(page.getByText('Master key')).toBeVisible()
 
     // And confirm we genuinely never reached the drive under A's key: no
     // drive UI, no sign of A's marker file anywhere on the page.

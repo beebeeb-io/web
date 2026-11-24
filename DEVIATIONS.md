@@ -126,7 +126,7 @@ follow.
   "amber ONLY for encryption indicators and primary CTAs"; red = danger) and
   the shipped destructive precedent (`settings/delete-account` uses the
   `danger` BBButton variant). Amber appears exactly once on this surface: the
-  primary re-entry CTA ("Unlock with recovery phrase") — an encryption-state
+  primary re-entry CTA ("Unlock with master key") — an encryption-state
   primary CTA, squarely inside the brand rule.
 - **Detection signal is a reset-completion marker, not a new
   VaultUnlockOutcome.** The brief pointed at VaultUnlockOutcome for the

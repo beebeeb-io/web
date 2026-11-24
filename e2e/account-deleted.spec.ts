@@ -22,7 +22,7 @@ const uniqueEmail = () =>
 const TEST_PASSWORD = 'AccountDeleted1234'
 
 /**
- * Full signup flow (email → recovery phrase → verify → password), landing on
+ * Full signup flow (email → master key → verify → password), landing on
  * `/` with the vault unlocked. Mirrors refresh-stability.spec.ts's
  * signupAndUnlock — duplicated locally (not imported) to keep this spec
  * self-contained per the existing convention in this e2e suite (auth.spec.ts
@@ -45,7 +45,7 @@ async function signupAndUnlock(page: Page, email: string) {
   expect(phraseWords.length).toBe(12)
 
   await page
-    .getByRole('checkbox', { name: /I've saved my recovery phrase offline/i })
+    .getByRole('checkbox', { name: /I have saved my master key somewhere safe/i })
     .click()
   await page.getByRole('button', { name: /I saved it/i }).click()
 

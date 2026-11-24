@@ -12,7 +12,7 @@ import { uploadTextFile } from './helpers/drive'
  * Guus, 2026-10-17: "Files should NEVER go missing" / "the code and all apps should just not
  * delete random stuff". Round 3, Guus 2026-10-18: "Mm erase all files then requires email
  * verify" / "Verify link + 72 h". The real path a locked-out person takes: sign up, upload, lose
- * the session, reset the password BY EMAIL, choose "I've lost my recovery phrase", and reach the
+ * the session, reset the password BY EMAIL, choose "I've lost my master key", and reach the
  * locked screen with the fresh password. From there:
  *
  *   1. typing the server's item count + the password files an erase REQUEST that waits for the
@@ -145,7 +145,7 @@ async function reachLockedScreen(page: Page, prefix: string, files: string[]): P
   await page.getByLabel('New password').fill(NEW_PW)
   await page.getByLabel('Confirm password').fill(NEW_PW)
   await page.getByRole('button', { name: /set new password/i }).click()
-  await page.getByRole('button', { name: /I've lost my recovery phrase/i }).click({ timeout: 45_000 })
+  await page.getByRole('button', { name: /I've lost my master key/i }).click({ timeout: 45_000 })
   await expect(page.getByText('Vault locked').first()).toBeVisible()
   await expect(page.getByTestId('erase-request-card')).toBeVisible()
   // The cookie notice is fixed over the page; answer it so the screenshots show the card.

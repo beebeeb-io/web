@@ -47,7 +47,7 @@ Hi-fi designs are in the workspace `../../design/hifi/`: hifi-auth.jsx, hifi-onb
 
 ## Pages & routing
 
-- `/signup`, `/login` — guest only · `/onboarding` — post-signup recovery phrase
+- `/signup`, `/login` — guest only · `/onboarding` — post-signup master key
 - `/choose-plan` — trial with a payment mandate. Every new account lands here after onboarding; `account_state: "needs_plan"` redirects every other protected route here (`src/lib/account-state.ts` `planGateRedirect`); Mollie returns to `/choose-plan?returned=1`.
 - `/` — Drive (main file view) · `/trash` · `/search` · `/settings/*` · `/security` · `/billing`
 - `/s/:token` — public share recipient view (no auth) · `/c/:code` — coupon link (public)

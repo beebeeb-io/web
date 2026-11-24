@@ -68,7 +68,7 @@ test.describe('Upload E2E', () => {
       Buffer.alloc(16), // fake 16-byte GCM tag
     ])
 
-    // 1. Real signup through the UI: OPAQUE register, recovery phrase, vault
+    // 1. Real signup through the UI: OPAQUE register, master key, vault
     //    unlocked on the drive. Leaves the context holding the bb_session cookie.
     await signupAndUnlock(page, { email, password: PASSWORD })
 

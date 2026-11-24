@@ -24,30 +24,30 @@ import { removeVaultWrapKey } from '../../lib/passkey-vault'
 import { useAddPasskeyFlow } from '../../hooks/use-add-passkey-flow'
 import QRCode from 'qrcode'
 
-/* ── Recovery phrase ────────────────────────────── */
+/* ── Master key ────────────────────────────── */
 
 function RecoveryPhraseSection() {
   return (
     <SettingsRow
-      label="Recovery phrase"
-      hint="Your 12-word phrase is the only way to recover your account if you lose your password."
+      label="Master key"
+      hint="Your master key (12 words) is the only way to recover your account if you lose your password."
     >
       <div className="flex flex-col gap-3 max-w-[460px]">
         <div className="flex items-center gap-2">
           <Icon name="check" size={14} className="text-green" />
-          <span className="text-[14px] text-ink">Recovery phrase saved during account setup</span>
+          <span className="text-[14px] text-ink">Master key saved during account setup</span>
         </div>
         <p className="text-[12px] text-ink-3 mt-1">
-          If you need your recovery phrase, check your password manager or printed copy.
+          If you need your master key, check your password manager or printed copy.
         </p>
         <div className="flex items-start gap-2.5 rounded-md border border-line bg-paper-2 px-3 py-2.5">
           <Icon name="file-text" size={13} className="text-ink-3 shrink-0 mt-0.5" />
           <p className="text-[12px] text-ink-2 leading-relaxed">
-            Your recovery phrase was shown once during onboarding. If you downloaded it then, keep it safe. It cannot be shown again.
+            Your master key was shown once during onboarding. If you downloaded it then, keep it safe. It cannot be shown again.
           </p>
         </div>
         <p className="text-[11px] text-ink-4 leading-relaxed">
-          We cannot retrieve, reset, or regenerate your recovery phrase.
+          We cannot retrieve, reset, or regenerate your master key.
           This is by design — zero-knowledge means only you have access.
         </p>
       </div>

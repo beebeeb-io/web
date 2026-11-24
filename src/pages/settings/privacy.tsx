@@ -222,7 +222,7 @@ function DataExportCard() {
 
         <div className="flex flex-col gap-1">
           <p className="text-[11px] text-ink-4 leading-relaxed">
-            Your files are exported encrypted. Use your recovery phrase or any logged-in device to decrypt them.
+            Your files are exported encrypted. Use your master key or any logged-in device to decrypt them.
           </p>
           <p className="text-[11px] text-ink-4">
             You can request one export per day. The download link stays available for 7 days. GDPR Article 15.
