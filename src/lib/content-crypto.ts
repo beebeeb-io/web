@@ -59,11 +59,30 @@ export class UnverifiedFileMetadataError extends Error {
   }
 }
 
+/**
+ * The version commitment an authenticated metadata record carries (core: `version_id` as 24 hex
+ * digits, `version_counter`). Core binds frame 0 of a v2 file to it, and refuses a v2 record that
+ * has none. It comes from `decrypt_file_metadata`, never from the server's response.
+ */
+export interface ContentVersion {
+  version_id: string
+  version_counter: number
+}
+
 /** A file's (or folder's) decrypted metadata plus the pin its content readers need. */
 export interface PinnedMetadata {
   name: string
   mimeType: string | null
   pin: ContentPin
+  /** Present when the record carries a version commitment; pass it with the pin to every content reader. */
+  version?: ContentVersion
+}
+
+/** What core's content readers take as `metadata`: the fields of `decrypt_file_metadata` they need. */
+function contentRecord(pin: ContentPin, version?: ContentVersion | null): Record<string, unknown> {
+  return version
+    ? { chunk_format: pin, version_id: version.version_id, version_counter: version.version_counter }
+    : { chunk_format: pin }
 }
 
 /** What `WasmChunkDecryptor.finish()` returns. */
@@ -74,13 +93,23 @@ export interface DecryptSummary {
 }
 
 function pinnedFrom(raw: unknown): PinnedMetadata {
-  const m = raw as { name?: unknown; mime_type?: unknown; chunk_format?: unknown } | null
+  const m = raw as {
+    name?: unknown
+    mime_type?: unknown
+    chunk_format?: unknown
+    version_id?: unknown
+    version_counter?: unknown
+  } | null
   if (!m || typeof m.name !== 'string') throw new Error('metadata reader returned no name')
-  return {
+  const out: PinnedMetadata = {
     name: m.name,
     mimeType: typeof m.mime_type === 'string' ? m.mime_type : null,
     pin: toContentPin(m.chunk_format),
   }
+  if (typeof m.version_id === 'string' && typeof m.version_counter === 'number') {
+    out.version = { version_id: m.version_id, version_counter: m.version_counter }
+  }
+  return out
 }
 
 /**
@@ -118,6 +147,8 @@ export function createContentOps(wasm: ContentWasm) {
     fileId: string
     /** The authenticated pin the decryptor was created under. */
     pin: ContentPin
+    /** The decrypted-metadata record core's readers were given (pin and version commitment). */
+    metadata: Record<string, unknown>
     /**
      * §15/2326: set when this decryptor came from a request row's reader. Its
      * random-access reader then opens frames THROUGH the request reader and
@@ -131,6 +162,8 @@ export function createContentOps(wasm: ContentWasm) {
     versionId: Uint8Array
     /** 1 = v1, 2 = v2. */
     format: number
+    /** The authenticated metadata record the decryptor was created under (pin and commitment). */
+    metadata: Record<string, unknown>
     /** §15/2326: frames open through this request reader; no key is held. */
     requestReaderHandle?: number
   }
@@ -181,10 +214,11 @@ export function createContentOps(wasm: ContentWasm) {
      * of that file. With pin 2 only v2 frames open; with pin 0 chunk 0 decides
      * (v2, else v1) and the format is then locked.
      */
-    createDecryptor(fileKey: Uint8Array, fileId: string, pin: ContentPin): number {
-      const d = wasm.WasmChunkDecryptor.fromFileKey(fileKey, fileId, toContentPin(pin))
+    createDecryptor(fileKey: Uint8Array, fileId: string, pin: ContentPin, version?: ContentVersion | null): number {
+      const metadata = contentRecord(toContentPin(pin), version)
+      const d = wasm.WasmChunkDecryptor.fromFileKey(fileKey, fileId, metadata)
       const handle = nextHandle++
-      liveDecryptors.set(handle, { decryptor: d, key: fileKey.slice(), fileId, pin })
+      liveDecryptors.set(handle, { decryptor: d, key: fileKey.slice(), fileId, pin, metadata })
       return handle
     },
 
@@ -263,6 +297,7 @@ export function createContentOps(wasm: ContentWasm) {
         fileId: entry.fileId,
         versionId,
         format,
+        metadata: entry.metadata,
         requestReaderHandle: entry.requestReaderHandle,
       })
       // The key copy moves to the reader; keep the decryptor entry from wiping
@@ -291,10 +326,9 @@ export function createContentOps(wasm: ContentWasm) {
         return wasm.decrypt_chunk_frame(
           r.key,
           r.fileId,
-          r.versionId.length ? r.versionId : new Uint8Array(0),
+          r.metadata,
           index,
           isLast,
-          r.format,
           frame,
         )
       } catch (err) {
@@ -343,6 +377,7 @@ export function createContentOps(wasm: ContentWasm) {
         key: new Uint8Array(0),
         fileId: reader.fileId,
         pin: toContentPin(reader.chunkFormat),
+        metadata: contentRecord(toContentPin(reader.chunkFormat)),
         requestReaderHandle: readerHandle,
       })
       return handle

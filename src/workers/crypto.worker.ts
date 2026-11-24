@@ -10,6 +10,7 @@ import {
   createContentOps,
   type ContentOps,
   type ContentPin,
+  type ContentVersion,
   type DecryptSummary,
   type PinnedMetadata,
 } from '../lib/content-crypto'
@@ -347,8 +348,8 @@ const cryptoWorker = {
   },
 
   /** A streaming content decryptor for one file; returns an opaque handle. */
-  async createDecryptor(fileKey: Uint8Array, fileId: string, pin: ContentPin): Promise<number> {
-    return (await content()).createDecryptor(fileKey, fileId, pin)
+  async createDecryptor(fileKey: Uint8Array, fileId: string, pin: ContentPin, version?: ContentVersion | null): Promise<number> {
+    return (await content()).createDecryptor(fileKey, fileId, pin, version)
   },
 
   /** Open the next frame in order; the plaintext buffer is transferred back (zero-copy). */

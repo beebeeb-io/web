@@ -16,7 +16,7 @@
  * It knows nothing about the Service Worker or the player: no UI, no
  * `MessagePort`, no component. Keys never leave this module or the worker.
  */
-import { isChunkAuthenticationError, type ContentPin } from '../content-crypto'
+import { isChunkAuthenticationError, type ContentPin, type ContentVersion } from '../content-crypto'
 import { startDecryptStream, createChunkReader, type ChunkReader, type StreamDecryptor } from '../crypto'
 import type { FileContentRef } from '../encrypted-download'
 import type { ContentKey } from '../request-row'
@@ -89,6 +89,7 @@ export interface StreamHeadArgs {
   fileKey: ContentKey
   fileId: string
   pin: ContentPin
+  version?: ContentVersion
   headFrame: Uint8Array
   /**
    * Try the SF-0002 owner-repair key for chunk 0 and return it, or `null` when
@@ -180,7 +181,7 @@ export interface StreamSession {
  * `createChunkReader`.
  */
 export interface WorkerReaderDeps {
-  startDecryptStream(fileKey: ContentKey, fileId: string, pin: ContentPin): Promise<StreamDecryptor>
+  startDecryptStream(fileKey: ContentKey, fileId: string, pin: ContentPin, version?: ContentVersion): Promise<StreamDecryptor>
   createChunkReader(decryptor: { handle: number; release?(): void }): Promise<ChunkReader>
 }
 
@@ -193,8 +194,8 @@ export interface WorkerReaderDeps {
  * retry disposes its decryptor and wipes the repaired key.
  */
 export function createWorkerReaderFactory(deps: WorkerReaderDeps): StreamReaderFactory {
-  return async ({ fileKey, fileId, pin, headFrame, repair }) => {
-    let decryptor = await deps.startDecryptStream(fileKey, fileId, pin)
+  return async ({ fileKey, fileId, pin, version, headFrame, repair }) => {
+    let decryptor = await deps.startDecryptStream(fileKey, fileId, pin, version)
     let headPlaintext: Uint8Array
     let repairedKey: Uint8Array | undefined
     try {
@@ -206,7 +207,7 @@ export function createWorkerReaderFactory(deps: WorkerReaderDeps): StreamReaderF
       if (!repaired) throw err
       let retry: StreamDecryptor | null = null
       try {
-        retry = await deps.startDecryptStream(repaired, fileId, pin)
+        retry = await deps.startDecryptStream(repaired, fileId, pin, version)
         headPlaintext = await retry.pushFrame(headFrame.slice())
       } catch (retryErr) {
         if (retry) await retry.dispose()
@@ -726,6 +727,7 @@ export async function openStreamSession(opts: OpenStreamOptions): Promise<Stream
       fileKey: opts.fileKey,
       fileId,
       pin,
+      version: opts.content.version,
       headFrame: head.frame,
       repair: opts.repair,
     })

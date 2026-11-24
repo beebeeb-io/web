@@ -96,7 +96,7 @@ export async function pushHeadWithRepair(
       // Round 3 (X3): everything from the dispose on sits inside the wipe, so a
       // rejecting dispose (or start) never leaves the repaired key in memory.
       await decryptor.dispose()
-      next = await startDecryptStream(repaired, content.fileId, content.pin)
+      next = await startDecryptStream(repaired, content.fileId, content.pin, content.version)
     } finally {
       repaired.fill(0)
     }

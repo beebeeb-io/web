@@ -25,6 +25,7 @@ import {
   UnverifiedFileMetadataError,
   toContentPin,
   type ContentPin,
+  type ContentVersion,
 } from './crypto'
 import { getToken, getApiUrl, ApiError } from './api'
 import { dispatchDecrypted } from './decrypt-events'
@@ -43,6 +44,8 @@ export interface FileContentRef {
   fileId: string
   /** The chunk-format pin from `readFileMetadata` of this file, never a server field. */
   pin: ContentPin
+  /** The version commitment from the same authenticated metadata, when it carries one. */
+  version?: ContentVersion
 }
 
 /** Shown when a file's metadata (and so its pin) cannot be verified. */
@@ -76,7 +79,7 @@ export async function openFileMetadata(
     // Ordinary rows read the name under the resolved key; the same key opens
     // the file's content.
     const meta = await readFileMetadata(nameKey ?? contentKeyBytes(fileKey), nameEncryptedJson)
-    return { name: meta.name, mimeType: meta.mimeType, content: { fileId, pin: meta.pin } }
+    return { name: meta.name, mimeType: meta.mimeType, content: { fileId, pin: meta.pin, version: meta.version } }
   } catch (err) {
     throw new UnverifiedFileMetadataError(UNVERIFIED_FILE_COPY, { cause: err })
   }
@@ -161,7 +164,7 @@ export async function decryptEncryptedBytes(
   const decryptedParts: Uint8Array[] = []
   let offset = 0
 
-  let decryptor = await startDecryptStream(fileKey, content.fileId, content.pin)
+  let decryptor = await startDecryptStream(fileKey, content.fileId, content.pin, content.version)
   try {
     for (let i = 0; i < chunkCount; i++) {
       // Calculate the plaintext size for this chunk
@@ -374,7 +377,7 @@ export async function pipeDecryptedChunks(
 
   let decryptor: Awaited<ReturnType<typeof startDecryptStream>> | null = null
   try {
-    decryptor = await startDecryptStream(fileKey, content.fileId, content.pin)
+    decryptor = await startDecryptStream(fileKey, content.fileId, content.pin, content.version)
     while (chunkIndex < chunkCount) {
       // Determine size of the next encrypted chunk on the wire.
       const isLast = chunkIndex === chunkCount - 1
