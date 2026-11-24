@@ -198,6 +198,8 @@ export async function waitForSignupCode(
   email: string,
   opts: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<string> {
+  const mailpit = process.env.E2E_MAILPIT_URL
+  if (mailpit) return codeFromMailpit(mailpit, email, opts.timeoutMs ?? 30_000)
   return pollLog((log) => extractSignupCode(log, email), {
     timeoutMs: opts.timeoutMs ?? 10_000,
     intervalMs: opts.intervalMs ?? 250,
@@ -213,4 +215,24 @@ export async function waitForSignupExistsEmail(
     timeoutMs: opts.timeoutMs ?? 10_000,
     intervalMs: opts.intervalMs ?? 250,
   })
+}
+
+/** Local Mailpit sink (E2E_MAILPIT_URL, SMTP pointed at it): the newest 8-digit code mailed to `email`. */
+async function codeFromMailpit(base: string, email: string, timeoutMs: number): Promise<string> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${base}/api/v1/search?query=${encodeURIComponent(`to:"${email}"`)}`)
+      if (res.ok) {
+        const data = (await res.json()) as { messages?: Array<{ ID: string }> }
+        for (const m of data.messages ?? []) {
+          const msg = (await (await fetch(`${base}/api/v1/message/${m.ID}`)).json()) as { Text?: string }
+          const hit = (msg.Text ?? '').match(/\b(\d{8})\b/)
+          if (hit) return hit[1]
+        }
+      }
+    } catch { /* retry */ }
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  throw new Error(`no code mail for ${email} in Mailpit within ${timeoutMs} ms`)
 }
