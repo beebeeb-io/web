@@ -572,6 +572,33 @@ function SetPasswordStep({ ctx }: { ctx: CeremonyCtx }) {
 
 // ── save_recovery_phrase (ceremony: save_phrase, then confirm_phrase) ────────
 
+/** Message for a failed `adoptPhrase`: core's `crypto` code means the 12 words are not a valid phrase. */
+export function adoptPhraseMessage(code: string | undefined): string {
+  return code === 'crypto' || code === 'phrase_invalid'
+    ? 'Those 12 words are not a valid recovery phrase.'
+    : 'Something went wrong on this device. Try again.'
+}
+
+/** Spread pasted text over `count` word fields: lowercase, whitespace-split, at most `count`. Null when it is not a multi-word paste. */
+export function spreadPastedPhrase(text: string, count: number): string[] | null {
+  const parts = text.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (parts.length < 2) return null
+  return Array.from({ length: count }, (_, i) => parts[i] ?? '')
+}
+
+/** Hand the typed words to core. Resolves to an error message, or null on success. */
+export async function adoptTypedPhrase(
+  ceremony: Pick<CeremonyProxy, 'adoptPhrase'>,
+  words: string[],
+): Promise<string | null> {
+  try {
+    await ceremony.adoptPhrase(words.map((w) => w.trim().toLowerCase()).join(' '))
+    return null
+  } catch (err) {
+    return adoptPhraseMessage(err instanceof CeremonyError ? err.code : undefined)
+  }
+}
+
 function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
   const { ceremony, screen, policy, session } = ctx
   const [phase, setPhase] = useState<'loading' | 'show' | 'confirm'>('loading')
@@ -581,7 +608,10 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
   const [answers, setAnswers] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [adopting, setAdopting] = useState(false)
+  const [adoptWords, setAdoptWords] = useState<string[]>([])
   const started = useRef(false)
+  const wordCount = policy.recoveryPhrase.wordCount
 
   useEffect(() => {
     if (started.current) return
@@ -597,8 +627,46 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
       }
     })()
     // Drop the words from React state when this step is left.
-    return () => setWords([])
+    return () => {
+      setWords([])
+      setAdoptWords([])
+    }
   }, [ceremony])
+
+  function startAdopting() {
+    setError('')
+    setWords([]) // no second phrase in React state while the user types their own; core still holds the generated one
+    setAdoptWords(Array.from({ length: wordCount }, () => ''))
+    setAdopting(true)
+  }
+
+  function backToNewPhrase() {
+    setError('')
+    setAdoptWords([])
+    setAdopting(false)
+    void showAgain() // re-read the phrase core already holds: no second beginPhrase (no extra Argon2id)
+  }
+
+  function setAdoptWord(i: number, value: string) {
+    const spread = spreadPastedPhrase(value, wordCount)
+    setError('')
+    if (spread) return setAdoptWords(spread)
+    const next = adoptWords.slice()
+    next[i] = value.trim().toLowerCase()
+    setAdoptWords(next)
+  }
+
+  async function adopt(e: FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    const message = await adoptTypedPhrase(ceremony, adoptWords)
+    setBusy(false)
+    if (message) return setError(message)
+    setAdoptWords([])
+    setWords([])
+    ctx.done('save_recovery_phrase') // adopted counts as confirmed: no confirm sub-step
+  }
 
   async function acknowledge() {
     setBusy(true)
@@ -645,6 +713,54 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
     return (
       <OnboardingFrame screen="step:save_recovery_phrase" title="Your recovery phrase" position={screen.position} total={screen.total}>
         <Spinner label="Generating your recovery phrase" />
+      </OnboardingFrame>
+    )
+  }
+
+  if (adopting && phase !== 'confirm') {
+    return (
+      <OnboardingFrame
+        screen="step:save_recovery_phrase"
+        title="Use your existing recovery phrase"
+        subtitle="Your offline Pass vault will open with this account."
+        position={screen.position}
+        total={screen.total}
+        wide
+      >
+        <form onSubmit={adopt} data-phase="adopt">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3.5">
+            {adoptWords.map((w, i) => (
+              <BBInput
+                key={i}
+                label={`Word ${i + 1}`}
+                value={w}
+                onChange={(e) => setAdoptWord(i, e.currentTarget.value)}
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="font-mono"
+                data-testid={`adopt-word-${i + 1}`}
+              />
+            ))}
+          </div>
+          {error && <ErrorLine>{error}</ErrorLine>}
+          <div className="flex items-center gap-3">
+            <BBButton type="button" variant="ghost" onClick={backToNewPhrase} data-testid="adopt-back">
+              Back to a new phrase
+            </BBButton>
+            <BBButton
+              type="submit"
+              variant="amber"
+              size="lg"
+              className="flex-1"
+              disabled={busy || adoptWords.some((a) => !a.trim())}
+              data-testid="adopt-continue"
+            >
+              Continue
+            </BBButton>
+          </div>
+        </form>
       </OnboardingFrame>
     )
   }
@@ -736,6 +852,14 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
           I saved it, verify
           <Icon name="chevron-right" size={16} className="ml-1.5" />
         </BBButton>
+        <button
+          type="button"
+          onClick={startAdopting}
+          className="mt-4 block text-xs text-ink-3 underline underline-offset-2 hover:text-ink-2"
+          data-testid="adopt-link"
+        >
+          I already have a recovery phrase (from Beebeeb Pass offline)
+        </button>
       </div>
     </OnboardingFrame>
   )

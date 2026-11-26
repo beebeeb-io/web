@@ -151,6 +151,8 @@ export class CeremonyProxy {
   }
 
   async beginPhrase(): Promise<void> { await this.#call('beginPhrase') }
+  /** Take an existing recovery phrase (the offline Pass vault's) instead of a new one; counts as confirmed. */
+  async adoptPhrase(phrase: string): Promise<void> { await this.#call('adoptPhrase', phrase) }
   /** Call only while rendering the phrase; drop the reference afterwards (core cannot wipe a JS copy). */
   async phrase(): Promise<string> { return this.#call('phrase') }
   async acknowledgePhrase(): Promise<void> { await this.#call('acknowledgePhrase') }
