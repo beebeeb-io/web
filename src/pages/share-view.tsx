@@ -194,8 +194,11 @@ export function ShareViewPage() {
     setManualKey('')
     setReportOpen(false)
     setLoading(true)
+    const ac = new AbortController()
+    // 429s are retried by the fetch wrapper (rate-limit-backoff), the one owner.
     getShare(token)
       .then((data) => {
+        if (ac.signal.aborted) return
         setShareData(data)
         // Task 2238: a `file` share whose target is a folder (a link minted
         // before folder links existed) cannot download anything. Detect it from
@@ -205,6 +208,7 @@ export function ShareViewPage() {
         setLoading(false)
       })
       .catch((e) => {
+        if (ac.signal.aborted) return
         // Typed server codes (0708): expired → 410, revoked → 403, not-found → 404.
         // Split them so the recipient reads the truth, not a generic failure.
         if (e instanceof ApiError && (e.status === 410 || e.message === 'share_expired')) {
@@ -222,6 +226,7 @@ export function ShareViewPage() {
         }
         setLoading(false)
       })
+    return () => ac.abort()
   }, [token])
 
   // Decrypt the filename using the resolved file key.

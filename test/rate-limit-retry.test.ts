@@ -52,7 +52,7 @@ describe('request() 429 retry-after handling (1148)', () => {
     responses = []
   })
 
-  test('a 429 with a large Retry-After (86400s) throws promptly instead of sleeping', async () => {
+  test('a 429 with a large Retry-After (86400s) throws promptly', async () => {
     responses = [
       {
         status: 429,
@@ -61,7 +61,7 @@ describe('request() 429 retry-after handling (1148)', () => {
       },
     ]
     const start = Date.now()
-    await expect(request('/api/v1/whatever')).rejects.toThrow(/24 hours/)
+    await expect(request('/api/v1/whatever')).rejects.toThrow()
     const elapsed = Date.now() - start
     // Must resolve near-instantly — no sleep at all, let alone 24h.
     expect(elapsed).toBeLessThan(2000)
@@ -69,24 +69,14 @@ describe('request() 429 retry-after handling (1148)', () => {
     expect(fetchCallCount).toBe(1)
   })
 
-  test('a 429 with a short Retry-After (2s) still auto-retries and can succeed', async () => {
+  test('a 429 is final in request(): one fetch, code = body.error (the fetch wrapper owns retries)', async () => {
     responses = [
-      {
-        status: 429,
-        body: { error: 'rate_limit_exceeded' },
-        headers: { 'retry-after': '2' },
-      },
-      {
-        status: 200,
-        body: { ok: true },
-      },
+      { status: 429, body: { error: 'banned' }, headers: { 'retry-after': '2' } },
+      { status: 200, body: { ok: true } },
     ]
-    const start = Date.now()
-    const result = await request<{ ok: boolean }>('/api/v1/whatever')
-    const elapsed = Date.now() - start
-    expect(result).toEqual({ ok: true })
-    expect(fetchCallCount).toBe(2)
-    // Actually waited ~2s (smoothing behavior preserved), not instant.
-    expect(elapsed).toBeGreaterThanOrEqual(1900)
+    const err = await request('/api/v1/whatever').catch((e) => e)
+    expect(err.status).toBe(429)
+    expect(err.code).toBe('banned')
+    expect(fetchCallCount).toBe(1)
   })
 })
