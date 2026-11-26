@@ -309,6 +309,10 @@ export async function downloadFile(id: string): Promise<Blob> {
   // task 0447 — authenticated download; ship the cookie if present.
   const res = await fetch(`${API_URL}/api/v1/files/${id}/download`, { headers, credentials: 'include' })
   if (!res.ok) {
+    if (res.status === 429) {
+      const { code, body } = await readErrorResponse(res)
+      throw new ApiError(res.statusText, 429, code, body)
+    }
     throw new ApiError(res.statusText, res.status)
   }
   return res.blob()
@@ -433,6 +437,10 @@ export async function uploadThumbnail(fileId: string, blob: Blob): Promise<void>
     credentials: 'include',
   })
   if (!res.ok) {
+    if (res.status === 429) {
+      const { code, body } = await readErrorResponse(res)
+      throw new ApiError(res.statusText, 429, code, body)
+    }
     throw new ApiError(res.statusText, res.status)
   }
 }
@@ -453,6 +461,10 @@ export async function uploadThumbnailLarge(fileId: string, blob: Blob): Promise<
     credentials: 'include',
   })
   if (!res.ok) {
+    if (res.status === 429) {
+      const { code, body } = await readErrorResponse(res)
+      throw new ApiError(res.statusText, 429, code, body)
+    }
     throw new ApiError(res.statusText, res.status)
   }
 }
