@@ -635,6 +635,7 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
 
   function startAdopting() {
     setError('')
+    setWords([]) // no second phrase in React state while the user types their own; core still holds the generated one
     setAdoptWords(Array.from({ length: wordCount }, () => ''))
     setAdopting(true)
   }
@@ -643,6 +644,7 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
     setError('')
     setAdoptWords([])
     setAdopting(false)
+    void showAgain() // re-read the phrase core already holds: no second beginPhrase (no extra Argon2id)
   }
 
   function setAdoptWord(i: number, value: string) {
