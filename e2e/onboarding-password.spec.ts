@@ -38,7 +38,7 @@ test.describe('Onboarding password step', () => {
 
     const passwordField = page.getByPlaceholder('At least 12 characters')
     const confirmField = page.getByPlaceholder('Type it again')
-    const createBtn = page.getByRole('button', { name: /create account/i })
+    const createBtn = page.getByTestId('set-password-continue')
     const strengthPanel = page.getByTestId('password-strength')
     const strengthMessage = page.getByTestId('password-strength-message')
 
@@ -78,7 +78,7 @@ test.describe('Onboarding password step', () => {
     await confirmField.fill('SecurePass1235')
     await expect(page.getByTestId('confirm-mismatch')).toBeVisible()
     await expect(page.getByTestId('confirm-mismatch')).toContainText(
-      /doesn.+match/i,
+      /does not match/i,
     )
     await expect(page.getByTestId('confirm-match')).toBeHidden()
     await expect(createBtn).toBeDisabled()

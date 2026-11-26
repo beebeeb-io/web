@@ -369,9 +369,9 @@ test.describe('1745 onboarding renderer', () => {
     await shot(page, join(EVIDENCE, '14-allowance-web.png'), true)
   })
 
-  test('every one of the 19 fixtures renders a screen in a real browser (no crash, no blank page)', async ({ page }) => {
+  test('every one of the 20 fixtures renders a screen in a real browser (no crash, no blank page)', async ({ page }) => {
     const files = readdirSync(CONTRACT_FIXTURES).filter((f) => f.endsWith('.json')).sort()
-    expect(files.length).toBe(19)
+    expect(files.length).toBe(20)
     const errors: string[] = []
     page.on('pageerror', (e) => errors.push(String(e)))
     for (const f of files) {

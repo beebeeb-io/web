@@ -64,7 +64,7 @@ export function FirstFiles({ onFiles }: { onFiles: (files: File[]) => void }) {
   if (!shown) return null
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto" data-testid="first-files" role="dialog" aria-label="Add your first files">
+    <div className="fixed inset-0 z-[70] overflow-y-auto" data-testid="first-files" role="dialog" aria-label="Add your first files">
       <AuthShellFrame
         title="Add your first files"
         subtitle="They are encrypted in this browser before they upload."

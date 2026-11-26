@@ -248,8 +248,8 @@ test('EXPIRY — the ticket expires before register: back to the code step, a ne
   await openSignup(page)
   const firstCode = await enterEmailAndCode(page, email)
   await acceptTerms(page)
-  await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
-  // The ticket lapses while the person is choosing a password.
+  await expect(screen(page)).toHaveAttribute('data-screen', 'step:save_recovery_phrase', { timeout: 30_000 })
+  // The ticket lapses while the person is saving the master key (it comes before the password).
   sql(`UPDATE signup_tickets SET expires_at = NOW() - INTERVAL '1 minute' WHERE email = '${email}';`)
   await phraseAndPassword(page)
 

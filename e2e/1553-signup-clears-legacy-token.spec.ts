@@ -87,7 +87,7 @@ test.describe('Signup no longer leaves a stale bb_session bearer token (1553)', 
     page,
     context,
   }) => {
-    test.setTimeout(60_000)
+    test.setTimeout(120_000)
 
     // 1. Real signup through the actual UI — real OPAQUE registration, real
     //    register-finish round trip, lands unlocked on the drive.

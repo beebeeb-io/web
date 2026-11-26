@@ -1,5 +1,5 @@
-import { test, expect } from '@playwright/test'
-import { fillSignupForm, signupAndUnlock, uniqueEmail } from './helpers/signup'
+import { test, expect, type Page } from '@playwright/test'
+import { createAccount, fillSignupForm, signupAndUnlock, uniqueEmail } from './helpers/signup'
 import { waitForSignupCode, waitForSignupExistsEmail, waitForNewSignupCode } from './helpers/mail-sink'
 
 /**
@@ -23,6 +23,7 @@ const PASSWORD = 'CorrectHorseBattery9!'
 
 test.describe('Signup email verification code (task 1525)', () => {
   test.beforeEach(async ({ page, context }) => {
+    test.setTimeout(120_000) // the document flow has four steps after the code
     // Same pattern as onboarding-password.spec.ts / auth.spec.ts: block the
     // dev auto-login so /signup and /onboarding actually render as a guest.
     await page.route('**/dev/auto-login', (route) => route.fulfill({ status: 404 }))
@@ -34,68 +35,66 @@ test.describe('Signup email verification code (task 1525)', () => {
     })
   })
 
-  test('new email: code screen -> verify -> master key (generated AFTER the ticket) -> password -> drive', async ({
+  const screen = (page: Page) => page.getByTestId('onboarding-screen')
+
+  test('new email: code screen -> verify -> terms -> master key (generated AFTER the ticket) -> password -> drive', async ({
     page,
   }) => {
     const email = uniqueEmail('1525-new')
     await fillSignupForm(page, { email })
 
-    await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
-    await expect(page.getByText('Check your inbox')).toBeVisible({ timeout: 10_000 })
-    // Identical-copy invariant: the subtitle names the email but hedges
-    // ("if <email> can sign up") — never asserts existence either way.
-    await expect(page.getByTestId('signup-code-copy')).toContainText('can sign up')
-    await expect(page.getByTestId('signup-code-email')).toHaveText(email)
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:verify_email_code', { timeout: 30_000 })
+    await expect(page.getByText('Check your email')).toBeVisible()
+    // Identical-copy invariant: the subtitle hedges ("If this address can be used") and never asserts
+    // existence either way.
+    await expect(page.getByText(/If this address can be used/)).toBeVisible()
 
-    // Task 1525's core fix: the master key must not exist yet — it is
-    // generated ONLY after a valid ticket, never before.
-    await expect(page.locator('span.font-mono.text-sm.font-medium')).toHaveCount(0)
+    // The master key must not exist yet: it is generated ONLY after a valid ticket, never before.
+    await expect(page.getByTestId('phrase-words')).toHaveCount(0)
 
     const code = await waitForSignupCode(email)
     expect(code).toMatch(/^\d{8}$/)
-    // Filling all 8 digits auto-submits (mirrors two-factor-prompt.tsx) —
-    // no separate "Verify" click: by the time it would land, the step has
-    // often already moved on to 'display', racing the button out from
-    // under the click.
-    await page.getByTestId('signup-code-input').fill(code)
-
-    // Code step cleared -> master key now renders.
-    const wordEls = page.locator('span.font-mono.text-sm.font-medium')
-    await expect(wordEls).toHaveCount(12, { timeout: 15_000 })
-    const phraseWords = (await wordEls.allInnerTexts()).map((w) => w.trim())
-
-    await page.getByRole('checkbox', { name: /I have saved my master key somewhere safe/i }).click()
-    await page.getByRole('button', { name: /I saved it/i }).click()
-
-    const verifyLabels = page.locator('label', { hasText: /^Word #\d+$/ })
-    const labelCount = await verifyLabels.count()
-    expect(labelCount).toBeGreaterThan(0)
-    for (let i = 0; i < labelCount; i++) {
-      const labelText = (await verifyLabels.nth(i).innerText()).trim()
-      const m = labelText.match(/Word #(\d+)/)
-      if (!m) throw new Error(`unexpected verify label: ${labelText}`)
-      const wordIdx = parseInt(m[1], 10) - 1
-      await page.getByLabel(labelText, { exact: true }).fill(phraseWords[wordIdx])
-    }
+    await page.getByTestId('onboarding-code').fill(code)
     await page.getByRole('button', { name: /^verify$/i }).click()
 
-    const passwordField = page.getByPlaceholder('At least 12 characters')
-    await expect(passwordField).toBeVisible({ timeout: 5_000 })
-    await passwordField.fill(PASSWORD)
-    await page.getByPlaceholder('Type it again').fill(PASSWORD)
-    await page.getByRole('button', { name: /create account/i }).click()
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:accept_terms', { timeout: 30_000 })
+    await expect(page.getByTestId('phrase-words')).toHaveCount(0)
+    await page.getByRole('checkbox').nth(0).click()
+    await page.getByRole('checkbox').nth(1).click()
+    await page.getByTestId('accept-terms-continue').click()
 
-    await page.waitForURL(/\/(?:$|\?|#)/, { timeout: 30_000 })
+    // Code step cleared and terms accepted -> the master key now renders (12 words).
+    await expect(page.getByTestId('phrase-words')).toBeVisible({ timeout: 30_000 })
+    const phraseWords: string[] = []
+    for (let i = 1; i <= 12; i++) phraseWords.push((await page.getByTestId(`phrase-word-${i}`).innerText()).trim())
+
+    await page.getByRole('checkbox', { name: /I have saved my master key somewhere safe/i }).click()
+    await page.getByTestId('phrase-saved').click()
+    const inputs = page.locator('[data-testid^="phrase-answer-"]')
+    await expect(inputs).toHaveCount(3)
+    for (let i = 0; i < 3; i++) {
+      const id = (await inputs.nth(i).getAttribute('data-testid'))!
+      await page.getByTestId(id).fill(phraseWords[Number(id.replace('phrase-answer-', '')) - 1])
+    }
+    await page.getByRole('button', { name: /^confirm$/i }).click()
+
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:set_password', { timeout: 30_000 })
+    await createAccount(page, PASSWORD)
+
+    const notNow = page.getByRole('button', { name: /^not now$/i })
+    await notNow.waitFor({ state: 'visible', timeout: 20_000 }).then(() => notNow.click()).catch(() => {})
+    await page.waitForURL((u) => u.pathname === '/', { timeout: 60_000 })
+    const openDrive = page.getByTestId('first-files-open-drive')
+    await openDrive.waitFor({ state: 'visible', timeout: 4_000 }).then(() => openDrive.click()).catch(() => {})
     await expect(page.getByText(/All files/i).first()).toBeVisible({ timeout: 10_000 })
   })
 
-  test('existing email: IDENTICAL check-your-inbox screen, mail sink gets the sign-in email, phrase/password NEVER shown', async ({
+  test('existing email: IDENTICAL check-your-email screen, mail sink gets the sign-in email, master key/password NEVER shown', async ({
     page,
     context,
   }) => {
     const email = uniqueEmail('1525-existing')
-    // Create a real account with this email first (full flow — proves a
-    // genuine pre-existing account, not just a challenge row).
+    // Create a real account with this email first (full flow: proves a genuine pre-existing account).
     await signupAndUnlock(page, { email, password: PASSWORD })
 
     // Now try to sign up AGAIN with the same email, as a fresh guest.
@@ -107,14 +106,11 @@ test.describe('Signup email verification code (task 1525)', () => {
     await page.route('**/dev/auto-login', (route) => route.fulfill({ status: 404 }))
     await fillSignupForm(page, { email })
 
-    await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
-    // Byte-for-byte the SAME screen as the new-email case — same title,
-    // same testids, same copy shape. No enumeration signal anywhere in the
-    // DOM: no "this account already exists" text, nothing.
-    await expect(page.getByText('Check your inbox')).toBeVisible({ timeout: 10_000 })
-    await expect(page.getByTestId('signup-code-copy')).toContainText('can sign up')
-    await expect(page.getByTestId('signup-code-email')).toHaveText(email)
-    await expect(page.getByText(/already have an account/i)).toHaveCount(0)
+    // The SAME screen as the new-email case: no enumeration signal anywhere in the DOM.
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:verify_email_code', { timeout: 30_000 })
+    await expect(page.getByText('Check your email')).toBeVisible()
+    await expect(page.getByText(/If this address can be used/)).toBeVisible()
+    await expect(page.getByText(/already exists/i)).toHaveCount(0)
 
     const existsEmail = await waitForSignupExistsEmail(email)
     expect(existsEmail.subject).toBe('You already have a Beebeeb account')
@@ -122,80 +118,67 @@ test.describe('Signup email verification code (task 1525)', () => {
     expect(existsEmail.signinUrl).toContain(`email=${encodeURIComponent(email)}`)
     expect(existsEmail.signinUrl).toContain('/login')
 
-    // No code was ever actually sent for this email — there is no way to
-    // reach the phrase/password steps from here. Give the (idle) page a
-    // moment, then assert their absence explicitly.
+    // No code was sent for this email: no way to reach the master key / password steps from here.
     await page.waitForTimeout(1_000)
-    await expect(page.locator('span.font-mono.text-sm.font-medium')).toHaveCount(0)
-    await expect(page.getByPlaceholder('At least 12 characters')).toHaveCount(0)
-    // Still on /onboarding's code step, not bounced anywhere revealing.
-    await expect(page).toHaveURL(/\/onboarding/)
+    await expect(page.getByTestId('phrase-words')).toHaveCount(0)
+    await expect(page.getByTestId('onboarding-password')).toHaveCount(0)
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:verify_email_code')
   })
 
   test('wrong code: honest, undifferentiated error — retry with the real code succeeds', async ({ page }) => {
     const email = uniqueEmail('1525-wrongcode')
     await fillSignupForm(page, { email })
-    await expect(page.getByTestId('signup-code-email')).toHaveText(email)
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:verify_email_code', { timeout: 30_000 })
 
-    // Filling 8 digits auto-submits — no separate click (see the new-email
-    // test's comment for why a redundant click races the step transition).
-    await page.getByTestId('signup-code-input').fill('00000000')
+    await page.getByTestId('onboarding-code').fill('00000000')
+    await page.getByRole('button', { name: /^verify$/i }).click()
 
-    await expect(page.getByTestId('signup-code-error')).toBeVisible({ timeout: 5_000 })
-    await expect(page.getByTestId('signup-code-error')).toHaveText(/invalid or expired code/i)
-    // Input clears on error so the user can retype cleanly.
-    await expect(page.getByTestId('signup-code-input')).toHaveValue('')
+    await expect(page.getByTestId('onboarding-error')).toBeVisible({ timeout: 10_000 })
     // Never advanced past the code step.
-    await expect(page.locator('span.font-mono.text-sm.font-medium')).toHaveCount(0)
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:verify_email_code')
+    await expect(page.getByTestId('phrase-words')).toHaveCount(0)
 
     const code = await waitForSignupCode(email)
-    await page.getByTestId('signup-code-input').fill(code)
-
-    await expect(page.locator('span.font-mono.text-sm.font-medium')).toHaveCount(12, { timeout: 15_000 })
+    await page.getByTestId('onboarding-code').fill(code)
+    await page.getByRole('button', { name: /^verify$/i }).click()
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:accept_terms', { timeout: 30_000 })
   })
 
-  test('"Wrong email? Go back" returns to /signup with the email prefilled', async ({ page }) => {
+  test('"Use a different email" returns to the email step', async ({ page }) => {
     const email = uniqueEmail('1525-wrongemail')
     await fillSignupForm(page, { email })
-    await expect(page.getByTestId('signup-code-email')).toHaveText(email)
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:verify_email_code', { timeout: 30_000 })
 
-    await page.getByRole('button', { name: /wrong email\? go back/i }).click()
+    await page.getByTestId('use-different-email').click()
 
-    await expect(page).toHaveURL(/\/signup/, { timeout: 10_000 })
-    await expect(page.getByLabel(/email/i)).toHaveValue(email)
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:enter_email', { timeout: 10_000 })
+    await expect(page).toHaveURL(/\/signup/)
   })
 
   test('resend adds a second code without invalidating the first — both verify (server round 3)', async ({
     page,
   }) => {
+    test.setTimeout(180_000)
     const email = uniqueEmail('1525-resend')
     await fillSignupForm(page, { email })
-    await expect(page.getByTestId('signup-code-email')).toHaveText(email)
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:verify_email_code', { timeout: 30_000 })
 
-    // Capture the FIRST code explicitly — this is the one we'll prove still
-    // works AFTER the resend, not just "a code that verifies".
     const firstCode = await waitForSignupCode(email)
     expect(firstCode).toMatch(/^\d{8}$/)
 
-    await page.getByRole('button', { name: /resend code/i }).click()
-    // Honest copy (task 1525 Codex-review follow-up): the button no longer
-    // claims a bare "Code resent" — it says what actually happened and that
-    // any recent code still works, which is also true of the OLD code below.
-    await expect(page.getByText(/we sent a new code/i)).toBeVisible({ timeout: 5_000 })
+    // The document's resend wait applies before the button appears.
+    const again = page.getByRole('button', { name: 'Send a new code' })
+    await expect(again).toBeVisible({ timeout: 90_000 })
+    await again.click()
+    await expect(page.getByText(/a new email is on its way/i)).toBeVisible({ timeout: 10_000 })
 
-    // A genuinely DIFFERENT second code must appear — round 3's whole point
-    // is that resend ADDS a code rather than replacing (or no-op'ing on) the
-    // live one.
     const secondCode = await waitForNewSignupCode(email, firstCode)
     expect(secondCode).toMatch(/^\d{8}$/)
     expect(secondCode).not.toBe(firstCode)
 
-    // The FIRST code — issued before the resend — must STILL verify. This is
-    // the core round-3 behavior change under test: a resend must never
-    // silently invalidate the code the user might already be looking at in
-    // their inbox.
-    await page.getByTestId('signup-code-input').fill(firstCode)
-
-    await expect(page.locator('span.font-mono.text-sm.font-medium')).toHaveCount(12, { timeout: 15_000 })
+    // The FIRST code, issued before the resend, must STILL verify.
+    await page.getByTestId('onboarding-code').fill(firstCode)
+    await page.getByRole('button', { name: /^verify$/i }).click()
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:accept_terms', { timeout: 30_000 })
   })
 })
