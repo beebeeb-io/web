@@ -976,10 +976,10 @@ function CreateAccountStep({ ctx }: { ctx: CeremonyCtx }) {
 
 // ── the flow ─────────────────────────────────────────────────────────────────
 
-function renderStep(ctx: Ctx): ReactNode {
+function renderStep(ctx: Ctx, stepOrderReady: boolean): ReactNode {
   const { ceremony } = ctx
   const withCeremony = (render: (c: CeremonyCtx) => ReactNode): ReactNode =>
-    ceremony ? (
+    ceremony && stepOrderReady ? (
       render({ ...ctx, ceremony })
     ) : (
       <OnboardingFrame
@@ -1142,7 +1142,6 @@ export function PreAccountFlow({
     }
   }, [screen.kind, ports.actions])
 
-  if (offer) return <PasskeyOffer masterKey={offer.masterKey} password={offer.password} onDone={offer.resolve} />
   if (screen.kind === 'created') {
     return (
       <OnboardingFrame screen="created" title="Your account is ready">
@@ -1164,5 +1163,12 @@ export function PreAccountFlow({
   }
 
   const ctx: Ctx = { doc, policy, ports: flowPorts, ceremony, session, screen, done, undo, notice, setNotice, startOver }
-  return <>{renderStep(ctx)}</>
+  // The offer card shows over the create_account step, which stays mounted (hidden): unmounting it
+  // would lose its run-once guard and run account creation a second time on "Not now".
+  return (
+    <>
+      {offer && <PasskeyOffer masterKey={offer.masterKey} password={offer.password} onDone={offer.resolve} />}
+      <div hidden={!!offer}>{renderStep(ctx, stepOrder !== null)}</div>
+    </>
+  )
 }
