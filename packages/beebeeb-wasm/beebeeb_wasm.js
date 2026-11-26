@@ -1872,7 +1872,7 @@ if (Symbol.dispose) WasmSignedUrl.prototype[Symbol.dispose] = WasmSignedUrl.prot
 /**
  * The signup ceremony state machine, one per signup attempt.
  *
- * Holds the password, the recovery phrase and the master key inside WASM
+ * Holds the password, the master key (12 words) and the key derived from it inside WASM
  * memory in zeroizing buffers. Call `abandon()` when the flow is left (back,
  * cancel, error): freeing the object or waiting for garbage collection wipes
  * it too, but on the finalizer's schedule, which can be much later. See `beebeeb_core::onboarding::ceremony` for the rules.
@@ -1937,7 +1937,7 @@ export class WasmSignupCeremony {
         }
     }
     /**
-     * Take an existing recovery phrase instead of generating one; counts as confirmed.
+     * Take an existing master key instead of generating one; counts as confirmed.
      * Throws `crypto` for an invalid phrase, `invalid_state` once confirmed or registering.
      * @param {string} phrase
      */
@@ -1957,7 +1957,7 @@ export class WasmSignupCeremony {
         }
     }
     /**
-     * Generate the recovery phrase and master key (Argon2id, about a second).
+     * Generate the master key (12 words) and the key derived from it (Argon2id, about a second).
      * Idempotent.
      */
     beginPhrase() {
@@ -1969,6 +1969,26 @@ export class WasmSignupCeremony {
             if (r1) {
                 throw takeObject(r0);
             }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * The canonical order of the pre-account ceremony (master key first, then the password), as
+     * `[{ step, spec_step_id }]`. Same as the order `pendingSteps` lists in.
+     * @returns {any}
+     */
+    static ceremonyStepOrder() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignupceremony_ceremonyStepOrder(retptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
@@ -4112,7 +4132,7 @@ export function formatCompact(bytes, decimals) {
 }
 
 /**
- * Generate a recovery kit PDF with a title, recovery words, and metadata.
+ * Generate a recovery kit PDF with a title, master key words, and metadata.
  *
  * `metadata_keys` and `metadata_values` are parallel arrays of key-value pairs.
  * Returns the raw PDF bytes as `Uint8Array`.
@@ -4144,7 +4164,7 @@ export function generate_recovery_pdf(title, words, metadata_keys, metadata_valu
 }
 
 /**
- * Generate a new 12-word BIP39 recovery phrase and the corresponding master
+ * Generate a new master key (12 BIP39 words) and the corresponding derived
  * key. Returns `{ phrase: string, master_key: Uint8Array }`.
  * @returns {any}
  */
@@ -5027,7 +5047,7 @@ export function previewableBatchFor(names, platform) {
 }
 
 /**
- * Recover a master key from a 12-word BIP39 recovery phrase.
+ * Recover the derived key from the 12 words of a master key.
  * Returns the 32-byte master key as `Uint8Array`.
  * @param {string} phrase
  * @returns {Uint8Array}

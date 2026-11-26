@@ -1,4 +1,32 @@
-# beebeeb-wasm exports — head 31b0c6c8d3390843185167335f72a42f686470bd
+# beebeeb-wasm exports — head 2cf0341c914da94cc83122fbf488337162eabca5
+
+Built from core branch `master-key-naming/wasm-vendor` (head `2cf0341`), which is
+`pass-offline/web-wasm-base` (e419f15 = core 31b0c6c + adoptPhrase) plus the cherry-pick of
+a37966a (master key first, then the password; `ceremonyStepOrder`; copy strings). Not core main:
+core main's new `decrypt_chunk_frame` is NOT in this build. Conflicts in the cherry-pick were files
+that do not exist on the base (signup_flow, passkey, beebeeb-client, docs/client-rules); they were dropped.
+Built with wasm-pack 0.14.0, rustc from rustup, `--target web --release`:
+
+```
+scripts/coord/remote-build.sh legion core master-key-naming/wasm-vendor --artefact beebeeb-wasm/pkg-web -- \
+  'export PATH=$HOME/.cargo/bin:$PATH; wasm-pack build beebeeb-wasm --target web --release --out-dir pkg-web'
+```
+
+- `beebeeb_wasm_bg.wasm` sha256: `09cf370d5c90edc73aa97e2c4c84f1b6fc5fdce2b3a015eeae823978b11b6a51`
+- files: `beebeeb_wasm.js`, `beebeeb_wasm.d.ts`, `beebeeb_wasm_bg.wasm`, `beebeeb_wasm_bg.wasm.d.ts`, `package.json` (unchanged).
+
+## Export diff vs the previously vendored build (31b0c6c)
+
+- top-level `export function` / `export class` names: 149 before, 149 after, removed 0, added 0.
+- **added: 1 static method** — `WasmSignupCeremony.ceremonyStepOrder()` (JS: `WasmSignupCeremony.ceremonyStepOrder()`),
+  plus its raw binding in `beebeeb_wasm_bg.wasm.d.ts`.
+- `adoptPhrase` was already on the base. No signature changed; ceremony order is now master key
+  (`save_phrase`, `confirm_phrase`) before `set_password`, and `try_set_password` before the master key
+  throws `step_not_done`.
+
+---- previous manifest (31b0c6c build), kept for the request-row result shapes ----
+
+## previous: head 31b0c6c
 
 Built from branch `feat/2326-request-row-shipped-seal` (core repo) on the wasm
 testrig image bb-rust-wasm:1.96 with wasm-pack 0.14.0, `--target web --release`:

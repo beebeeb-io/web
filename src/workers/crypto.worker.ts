@@ -919,21 +919,11 @@ const cryptoWorker = {
   },
 
   /**
-   * Core's canonical pre-account order (master key first, then the password) as `[{ step, spec_step_id }]`,
-   * or null when the vendored wasm predates the export (the caller then uses its mirrored constant).
+   * Core's canonical pre-account order (master key first, then the password) as `[{ step, spec_step_id }]`.
    */
-  async ceremonyStepOrder(): Promise<CeremonyResult<{ step: string; spec_step_id: string }[] | null>> {
+  async ceremonyStepOrder(): Promise<CeremonyResult<{ step: string; spec_step_id: string }[]>> {
     const wasm = await ensureWasm()
-    return ceremonyResult(() => {
-      const w = wasm as unknown as {
-        ceremonyStepOrder?: () => unknown
-        WasmSignupCeremony?: { ceremonyStepOrder?: () => unknown }
-      }
-      if (typeof w.ceremonyStepOrder === 'function') return w.ceremonyStepOrder() as { step: string; spec_step_id: string }[]
-      const cls = w.WasmSignupCeremony
-      if (cls && typeof cls.ceremonyStepOrder === 'function') return cls.ceremonyStepOrder() as { step: string; spec_step_id: string }[]
-      return null
-    })
+    return ceremonyResult(() => wasm.WasmSignupCeremony.ceremonyStepOrder() as { step: string; spec_step_id: string }[])
   },
 
   async ceremonyNew(

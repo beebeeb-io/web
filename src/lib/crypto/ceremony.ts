@@ -188,18 +188,11 @@ export class CeremonyProxy {
 export async function getCeremonyStepOrder(): Promise<string[]> {
   const steps = unwrapCeremony(
     await withProxy(
-      (p) => p.ceremonyStepOrder() as Promise<CeremonyResult<{ step: string; spec_step_id: string }[] | null>>,
+      (p) => p.ceremonyStepOrder() as Promise<CeremonyResult<{ step: string; spec_step_id: string }[]>>,
     ),
   )
-  return steps ? [...new Set(steps.map((s) => s.spec_step_id))] : [...CEREMONY_STEP_ORDER_FALLBACK]
+  return [...new Set(steps.map((s) => s.spec_step_id))]
 }
-
-/**
- * Mirrors core's PRE_ACCOUNT_CEREMONY_ORDER (master key first, then the password) as spec step ids.
- * Used only while the vendored wasm has no `ceremonyStepOrder()`; delete it when the wasm is re-vendored.
- * The old wasm does not enforce this order itself: the UI does.
- */
-export const CEREMONY_STEP_ORDER_FALLBACK = ['verify_email_code', 'save_recovery_phrase', 'set_password', 'create_account'] as const
 
 export async function createSignupCeremony(config: CeremonyConfig): Promise<CeremonyProxy> {
   const handle = await withProxy((p) =>

@@ -611,7 +611,7 @@ export class WasmSignedUrl {
 /**
  * The signup ceremony state machine, one per signup attempt.
  *
- * Holds the password, the recovery phrase and the master key inside WASM
+ * Holds the password, the master key (12 words) and the key derived from it inside WASM
  * memory in zeroizing buffers. Call `abandon()` when the flow is left (back,
  * cancel, error): freeing the object or waiting for garbage collection wipes
  * it too, but on the finalizer's schedule, which can be much later. See `beebeeb_core::onboarding::ceremony` for the rules.
@@ -639,15 +639,20 @@ export class WasmSignupCeremony {
      */
     acknowledgePhrase(): void;
     /**
-     * Take an existing recovery phrase instead of generating one; counts as confirmed.
+     * Take an existing master key instead of generating one; counts as confirmed.
      * Throws `crypto` for an invalid phrase, `invalid_state` once confirmed or registering.
      */
     adoptPhrase(phrase: string): void;
     /**
-     * Generate the recovery phrase and master key (Argon2id, about a second).
+     * Generate the master key (12 words) and the key derived from it (Argon2id, about a second).
      * Idempotent.
      */
     beginPhrase(): void;
+    /**
+     * The canonical order of the pre-account ceremony (master key first, then the password), as
+     * `[{ step, spec_step_id }]`. Same as the order `pendingSteps` lists in.
+     */
+    static ceremonyStepOrder(): any;
     /**
      * 1-based word positions to ask for, ascending, stable for this phrase.
      */
@@ -1218,7 +1223,7 @@ export function formatBinary(bytes: bigint): string;
 export function formatCompact(bytes: bigint, decimals: number): string;
 
 /**
- * Generate a recovery kit PDF with a title, recovery words, and metadata.
+ * Generate a recovery kit PDF with a title, master key words, and metadata.
  *
  * `metadata_keys` and `metadata_values` are parallel arrays of key-value pairs.
  * Returns the raw PDF bytes as `Uint8Array`.
@@ -1226,7 +1231,7 @@ export function formatCompact(bytes: bigint, decimals: number): string;
 export function generate_recovery_pdf(title: string, words: any, metadata_keys: any, metadata_values: any): Uint8Array;
 
 /**
- * Generate a new 12-word BIP39 recovery phrase and the corresponding master
+ * Generate a new master key (12 BIP39 words) and the corresponding derived
  * key. Returns `{ phrase: string, master_key: Uint8Array }`.
  */
 export function generate_recovery_phrase(): any;
@@ -1491,7 +1496,7 @@ export function plan_monthly_cost_cents(plan_slug: string, extra_tb: bigint, ext
 export function previewableBatchFor(names: string[], platform: string): Uint8Array;
 
 /**
- * Recover a master key from a 12-word BIP39 recovery phrase.
+ * Recover the derived key from the 12 words of a master key.
  * Returns the 32-byte master key as `Uint8Array`.
  */
 export function recover_from_phrase(phrase: string): Uint8Array;
@@ -2054,6 +2059,7 @@ export interface InitOutput {
     readonly wasmsignupceremony_acknowledgePhrase: (a: number, b: number) => void;
     readonly wasmsignupceremony_adoptPhrase: (a: number, b: number, c: number, d: number) => void;
     readonly wasmsignupceremony_beginPhrase: (a: number, b: number) => void;
+    readonly wasmsignupceremony_ceremonyStepOrder: (a: number) => void;
     readonly wasmsignupceremony_challengePositions: (a: number, b: number) => void;
     readonly wasmsignupceremony_confirmPhrase: (a: number, b: number, c: number) => void;
     readonly wasmsignupceremony_emailChanged: (a: number) => void;

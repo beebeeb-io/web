@@ -219,6 +219,7 @@ export const wasmsignupceremony_accountCreated: (a: number, b: number) => void;
 export const wasmsignupceremony_acknowledgePhrase: (a: number, b: number) => void;
 export const wasmsignupceremony_adoptPhrase: (a: number, b: number, c: number, d: number) => void;
 export const wasmsignupceremony_beginPhrase: (a: number, b: number) => void;
+export const wasmsignupceremony_ceremonyStepOrder: (a: number) => void;
 export const wasmsignupceremony_challengePositions: (a: number, b: number) => void;
 export const wasmsignupceremony_confirmPhrase: (a: number, b: number, c: number) => void;
 export const wasmsignupceremony_emailChanged: (a: number) => void;
