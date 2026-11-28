@@ -6,9 +6,11 @@
  * the server's hint (max of Retry-After and body.retry_after) when longer, plus
  * 0-25 % jitter. The numbers mirror core's `rate_limit_wait_ms` (retry.rs). A 429
  * that arrives while a pause runs does not start or double a new one, and the
- * streak resets on the first non-429 answer. Only a GET, a HEAD, or a write that
- * carries an Idempotency-Key header is sent again, at most 4 times; any other request
- * gets its 429 back. Every API request waits for a running pause before it is sent.
+ * streak resets on the first non-429 answer that lands when no pause runs (an answer
+ * to a request sent before the 429 says nothing about the limit). Only a GET, HEAD,
+ * PUT or DELETE (idempotent by HTTP semantics), or a POST or PATCH that carries an
+ * Idempotency-Key header, is sent again, at most 4 times; any other request gets its
+ * 429 back. Every API request waits for a running pause before it is sent.
  * (The epic's rule also names OPTIONS: preflights are the browser's and never pass here.)
  *
  * The pause is shared by every tab of the origin over a BroadcastChannel: each tab
@@ -32,8 +34,8 @@ export const RATE_LIMIT_WAIT_CAP_MS = 60_000
 const JITTER_PERCENT = 25
 export const BANNED_CODE = 'banned'
 export const RATE_LIMIT_CHANNEL = 'bb-rate-limit'
-/** Safe to send again without a key. */
-const SAFE_METHODS = new Set(['GET', 'HEAD'])
+/** Idempotent by HTTP semantics: safe to send again without a key. */
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'PUT', 'DELETE'])
 export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key'
 
 type Refusal = { until: number; body: Record<string, unknown> }
@@ -189,10 +191,11 @@ export function withRateLimitBackoff(base: typeof fetch, opts: BackoffOptions): 
   return async (input, init) => {
     if (!isApiRequest(input, opts.apiOrigin)) return base(input, init)
     const signal = init?.signal ?? (typeof input === 'object' && 'signal' in input ? input.signal : null)
-    // A streamed body cannot be sent twice, key or not.
+    // A streamed body (or a Request's own body) cannot be sent twice, key or not.
     const retryable =
       (SAFE_METHODS.has(methodOf(input, init)) || hasIdempotencyKey(input, init)) &&
-      !(init?.body instanceof ReadableStream)
+      !(init?.body instanceof ReadableStream) &&
+      !(init?.body === undefined && input instanceof Request && input.body !== null)
     for (let attempt = 0; ; attempt++) {
       if (signal?.aborted) throw abortError()
       const local = localRefusal(clock.now())
@@ -200,7 +203,9 @@ export function withRateLimitBackoff(base: typeof fetch, opts: BackoffOptions): 
       await waitForPause(clock, signal)
       const res = await base(input, init)
       if (res.status !== 429) {
-        if (streak !== 0) {
+        // An answer that lands while a pause runs belongs to a request sent before
+        // the 429: it must not reset the shared streak.
+        if (streak !== 0 && pauseUntil <= clock.now()) {
           streak = 0
           share()
         }

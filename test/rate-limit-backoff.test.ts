@@ -53,34 +53,61 @@ describe('429 backoff', () => {
     expect(clock - t).toBe(2000) // the floor: the 1 s hint is shorter
   })
 
-  test('does not retry POST', async () => {
-    const s = setup([r429({}, '1'), ok()])
-    const res = await s.f(ORIGIN + '/files', { method: 'POST' })
-    expect(res.status).toBe(429)
-    expect(s.calls()).toBe(1)
+  test('an unkeyed POST or PATCH is not replayed', async () => {
+    for (const method of ['POST', 'PATCH']) {
+      resetRateLimitPause()
+      const s = setup([r429({}, '1'), ok()])
+      const res = await s.f(ORIGIN + '/files', { method, body: 'x' })
+      expect(res.status).toBe(429)
+      expect(s.calls()).toBe(1)
+    }
   })
 
-  test('a keyed PUT is retried once after the pause', async () => {
+  test('a chunk PUT answered 429 then 200 succeeds after the pause, no key needed', async () => {
     const s = setup([r429({}, '1'), ok()])
     const t = clock
-    const res = await s.f(ORIGIN + '/files/1', { method: 'PUT', headers: { 'Idempotency-Key': 'k1' }, body: 'x' })
+    const res = await s.f(ORIGIN + '/uploads/u1/chunks/0', { method: 'PUT', body: new Uint8Array([1, 2, 3]) })
     expect(res.status).toBe(200)
     expect(s.calls()).toBe(2)
     expect(clock - t).toBe(2000)
   })
 
-  test('an unkeyed PUT is not retried: its 429 goes back, and the pause holds the next request', async () => {
+  test('an unkeyed DELETE is replayed; a blank key on a POST does not count', async () => {
     const s = setup([r429({}, '1'), ok()])
-    const res = await s.f(ORIGIN + '/files/1', { method: 'PUT', body: 'x' })
+    expect((await s.f(ORIGIN + '/files/1', { method: 'DELETE' })).status).toBe(200)
+    expect(s.calls()).toBe(2)
+    resetRateLimitPause()
+    const blank = setup([r429({}, '1'), ok()])
+    expect((await blank.f(ORIGIN + '/files', { method: 'POST', headers: { 'Idempotency-Key': ' ' } })).status).toBe(429)
+    expect(blank.calls()).toBe(1)
+    const t = clock
+    expect((await blank.f(ORIGIN + '/files')).status).toBe(200)
+    expect(clock - t).toBe(2000) // the pause holds the next request
+  })
+
+  test('a PUT with a streamed body is not replayed', async () => {
+    const s = setup([r429({}, '1'), ok()])
+    const body = new ReadableStream<Uint8Array>()
+    const res = await s.f(ORIGIN + '/files/1', { method: 'PUT', body, duplex: 'half' } as RequestInit)
     expect(res.status).toBe(429)
     expect(s.calls()).toBe(1)
-    const empty = setup([r429({}, '1'), ok()])
-    resetRateLimitPause()
-    expect((await empty.f(ORIGIN + '/files/1', { method: 'PUT', headers: { 'Idempotency-Key': ' ' } })).status).toBe(429)
-    expect(empty.calls()).toBe(1)
+  })
+
+  test('the streak survives a 200 that lands during a pause', async () => {
+    let release!: (r: Response) => void
+    const slow = new Promise<Response>((resolve) => (release = resolve))
+    const queue: Array<Response | Promise<Response>> = [slow, r429({}, '0'), r429({}, '0'), ok()]
+    const base = (async () => queue.shift()!) as unknown as typeof fetch
+    const f = withRateLimitBackoff(base, { apiOrigin: ORIGIN, random: () => 0, now, sleep })
+    const inFlight = f(ORIGIN + '/slow') // sent before the 429
+    await Promise.resolve()
+    expect((await f(ORIGIN + '/a', { method: 'POST' })).status).toBe(429) // pause 2 s, streak 1
+    release(ok())
+    expect((await inFlight).status).toBe(200) // lands inside the pause
     const t = clock
-    expect((await empty.f(ORIGIN + '/files')).status).toBe(200)
-    expect(clock - t).toBe(2000)
+    expect((await f(ORIGIN + '/b')).status).toBe(200)
+    // 2 s left of the first pause, then the second 429 doubles to 4 s (2 s if the streak had reset)
+    expect(clock - t).toBe(2000 + 4000)
   })
 
   test('a keyed POST is retried, the key read from a Request or a Headers object', async () => {
