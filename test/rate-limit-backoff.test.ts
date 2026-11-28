@@ -60,6 +60,41 @@ describe('429 backoff', () => {
     expect(s.calls()).toBe(1)
   })
 
+  test('a keyed PUT is retried once after the pause', async () => {
+    const s = setup([r429({}, '1'), ok()])
+    const t = clock
+    const res = await s.f(ORIGIN + '/files/1', { method: 'PUT', headers: { 'Idempotency-Key': 'k1' }, body: 'x' })
+    expect(res.status).toBe(200)
+    expect(s.calls()).toBe(2)
+    expect(clock - t).toBe(2000)
+  })
+
+  test('an unkeyed PUT is not retried: its 429 goes back, and the pause holds the next request', async () => {
+    const s = setup([r429({}, '1'), ok()])
+    const res = await s.f(ORIGIN + '/files/1', { method: 'PUT', body: 'x' })
+    expect(res.status).toBe(429)
+    expect(s.calls()).toBe(1)
+    const empty = setup([r429({}, '1'), ok()])
+    resetRateLimitPause()
+    expect((await empty.f(ORIGIN + '/files/1', { method: 'PUT', headers: { 'Idempotency-Key': ' ' } })).status).toBe(429)
+    expect(empty.calls()).toBe(1)
+    const t = clock
+    expect((await empty.f(ORIGIN + '/files')).status).toBe(200)
+    expect(clock - t).toBe(2000)
+  })
+
+  test('a keyed POST is retried, the key read from a Request or a Headers object', async () => {
+    const a = setup([r429({}, '1'), ok()])
+    const req = new Request(ORIGIN + '/files', { method: 'POST', headers: { 'idempotency-key': 'k2' } })
+    expect((await a.f(req)).status).toBe(200)
+    expect(a.calls()).toBe(2)
+    resetRateLimitPause()
+    const b = setup([r429({}, '1'), ok()])
+    const res = await b.f(ORIGIN + '/files', { method: 'POST', headers: new Headers({ 'Idempotency-Key': 'k3' }) })
+    expect(res.status).toBe(200)
+    expect(b.calls()).toBe(2)
+  })
+
   test('retry-after above 60 s is a policy refusal, no retry', async () => {
     const s = setup([r429({ error: 'rate_limited' }, '120'), ok()])
     const res = await s.f(ORIGIN + '/files')

@@ -6,8 +6,10 @@
  * the server's hint (max of Retry-After and body.retry_after) when longer, plus
  * 0-25 % jitter. The numbers mirror core's `rate_limit_wait_ms` (retry.rs). A 429
  * that arrives while a pause runs does not start or double a new one, and the
- * streak resets on the first non-429 answer. An idempotent request (GET, HEAD, PUT)
- * is sent again at most 4 times; every API request waits for a running pause.
+ * streak resets on the first non-429 answer. Only a GET, a HEAD, or a write that
+ * carries an Idempotency-Key header is sent again, at most 4 times; any other request
+ * gets its 429 back. Every API request waits for a running pause before it is sent.
+ * (The epic's rule also names OPTIONS: preflights are the browser's and never pass here.)
  *
  * The pause is shared by every tab of the origin over a BroadcastChannel: each tab
  * takes max(own, received), so a 429 in one tab holds all of them. Without
@@ -30,7 +32,9 @@ export const RATE_LIMIT_WAIT_CAP_MS = 60_000
 const JITTER_PERCENT = 25
 export const BANNED_CODE = 'banned'
 export const RATE_LIMIT_CHANNEL = 'bb-rate-limit'
-const IDEMPOTENT = new Set(['GET', 'HEAD', 'PUT'])
+/** Safe to send again without a key. */
+const SAFE_METHODS = new Set(['GET', 'HEAD'])
+export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key'
 
 type Refusal = { until: number; body: Record<string, unknown> }
 /** What one tab tells the others: its pause, its streak, and a refusal while one is active. */
@@ -137,6 +141,21 @@ function methodOf(input: RequestInfo | URL, init?: RequestInit): string {
   return (init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET')).toUpperCase()
 }
 
+/** True when the request carries a non-empty Idempotency-Key; `init.headers` replaces a Request's own. */
+function hasIdempotencyKey(input: RequestInfo | URL, init?: RequestInit): boolean {
+  try {
+    const headers =
+      init?.headers !== undefined
+        ? new Headers(init.headers)
+        : typeof input === 'object' && 'headers' in input
+          ? input.headers
+          : null
+    return !!headers?.get(IDEMPOTENCY_KEY_HEADER)?.trim()
+  } catch {
+    return false
+  }
+}
+
 /** A refusal: keep the server's `error` code, mark it with a separate `policy: true`. */
 function policyResponse(headers: Headers, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify({ ...body, policy: true }), { status: 429, headers })
@@ -170,8 +189,10 @@ export function withRateLimitBackoff(base: typeof fetch, opts: BackoffOptions): 
   return async (input, init) => {
     if (!isApiRequest(input, opts.apiOrigin)) return base(input, init)
     const signal = init?.signal ?? (typeof input === 'object' && 'signal' in input ? input.signal : null)
+    // A streamed body cannot be sent twice, key or not.
     const retryable =
-      IDEMPOTENT.has(methodOf(input, init)) && !(init?.body instanceof ReadableStream)
+      (SAFE_METHODS.has(methodOf(input, init)) || hasIdempotencyKey(input, init)) &&
+      !(init?.body instanceof ReadableStream)
     for (let attempt = 0; ; attempt++) {
       if (signal?.aborted) throw abortError()
       const local = localRefusal(clock.now())
