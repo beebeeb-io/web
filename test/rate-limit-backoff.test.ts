@@ -9,29 +9,48 @@ const r429 = (body: object, retryAfter?: string) =>
   })
 const ok = () => new Response('{}', { status: 200 })
 
+// A fake clock: a sleep moves it forward, so the waits take no real time.
+let clock = 0
+const now = () => clock
+const sleep = async (ms: number) => {
+  clock += ms
+}
+
 function setup(responses: Response[]) {
   let calls = 0
   const base = (async () => responses[Math.min(calls++, responses.length - 1)]) as unknown as typeof fetch
-  return { f: withRateLimitBackoff(base, { apiOrigin: ORIGIN, random: () => 0 }), calls: () => calls }
+  return {
+    f: withRateLimitBackoff(base, { apiOrigin: ORIGIN, random: () => 0, now, sleep }),
+    calls: () => calls,
+  }
 }
 
-beforeEach(resetRateLimitPause)
+beforeEach(() => {
+  resetRateLimitPause()
+  clock = 1_000_000
+})
 
 describe('rateLimitWaitMs', () => {
-  test('max of header and body, plus jitter up to 25%', () => {
-    expect(rateLimitWaitMs('2', 3, () => 0)).toBe(3000)
-    expect(rateLimitWaitMs('4', 1, () => 1)).toBe(5000)
+  test('2 s floor doubling to 60 s, or the hint when longer, plus jitter up to 25%', () => {
+    expect([0, 1, 2, 3, 4, 5, 6].map((streak) => rateLimitWaitMs(streak, null, undefined, () => 0))).toEqual([
+      2000, 4000, 8000, 16000, 32000, 60000, 60000,
+    ])
+    expect(rateLimitWaitMs(0, '2', 3, () => 0)).toBe(3000)
+    expect(rateLimitWaitMs(0, '4', 1, () => 1)).toBe(5000)
+    expect(rateLimitWaitMs(0, '1', 1, () => 0)).toBe(2000)
+    expect(rateLimitWaitMs(2, '5', null, () => 0)).toBe(8000)
+    expect(rateLimitWaitMs(0, '60', null, () => 1)).toBe(75000)
   })
 })
 
 describe('429 backoff', () => {
   test('retries a GET after Retry-After then succeeds', async () => {
     const s = setup([r429({ retry_after: 1 }, '1'), ok()])
-    const t = Date.now()
+    const t = clock
     const res = await s.f(ORIGIN + '/files')
     expect(res.status).toBe(200)
     expect(s.calls()).toBe(2)
-    expect(Date.now() - t).toBeGreaterThanOrEqual(950)
+    expect(clock - t).toBe(2000) // the floor: the 1 s hint is shorter
   })
 
   test('does not retry POST', async () => {
@@ -75,15 +94,17 @@ describe('429 backoff', () => {
     const s = setup([r429({}, '1'), ok(), ok()])
     const first = s.f(ORIGIN + '/a', { method: 'POST' }) // sets pause, returns 429
     await first
-    const t = Date.now()
+    const t = clock
     await s.f(ORIGIN + '/b')
-    expect(Date.now() - t).toBeGreaterThanOrEqual(900)
+    expect(clock - t).toBe(2000)
   })
 
-  test('gives up after 4 retries', async () => {
+  test('gives up after 4 retries, the wait doubling each time', async () => {
     const s = setup([r429({}, '0')])
+    const t = clock
     const res = await s.f(ORIGIN + '/files')
     expect(res.status).toBe(429)
     expect(s.calls()).toBe(5)
-  }, 15000)
+    expect(clock - t).toBe(2000 + 4000 + 8000 + 16000)
+  })
 })
